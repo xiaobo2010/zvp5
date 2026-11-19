@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException, Response
 
-from routers import users_v3_router
+from routers import users_router
 from services import file_ops
 
 
@@ -76,8 +76,8 @@ class _NoopLog:
 def test_create_user_cannot_grant_admin_directly() -> None:
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
-            users_v3_router.create_user_v3(
-                users_v3_router.NewUserRequest(
+            users_router.create_user_v3(
+                users_router.NewUserRequest(
                     id="20269999",
                     name="攻击者",
                     roles=["admin"],

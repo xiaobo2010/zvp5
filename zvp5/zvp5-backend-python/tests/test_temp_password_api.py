@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 import services
 from db import backends
-from routers import users_v3_router
+from routers import users_router
 from typings.log import inject_log
 from util.cert import jwt_encode
 from util.object_id import get_current_user
@@ -90,7 +90,6 @@ def api(monkeypatch):
         "inserts": [],
         "set_primary": [],
         "clear_primary": [],
-        "ban_delete": [],
         "revoked_open": [],
         "ops": [],
     }
@@ -185,17 +184,6 @@ def api(monkeypatch):
         raising=False,
     )
 
-    async def delete_for_user_rule(oid, rule_code=None):
-        calls["ban_delete"].append((oid, rule_code))
-        return 3
-
-    monkeypatch.setattr(
-        backends,
-        "get_ban_records_repo",
-        lambda *a, **k: SimpleNamespace(delete_for_user_rule=delete_for_user_rule),
-        raising=False,
-    )
-
     class _AdminSession:
         def __init__(self):
             self.commits = 0
@@ -208,11 +196,11 @@ def api(monkeypatch):
         yield _AdminSession()
 
     # 封禁梯度重置现在把删除和审计放在同一个事务里；测试替身不需要真库。
-    monkeypatch.setattr(users_v3_router, "session_scope", admin_scope)
+    monkeypatch.setattr(users_router, "session_scope", admin_scope)
 
     log = FakeLog()
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=PREFIX)
+    app.include_router(users_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: {
         "id": ADMIN_OID,
         "per": ["admin"],
@@ -587,41 +575,6 @@ def test_admin_clear_requires_admin(api) -> None:
     response = api.http.delete(f"{PREFIX}/{OTHER_OID}/primary-device")
 
     assert response.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# POST /{user_id}/ban-records/reset —— 管理员重置梯度
-# ---------------------------------------------------------------------------
-
-
-def test_admin_resets_all_ban_records(api) -> None:
-    response = api.http.post(f"{PREFIX}/{OTHER_OID}/ban-records/reset")
-
-    assert response.status_code == 200
-    assert response.json()["data"] == {"deleted": 3}
-    assert api.calls["ban_delete"] == [(OTHER_OID, None)]
-    entry = api.log.entries[-1]
-    assert entry["type"] == "ban_change"
-    assert entry["level"] == "warning"
-
-
-def test_admin_resets_ban_records_for_one_rule(api) -> None:
-    response = api.http.post(
-        f"{PREFIX}/{OTHER_OID}/ban-records/reset",
-        json={"rule_code": "multi_device_login"},
-    )
-
-    assert response.status_code == 200
-    assert api.calls["ban_delete"] == [(OTHER_OID, "multi_device_login")]
-
-
-def test_ban_records_reset_requires_admin(api) -> None:
-    _act_as(api, DEPARTMENT_OID, ["department"])
-
-    response = api.http.post(f"{PREFIX}/{OTHER_OID}/ban-records/reset")
-
-    assert response.status_code == 403
-    assert api.calls["ban_delete"] == []
 
 
 # ---------------------------------------------------------------------------

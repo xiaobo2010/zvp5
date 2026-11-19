@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from db import backends
 from routers import users_router
-from services import ban_rules, device_guard
+from services import device_guard
 from typings.log import ZVMSLog
 from util import cert
 from util.object_id import get_current_user, log_level_floor

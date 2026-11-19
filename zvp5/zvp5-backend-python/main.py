@@ -11,7 +11,6 @@
 ``scheduler``        14 个 APScheduler 周期任务 + startup / shutdown
 ``meta_routes``      ``/api/``、``/api/health``、``/api/cert``、``/api/version``
 ``error_handlers``   422 中文本地化、``InvalidOid`` → 400、兜底 500
-``legacy_redirects`` 6 条单数 → 复数重定向
 ``bindings``         少数「测试会打桩」的运行时协作者的活绑定
 ===================  ====================================================
 
@@ -24,7 +23,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import error_handlers
-import legacy_redirects
 import meta_routes
 from util.env import getenv
 from app_setup import (  # noqa: F401 - 兼容导出：tests/ 与运维脚本按 main.<name> 取
@@ -51,8 +49,7 @@ from meta_routes import (  # noqa: F401 - 兼容导出
     current_version,
 )
 from routers import (
-    activities_v2_router,
-    activities_v3_router,
+    activities_router,
     activity_statistics_router,
     ai_agent_router,
     ai_api_keys_router,
@@ -70,11 +67,8 @@ from routers import (
     db_system_router,
     exports_router,
     groups_router,
-    groups_v2_router,
-    groups_v3_router,
     imports_router,
     logs_router,
-    mcp_router,
     notifications_router,
     system_db_content_router,
     system_files_router,
@@ -83,8 +77,6 @@ from routers import (
     system_ssh_router,
     times_router,
     users_router,
-    users_v2_router,
-    users_v3_router,
 )
 from routers.system_router import router as system_router
 from scheduler import (  # noqa: F401 - 兼容导出
@@ -117,20 +109,14 @@ app = create_app(lifespan=lifespan)
 
 # 路由表：(router, prefix, tags)。顺序即契约 —— 先注册先匹配。
 ROUTERS: tuple[tuple, ...] = (
-    (users_router.router, "/api/users", ["users"]),
-    (groups_router.router, "/api/groups", ["groups"]),
+    (users_router.router, "/api/v1/users", ["users"]),
+    (groups_router.router, "/api/v1/groups", ["groups"]),
     (exports_router.router, "/api/exports", ["exports"]),
     (imports_router.router, "/api/imports", ["imports"]),
     (logs_router.router, "/api/logs", ["logs"]),
-    (activities_v2_router.router, "/api/v1/activities", None),
-    (users_v2_router.router, "/api/v1/users", None),
-    (groups_v2_router.router, "/api/v1/groups", None),
+    (activities_router.router, "/api/v1/activities", None),
     (times_router.router, "/api/v1/times", None),
     (activity_statistics_router.router, "/api/v1/statistics/activities", None),
-    (mcp_router.router, "/api/v1/mcp", None),
-    (activities_v3_router.router, "/api/v1/activities", None),
-    (users_v3_router.router, "/api/v1/users", None),
-    (groups_v3_router.router, "/api/v1/groups", None),
     (changelog_router.router, "/api/changelog", ["changelog"]),
     (attachments_router.router, "/api/attachments", ["attachments"]),
     (system_router, "/api/system/maintenance", ["System"]),
@@ -167,17 +153,9 @@ app.mount("/socket.io", socket)
 for _router, _prefix, _tags in ROUTERS:
     app.include_router(_router, prefix=_prefix, tags=_tags)
 
-# TODO: 移除 MCP 的 /api/v2 兼容别名。主挂载已归并到 /api/v1/mcp；旧前缀
-# 只留给尚未升级的 MCP 客户端，等它们切到 /api/v1/mcp 后删除这一行。
-# schema 不重复登记（同一 router 两套前缀会撞 operation_id）。
-app.include_router(
-    mcp_router.router, prefix="/api/v2/mcp", tags=None, include_in_schema=False
-)
-
-# 首页 → 6 条 legacy redirect → 探活/证书 → 异常处理 → 版本。
+# 首页 → 探活/证书 → 异常处理 → 版本。
 # 这个交错顺序是拆分前的原样（路由表 dump 与它逐条对齐），别顺手重排。
 meta_routes.register_index(app)
-legacy_redirects.register(app)
 meta_routes.register_probes(app)
 error_handlers.register(app)
 meta_routes.register_version(app)

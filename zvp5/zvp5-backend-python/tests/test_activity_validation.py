@@ -2,8 +2,8 @@
 
 `activities` 表的列宽（``db/oracle/ddl/V001__initial_schema.sql:116-125``）：
 ``name``/``place`` 各 ``VARCHAR2(256 CHAR)``、``approver`` ``VARCHAR2(24 CHAR)``。
-超宽直写会撞 ORA-12899（500），所以三个入口（v2 建活动、v2 改信息、v3 建活动、
-Excel 导入）共用一个校验器，越界统一 400、绝不静默截断；NUL 也拒绝（Oracle 会
+超宽直写会撞 ORA-12899（500），所以几个入口（建活动、改活动信息、Excel 导入）
+共用一个校验器，越界统一 400、绝不静默截断；NUL 也拒绝（Oracle 会
 把它当字符串终止符吞掉，落库值就与提交值不一致）。
 
 成员时长同理：``0``/负数/NaN/Infinity 会污染聚合（NaN 进缓存后所有求和都变
@@ -20,8 +20,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from routers import activities_v2_router as v2
-from routers import activities_v3_router as v3
+from routers import activities_router as v2
 from util.validation import (
     ACTIVITY_APPROVER_MAX_LENGTH,
     ACTIVITY_NAME_MAX_LENGTH,
@@ -130,58 +129,6 @@ async def test_v2_create_rejects_overlong_columns(no_db, overrides, detail) -> N
 
     assert failure.value.status_code == 400
     assert failure.value.detail == detail
-
-
-@pytest.mark.asyncio
-async def test_v3_create_rejects_an_overlong_name(monkeypatch) -> None:
-    def boom(*args, **kwargs):
-        raise AssertionError("校验失败时不应触达仓库")
-
-    monkeypatch.setattr(v3.backends, "get_activities_repo", boom)
-    payload = v3.CreateActivityRequest(
-        name="名" * 257, description="说明", type="on-campus"
-    )
-
-    with pytest.raises(HTTPException) as failure:
-        await v3.create_activity_v3(payload, ADMIN, log=None)
-
-    assert failure.value.status_code == 400
-    assert failure.value.detail == "Name should be at most 256 characters"
-
-
-@pytest.mark.asyncio
-async def test_v3_create_accepts_an_in_range_name(monkeypatch) -> None:
-    created: list[tuple] = []
-
-    class _Repo:
-        async def create(self, *args):
-            created.append(args)
-            return "0000000000000000000000aa"
-
-    class _Log:
-        def with_text(self, *args, **kwargs):
-            return self
-
-        async def insert_log(self):
-            return None
-
-    monkeypatch.setattr(v3.backends, "get_activities_repo", lambda *a, **k: _Repo())
-    monkeypatch.setattr(v3, "get_user_display_name", _fake_name)
-
-    result = await v3.create_activity_v3(
-        v3.CreateActivityRequest(
-            name="名" * 256, description="说明", type="on-campus"
-        ),
-        ADMIN,
-        log=_Log(),
-    )
-
-    assert result == {"id": "0000000000000000000000aa"}
-    assert created and created[0][0] == "名" * 256
-
-
-async def _fake_name(oid):
-    return "管理员"
 
 
 # --- 成员时长 --------------------------------------------------------------

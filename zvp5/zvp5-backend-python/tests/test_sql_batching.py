@@ -408,74 +408,62 @@ async def test_sum_modes_for_member_without_rows_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# E. 班级重算批量 upsert
+# E. 班级时长页：一条下推查询，不做逐学生 N+1
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_group_time_recompute_upserts_the_page_in_one_call(monkeypatch):
+async def test_group_time_page_is_one_pushed_down_query(monkeypatch):
+    """``GET /api/v1/groups/{gid}/time`` 只发一条 ``list_by_class``。
+
+    合并后唯一实现是 v2（原 groups_v2_router.read_group_time）：分页、搜索、
+    排序全部下推给 ``time.list_by_class``，路由层不再逐学生取数，也不再有
+    未版本化实现里那条「整批重算 + upsert」的分支。
+    """
     from routers import groups_router
 
-    students = [_oid(index) for index in range(1, 4)]
+    student = _oid(1)
     rows = [
         {
             "user": student,
-            "name": f"n{index}",
-            "id": f"1{index}",
-            "on_campus_raw": 0.0,
-            "off_campus_raw": 0.0,
-            "social_practice": 0.0,
+            "name": "n1",
+            "id": "11",
+            "on_campus_raw": 1.0,
+            "off_campus_raw": 2.0,
+            "social_practice": 3.0,
         }
-        for index, student in enumerate(students, start=1)
     ]
-    batches: list[list[tuple]] = []
+    calls: list[tuple] = []
 
     async def list_by_class(class_oid, query, sort_field, descending, page, size):
+        calls.append((class_oid, query, sort_field, descending, page, size))
         return [dict(row) for row in rows], len(rows)
 
-    async def get_group(group_oid):
-        return {"_id": group_oid, "name": "G"}
-
-    async def calculate(ids, start, end, allow_cache=True):
-        return {
-            student: {"on-campus": 1.0, "off-campus": 2.0, "social-practice": 3.0}
-            for student in ids
-        }
-
-    async def upsert_many_for_users(entries):
-        batches.append(list(entries))
-
-    monkeypatch.setattr(
-        backends,
-        "get_groups_repo",
-        lambda session=None: SimpleNamespace(get=get_group),
-    )
     monkeypatch.setattr(
         backends,
         "get_time_repo",
-        lambda session=None: SimpleNamespace(
-            list_by_class=list_by_class,
-            upsert_many_for_users=upsert_many_for_users,
-        ),
+        lambda *a, **k: SimpleNamespace(list_by_class=list_by_class),
     )
-    monkeypatch.setattr(groups_router, "calculate_user_time_bulk", calculate)
 
-    await groups_router.get_user_times_in_class(
+    body = await groups_router.read_group_time(
         _oid(50),
+        query="",
+        search="张",
         page=1,
         perpage=10,
-        exceeding=True,
-        shortage=False,
-        start=None,
-        end=None,
-        search="",
-        allow_cache=False,
-        user={"id": _oid(1)},
+        sort="on-campus",
+        asc=False,
+        user={"id": _oid(2)},
     )
 
-    assert len(batches) == 1
-    assert [entry[0] for entry in batches[0]] == students
-    assert batches[0][0][1:] == (1.0, 2.0, 3.0)
+    assert calls == [(_oid(50), "张", "on_campus_raw", True, 1, 10)]
+    assert body["data"][0]["on-campus"] == 1.0
+    assert body["metadata"]["size"] == 1
+
+
+# ---------------------------------------------------------------------------
+# F. 批量时长 upsert（仓储层）
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

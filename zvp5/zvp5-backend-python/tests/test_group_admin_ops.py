@@ -22,7 +22,7 @@ from sqlalchemy.dialects import oracle
 
 from db import backends
 from db.repos.oracle import groups as groups_mod
-from routers import groups_router, groups_v2_router, groups_v3_router
+from routers import groups_router
 from typings.log import inject_log
 from util.cert import jwt_encode
 from util.object_id import compulsory_temporary_token, get_current_user
@@ -223,31 +223,18 @@ def _install(monkeypatch, groups_repo=None, time_repo=None):
         return oid
 
     monkeypatch.setattr(groups_router, "get_user_display_name", _display_name)
-    monkeypatch.setattr(groups_v3_router, "get_user_display_name", _display_name)
+    monkeypatch.setattr(groups_router, "get_user_display_name", _display_name)
 
 
 # ---------------------------------------------------------------------------
-# 删除：v1 / v3 都走 delete_cascade，404 由锁内判定给出
+# 删除：唯一实现走 delete_cascade，404 由锁内判定给出
 # ---------------------------------------------------------------------------
-
-
-def test_v1_delete_uses_the_cascade(monkeypatch):
-    repo = _GroupsRepo(cascade_result={"_id": GROUP, "name": "甲班", "description": ""})
-    _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_v3_router.router, "/api/v1/groups"))
-    app.include_router(groups_router.router, prefix="/api/groups")
-    app.dependency_overrides[compulsory_temporary_token] = lambda: ADMIN
-
-    response = TestClient(app).delete(f"/api/groups/{GROUP}")
-
-    assert response.status_code == 200
-    assert repo.cascade_calls == [GROUP]
 
 
 def test_v3_delete_missing_group_is_404(monkeypatch):
     repo = _GroupsRepo(cascade_result=None)
     _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_v3_router.router, "/api/v1/groups"))
+    app = _client((groups_router.router, "/api/v1/groups"))
     app.dependency_overrides[compulsory_temporary_token] = lambda: ADMIN
 
     assert TestClient(app).delete(f"/api/v1/groups/{GROUP}").status_code == 404
@@ -256,7 +243,7 @@ def test_v3_delete_missing_group_is_404(monkeypatch):
 def test_v3_delete_is_gated_by_a_temporary_credential(monkeypatch):
     repo = _GroupsRepo(cascade_result={"_id": GROUP, "name": "甲班", "description": ""})
     _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_v3_router.router, "/api/v1/groups"))
+    app = _client((groups_router.router, "/api/v1/groups"))
 
     # 长会话 token（scope=access_token）不是删班凭据。
     long_token = jwt_encode(ADMIN["id"], [], ["admin"], type="long")
@@ -275,7 +262,7 @@ def test_v3_delete_is_gated_by_a_temporary_credential(monkeypatch):
 
 
 def test_v3_delete_route_depends_on_the_temporary_gate():
-    default = inspect.signature(groups_v3_router.delete_group_v3).parameters["user"].default
+    default = inspect.signature(groups_router.delete_group_v3).parameters["user"].default
     assert default.dependency is compulsory_temporary_token
 
 
@@ -287,41 +274,23 @@ def test_v3_delete_route_depends_on_the_temporary_gate():
 @pytest.mark.parametrize(
     "path,method,payload,status",
     [
-        (
-            "/api/groups",
-            "post",
-            {"_id": GROUP, "name": "名" * 128, "type": "class", "description": "", "permissions": []},
-            200,
-        ),
-        (
-            "/api/groups",
-            "post",
-            {"_id": GROUP, "name": "名" * 129, "type": "class", "description": "", "permissions": []},
-            400,
-        ),
-        (
-            "/api/groups",
-            "post",
-            {"_id": GROUP, "name": "名" * 10 + "\x00", "type": "class", "description": "", "permissions": []},
-            400,
-        ),
-        (f"/api/groups/{GROUP}/name", "put", {"name": "名" * 129}, 400),
-        (f"/api/groups/{GROUP}/name", "put", {"name": "名" * 128}, 200),
-        (f"/api/groups/{GROUP}/name", "put", {"name": "名\x00"}, 400),
-        (f"/api/groups/{GROUP}/description", "put", {"description": "描" * 1000}, 200),
-        (f"/api/groups/{GROUP}/description", "put", {"description": "描" * 1001}, 400),
-        (f"/api/groups/{GROUP}/description", "put", {"description": "描\x00"}, 400),
+        ("/api/v1/groups", "post", {"name": ""}, 422),
         ("/api/v1/groups", "post", {"name": "名" * 129}, 400),
+        ("/api/v1/groups", "post", {"name": "名" * 10 + "\x00"}, 400),
         ("/api/v1/groups", "post", {"name": "名" * 128}, 201),
         (f"/api/v1/groups/{GROUP}/name", "put", {"name": "名" * 129}, 400),
+        (f"/api/v1/groups/{GROUP}/name", "put", {"name": "名\x00"}, 400),
         (f"/api/v1/groups/{GROUP}/name", "put", {"name": "名" * 128}, 204),
+        (f"/api/v1/groups/{GROUP}/description", "put", {"description": "描" * 1001}, 400),
+        (f"/api/v1/groups/{GROUP}/description", "put", {"description": "描\x00"}, 400),
+        (f"/api/v1/groups/{GROUP}/description", "put", {"description": "描" * 128}, 200),
+        (f"/api/v1/groups/{GROUP}/description", "put", {"description": "描" * 1000}, 200),
     ],
 )
 def test_group_column_width_is_validated(monkeypatch, path, method, payload, status):
     repo = _GroupsRepo()
     _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_v3_router.router, "/api/v1/groups"))
-    app.include_router(groups_router.router, prefix="/api/groups")
+    app = _client((groups_router.router, "/api/v1/groups"))
     app.dependency_overrides[get_current_user] = lambda: ADMIN
 
     response = TestClient(app).request(method.upper(), path, json=payload)
@@ -337,71 +306,22 @@ def test_description_for_missing_group_is_404(monkeypatch):
 
     repo.get = _missing
     _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_router.router, "/api/groups"))
+    app = _client((groups_router.router, "/api/v1/groups"))
     app.dependency_overrides[get_current_user] = lambda: ADMIN
 
     response = TestClient(app).put(
-        f"/api/groups/{GROUP}/description", json={"description": "说明"}
+        f"/api/v1/groups/{GROUP}/description", json={"description": "说明"}
     )
 
     assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# 下推：v1 /user 只问一页；v2 /time 认 search 别名
+# 下推：v2 /time 认 search 别名
 # ---------------------------------------------------------------------------
 
 
-def test_v1_user_page_pushes_pagination_down(monkeypatch):
-    repo = _GroupsRepo()
-    repo.member_total = 200
-    repo.member_rows = [
-        {
-            "_id": f"00000000000000000000{index:04d}",
-            "id": f"2025{index:04d}",
-            "name": f"学生{index}",
-            "roles": ["student"],
-            "class_id": GROUP,
-            "class_name": "甲班",
-            "banned": False,
-            "password": None,
-        }
-        for index in range(200)
-    ]
-    _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_router.router, "/api/groups"))
-    app.dependency_overrides[get_current_user] = lambda: ADMIN
-
-    body = TestClient(app).get(
-        f"/api/groups/{GROUP}/user", params={"page": 2, "perpage": 100}
-    ).json()
-
-    assert repo.members_calls == [
-        {"group_oid": GROUP, "query": "", "page": 2, "size": 100}
-    ]
-    # 第二页只回一页的行，但 size 是整班总数。
-    assert [row["id"] for row in body["data"]] == [
-        f"2025{index:04d}" for index in range(100, 200)
-    ]
-    assert body["metadata"]["size"] == 200
-
-
-@pytest.mark.parametrize("page", [1, 5])
-def test_v1_user_page_handles_empty_and_out_of_range(monkeypatch, page):
-    repo = _GroupsRepo()
-    _install(monkeypatch, groups_repo=repo)
-    app = _client((groups_router.router, "/api/groups"))
-    app.dependency_overrides[get_current_user] = lambda: ADMIN
-
-    body = TestClient(app).get(
-        f"/api/groups/{GROUP}/user", params={"page": page, "perpage": 10}
-    ).json()
-
-    assert body["data"] == []
-    assert body["metadata"]["size"] == 0
-
-
-def test_v1_time_page_uses_the_pushed_down_repo(monkeypatch):
+def test_group_time_page_uses_the_pushed_down_repo(monkeypatch):
     repo = _GroupsRepo()
     time_repo = _TimeRepo(
         [
@@ -424,19 +344,19 @@ def test_v1_time_page_uses_the_pushed_down_repo(monkeypatch):
         ]
     )
     _install(monkeypatch, groups_repo=repo, time_repo=time_repo)
-    app = _client((groups_router.router, "/api/groups"))
+    app = _client((groups_router.router, "/api/v1/groups"))
     app.dependency_overrides[get_current_user] = lambda: ADMIN
 
     body = TestClient(app).get(
-        f"/api/groups/{GROUP}/time",
-        params={"page": 2, "perpage": 10, "exceeding": False, "search": "张"},
+        f"/api/v1/groups/{GROUP}/time",
+        params={"page": 2, "perpage": 10, "search": "张"},
     ).json()
 
     assert time_repo.calls == [
         {
             "class_oid": GROUP,
             "query": "张",
-            "sort_field": None,
+            "sort_field": "id",
             "descending": False,
             "page": 2,
             "size": 10,
@@ -469,7 +389,7 @@ def test_v2_group_time_accepts_search_and_query(monkeypatch, param):
         ]
     )
     _install(monkeypatch, time_repo=time_repo)
-    app = _client((groups_v2_router.router, "/api/v1/groups"))
+    app = _client((groups_router.router, "/api/v1/groups"))
     app.dependency_overrides[get_current_user] = lambda: ADMIN
 
     response = TestClient(app).get(

@@ -14,7 +14,6 @@ import asyncio
 import logging
 import time
 
-import pytest
 from fastapi.testclient import TestClient
 
 import main

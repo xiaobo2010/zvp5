@@ -1,10 +1,10 @@
 """Pure helpers behind the per-activity statistics endpoints.
 
 Everything here is a plain function over an in-memory sequence of rows: no
-database, no network, no file I/O. ``routers/activity_statistics_router`` and
-``routers/mcp_router`` own the reads and reuse these helpers, so the histogram,
-the grouped views, the description and the MCP mapping all share one
-implementation of the maths.
+database, no network, no file I/O. ``routers/activity_statistics_router`` and the
+agent tools own the reads and reuse these helpers, so the histogram, the grouped
+views, the description and the statistics mapping all share one implementation
+of the maths.
 
 Run the offline unit tests with pytest (repo root on ``sys.path`` via
 ``conftest.py``)::

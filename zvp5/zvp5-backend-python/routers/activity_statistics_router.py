@@ -2,12 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from db import backends
 from db.oracle.session import session_scope
 import asyncio
-import numpy as np
 
 from util.activity_statistics import (
     MODE_ORDER,
     build_analysis_payload,
-    describe_durations,
     empty_analysis_payload,
 )
 from util.object_id import get_current_user
@@ -57,63 +55,13 @@ def _require_statistics_reader(user: dict) -> None:
     ensure_feature(user, "activity.stats")
 
 
-@router.get("/{activity_id}/description")
-async def activity_issuance_description(
-    activity_id: str, user=Depends(get_current_user)
-):
-    """
-    Get the data description of an activity by its ID.
-    It consists: mean, median, mode, standard deviation, min, max, and variance.
-    Only memberships with status ``effective`` are counted, and the maths come
-    from :func:`util.activity_statistics.describe_durations`.
-    :param activity_id: The ID of the activity
-    :param user: Current user, used for authentication
-    """
-    _require_statistics_reader(user)
-    distribution = await backends.get_members_repo().list_by_activity(
-        activity_id, status="effective"
-    )
-    if not distribution:
-        return {"code": 404, "status": "not found", "data": None}
-    distribution = [float(item["duration"]) for item in distribution]
-    return describe_durations(distribution)
-
-
-@router.get("/{activity_id}/layers")
-async def activity_issuance_layers(activity_id: str, user=Depends(get_current_user)):
-    """
-    Get the layers of an activity by its ID.
-    Only memberships with status ``effective`` are counted.
-    :param activity_id: The ID of the activity
-    :param user: Current user, used for authentication
-    """
-    _require_statistics_reader(user)
-    distribution = await backends.get_members_repo().list_by_activity(
-        activity_id, status="effective"
-    )
-    if not distribution:
-        return {"code": 404, "status": "not found", "data": None}
-    distribution = [item["duration"] for item in distribution]
-    distribution = np.array(distribution, dtype=np.float32)
-
-    # Then we find different values, which indicates the layers
-    unique_values = np.unique(distribution)
-    layers = [
-        {"value": float(value), "count": int(np.sum(distribution == value))}
-        for value in unique_values
-    ]
-    layers.sort(key=lambda x: x["count"])
-    return layers[::-1]
-
-
 @router.get("/{activity_id}/analysis")
 async def activity_issuance_analysis(activity_id: str, user=Depends(get_current_user)):
     """
     Get the histogram, grouped and descriptive statistics of an activity by its ID.
     Only memberships with status ``effective`` are counted: the same population
     as the time rebuild uses, so the numbers agree with the rest of the system.
-    The payload is a superset of the description/layers endpoints, which are kept
-    as fallbacks.
+    The payload is a superset of the retired description/layers endpoints.
 
     Members are mapped to their class with a single users read restricted to the
     oids the memberships actually reference (plus the groups repo's ``list_all``

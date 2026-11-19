@@ -61,7 +61,7 @@ DEVICE_BAN_PAGE_MAX = 100
 BAN_DURATION_MAX_DAYS = 3650
 BAN_REASON_MAX_CHARS = 500
 
-# 审计用的 log_type：与 ``routers/users_v3_router.set_user_banned_v3`` 同值
+# 审计用的 log_type：与 ``routers/users_router.set_user_banned_v3`` 同值
 # （``ban_change`` 在 ``db.repos.oracle.app_logs.PROTECTED_LTYPES`` 里，不会被
 # 保留期清掉）。设备封禁沿用 ``device_ban``（同样受保护）。
 AUDIT_TYPE_BAN = "ban_change"

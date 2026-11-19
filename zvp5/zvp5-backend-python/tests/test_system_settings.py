@@ -491,7 +491,6 @@ def test_check_quota_uses_the_effective_limit(repos) -> None:
 
 
 def test_user_quota_routes(repos, monkeypatch) -> None:
-    import asyncio
 
     settings, quotas = repos
     http, log = _api(monkeypatch, settings, quotas)

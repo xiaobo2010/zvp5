@@ -74,9 +74,13 @@ class AppLogsRepo(Protocol):
     ) -> tuple[list[Row], int]:
         """Return ``(rows, total)`` for one user's log history.
 
-        Lifts ``routers/users_router.py.read_logs`` (``/{user_oid}/logs``):
         ``user`` equality plus an optional *raw* (not escaped) ``url``/``data``
         contains, ordered by ``timestamp`` desc; ``page == -1`` = no offset.
+
+        2026-11-19 起没有 HTTP 调用方：``GET /api/v1/users/{user_oid}/logs``
+        已随死端点清理删除（前端零调用）。仓储能力保留，SQL 形状仍由
+        ``tests/test_log_display_names.py`` / ``test_log_query_optimization.py``
+        钉住。
         """
         ...
 

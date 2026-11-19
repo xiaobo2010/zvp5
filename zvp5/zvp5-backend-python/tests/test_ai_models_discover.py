@@ -26,7 +26,6 @@ from fastapi.testclient import TestClient
 import settings
 from db import backends
 from routers import ai_models_router
-from services.ai import config as ai_config
 from services.ai import credentials, providers
 from services.ai.credentials import CredentialError
 from services.ai.routing import RouteError

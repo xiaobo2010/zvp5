@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import ai_agent_router, attachments_router, users_v3_router
+from routers import ai_agent_router, attachments_router, users_router
 from typings.log import inject_log
 from util.cert import jwt_encode
 from util.object_id import (
@@ -111,12 +111,6 @@ def world(monkeypatch):
         writes.append(("clear_primary", str(oid)))
         USERS[str(oid)]["primary_xuehai_id"] = None
 
-    async def list_for_user(oid):
-        return [{"xuehai_id": "777", "status": "active"}]
-
-    async def revoke(oid, xuehai_id):
-        writes.append(("revoke", str(oid), xuehai_id))
-
     async def upsert(oid, xuehai_id, source, note):
         writes.append(("upsert", str(oid), xuehai_id, source, note))
 
@@ -165,14 +159,12 @@ def world(monkeypatch):
     monkeypatch.setattr(
         backends,
         "get_bindings_repo",
-        lambda *a, **k: SimpleNamespace(
-            list_for_user=list_for_user, revoke=revoke, upsert=upsert
-        ),
+        lambda *a, **k: SimpleNamespace(upsert=upsert),
         raising=False,
     )
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix="/api/v1/users")
+    app.include_router(users_router.router, prefix="/api/v1/users")
     app.include_router(ai_agent_router.router, prefix="/api/ai/agent")
     app.include_router(attachments_router.router, prefix="/api/attachments")
     app.dependency_overrides[get_current_user] = lambda: {
@@ -225,18 +217,6 @@ async def test_rejections_are_403_never_401(world, label, token) -> None:
 # ---------------------------------------------------------------------------
 
 HIGH_RISK_ENDPOINTS = [
-    (
-        "PUT",
-        f"/api/v1/users/{TARGET}/bindings",
-        {"xuehai_id": PRIMARY},
-        {},
-    ),
-    (
-        "DELETE",
-        f"/api/v1/users/{TARGET}/bindings/777",
-        {},
-        {},
-    ),
     (
         "DELETE",
         f"/api/v1/users/{TARGET}/primary-device",
@@ -342,25 +322,8 @@ def test_endpoint_rejects_a_forged_token(world, method, path, body, headers) -> 
 
 
 # ---------------------------------------------------------------------------
-# 本人有效令牌：管理端绑定 / 解绑正常走通
+# 本人有效令牌：主设备自助绑定正常走通
 # ---------------------------------------------------------------------------
-
-
-def test_binding_endpoints_pass_with_the_operators_own_token(world) -> None:
-    bound = world.client.put(
-        f"/api/v1/users/{TARGET}/bindings",
-        json={"xuehai_id": PRIMARY, "verification_token": _token(CURRENT)},
-    )
-    assert bound.status_code == 204
-    assert ("upsert", TARGET, PRIMARY, "admin", None) in world.writes
-
-    revoked = world.client.request(
-        "DELETE",
-        f"/api/v1/users/{TARGET}/bindings/777",
-        json={"verification_token": _token(CURRENT)},
-    )
-    assert revoked.status_code == 204
-    assert ("revoke", TARGET, "777") in world.writes
 
 
 def test_first_binding_needs_no_token(world) -> None:

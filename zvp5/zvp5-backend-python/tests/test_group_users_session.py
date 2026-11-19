@@ -13,12 +13,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import groups_v3_router as groups_v3
+from routers import groups_router as groups_v3
 from util.object_id import get_current_user
 
 PREFIX = "/api/v1/groups"

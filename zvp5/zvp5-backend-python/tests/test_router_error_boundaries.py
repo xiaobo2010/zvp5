@@ -18,13 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from db import backends
 from db.repos.oracle.users import OracleUsersRepo
 from routers import (
-    activities_v2_router,
+    activities_router,
     ban_router,
     groups_router,
-    groups_v2_router,
+    groups_router,
     times_router,
     users_router,
-    users_v3_router,
+    users_router,
 )
 from services import device_guard
 from typings.log import inject_log
@@ -69,26 +69,20 @@ def _unique_violation() -> IntegrityError:
     return IntegrityError("INSERT", {}, Exception("ORA-00001"))
 
 
-def test_user_time_rejects_unparsable_bounds(monkeypatch):
+def test_user_time_rejects_non_boolean_allow_cache(monkeypatch):
     async def boom(*args, **kwargs):
-        raise AssertionError("非法时间参数不得进入时间计算")
+        raise AssertionError("非法查询参数不得进入时间计算")
 
     monkeypatch.setattr(users_router, "calculate_user_time", boom)
-    http = _client(users_router.router, "/api/users")
+    http = _client(users_router.router, "/api/v1/users")
 
+    # 合并后唯一实现（v2）没有 start/end 区间参数；可校验的是 ``allow_cache``
+    # 这个布尔开关——非法值在校验层 422，绝不带着坏参数进计算。
     response = http.get(
-        f"/api/users/{TARGET}/time",
-        params={"start": "garbage", "end": "2026-01-01"},
+        f"/api/v1/users/{TARGET}/time",
+        params={"allow_cache": "garbage"},
     )
-    assert response.status_code == 400
-    assert "start" in response.json()["detail"]
-
-    response = http.get(
-        f"/api/users/{TARGET}/time",
-        params={"start": "2026-01-01", "end": "garbage"},
-    )
-    assert response.status_code == 400
-    assert "end" in response.json()["detail"]
+    assert response.status_code == 422
 
 
 def test_delete_past_rejects_non_numeric_index(monkeypatch):
@@ -100,9 +94,9 @@ def test_delete_past_rejects_non_numeric_index(monkeypatch):
         "get_users_repo",
         lambda *a, **k: SimpleNamespace(get_by_oid=get_by_oid),
     )
-    http = _client(users_router.router, "/api/users")
+    http = _client(users_router.router, "/api/v1/users")
 
-    response = http.delete(f"/api/users/{TARGET}/past/abc")
+    response = http.delete(f"/api/v1/users/{TARGET}/past/abc")
     assert response.status_code == 400
 
 
@@ -120,7 +114,7 @@ def test_create_user_duplicate_race_is_conflict(monkeypatch):
             find_by_business_id=find_by_business_id, create=create
         ),
     )
-    http = _client(users_v3_router.router, "/api/v1/users")
+    http = _client(users_router.router, "/api/v1/users")
 
     response = http.post(
         "/api/v1/users", json={"id": "20250101", "name": "张三"}
@@ -201,7 +195,7 @@ def test_group_time_rows_with_null_columns_do_not_500(monkeypatch):
         "get_time_repo",
         lambda *a, **k: SimpleNamespace(list_by_class=list_by_class),
     )
-    http = _client(groups_v2_router.router, "/api/v1/groups")
+    http = _client(groups_router.router, "/api/v1/groups")
 
     response = http.get(f"/api/v1/groups/{GROUP}/time")
     assert response.status_code == 200
@@ -220,7 +214,7 @@ def test_activity_with_missing_fields_is_conflict_not_500(monkeypatch):
         "get_activities_repo",
         lambda *a, **k: SimpleNamespace(get=get),
     )
-    http = _client(activities_v2_router.router, "/api/v1/activities")
+    http = _client(activities_router.router, "/api/v1/activities")
 
     response = http.put(
         f"/api/v1/activities/{ACTIVITY}/status", json={"status": "effective"}
@@ -230,7 +224,7 @@ def test_activity_with_missing_fields_is_conflict_not_500(monkeypatch):
 
 
 def test_group_times_missing_bulk_entry_defaults_to_zero(monkeypatch):
-    """v1 班级时长页读不到时长（NULL 列）时按 0 出，不是 500。"""
+    """班级时长页读不到时长（NULL 列）时按 0 出，不是 500。"""
 
     async def list_by_class(*args, **kwargs):
         return [_null_time_row()], 1

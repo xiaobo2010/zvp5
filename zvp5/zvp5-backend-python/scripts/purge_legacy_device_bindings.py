@@ -7,7 +7,7 @@
 一堆设备，所以按需清一次。
 
 **这不再是「全表清空」脚本**（2026-10 修订）：表仍在被活代码读写——
-``routers/users_router.py`` 登录时自动 upsert、``routers/users_v3_router.py``
+``routers/users_router.py`` 登录时自动 upsert、``routers/users_router.py``
 管理员手工 upsert/revoke、管理端列表直接读。全表 DELETE 会连「绑定不符的证据」
 和「管理员手工 revoke 的记录」一起抹掉。因此删除必须带明确的时间下界
 （``--before``），只清某一天之前的老数据。

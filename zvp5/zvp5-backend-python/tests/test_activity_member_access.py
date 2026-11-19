@@ -20,7 +20,7 @@ import pytest
 from fastapi import HTTPException
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 
 OWNER = "000000000000000000000001"
 OTHER = "000000000000000000000002"
@@ -109,18 +109,18 @@ def state(monkeypatch):
         state["refreshed"].append((str(oid), allow_cache))
         return {}
 
-    monkeypatch.setattr(activities_v2_router, "calculate_user_time", calculate)
+    monkeypatch.setattr(activities_router, "calculate_user_time", calculate)
     return state
 
 
 async def _get(state, activity_id, session_id, user):
-    return await activities_v2_router.get_activity_member_v2(
+    return await activities_router.get_activity_member_v2(
         activity_id, session_id, user=user
     )
 
 
 async def _delete(state, activity_id, session_id, user):
-    return await activities_v2_router.delete_activity_member_v2(
+    return await activities_router.delete_activity_member_v2(
         activity_id, session_id, user=user, log=state["log"]
     )
 

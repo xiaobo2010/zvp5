@@ -27,10 +27,9 @@ async def validate_read_user_permission(
     ``department`` / ``secretary`` keep every ability they had — this helper
     only ever loosened, it never restricts.
 
-    Callers: ``users_router.read_user``, ``users_v2_router``
-    ``get_user_activities_v2`` / ``get_user_time_v2`` /
-    ``get_user_time_statistics_v2`` — all read-only endpoints. No write or
-    observer-only endpoint reuses it.
+    Callers: ``users_router.get_user_activities_v2`` /
+    ``get_user_time_v2`` / ``get_user_time_statistics_v2`` — all read-only
+    endpoints. No write or observer-only endpoint reuses it.
     """
     return True
 
@@ -71,7 +70,7 @@ def role_change_forbidden(
     2. **改自己的角色**：一条请求里同时包含「自我提权」（给自己加 ``admin``）
        与「自我降级/自锁」（把自己踢出 ``admin``，`_set_roles_stmt` 还会轮换
        ``session_id``，本地立即掉线）。两者都不可在无人复核的情况下自助发生，
-       与 ``users_v3_router`` 的「不能封禁自己」是同一类自锁风险，故**自我角色
+       与 ``users_router`` 的「不能封禁自己」是同一类自锁风险，故**自我角色
        变更整体拒绝**（是「禁止自我提权」的超集）。
 
     纯判定、不查库：目标账号的角色由调用方查库后传入，便于单测。

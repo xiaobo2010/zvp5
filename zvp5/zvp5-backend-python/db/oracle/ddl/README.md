@@ -54,8 +54,9 @@ extended by `V007`.
 
 `USER_DEVICE_BINDINGS` backs the 学海 ID 身份追溯 MVP: which 学海 device id a
 user logs in from. It is **observe-only** — no login is ever blocked; the rows
-feed the admin binding endpoints (`GET`/`PUT`/`DELETE /api/v3/users/{id}/bindings`)
-and the login-time `device_bind` / `binding_mismatch` audit logs. `USER_OID`
+are written by the login-time auto-bind and feed the `device_bind` /
+`binding_mismatch` audit logs. 管理端的绑定列表/改绑/解绑端点已于 2026-11-19
+删除（前端零调用），因此没有 HTTP 面读取全量绑定行。`USER_OID`
 carries a real FK to `USERS(OID)` (the table starts empty, so no legacy id can
 violate it). A revoked row is kept (`status='revoked'`); the
 `(user_oid, xuehai_id)` pair is unique so a re-bind reactivates in place. Fresh

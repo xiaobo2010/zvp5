@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 from util import cert
 
 SESSION = "sid-v1"
@@ -165,8 +165,8 @@ def env(monkeypatch):
     async def _begin():
         yield None
 
-    monkeypatch.setattr(activities_v2_router, "session_scope", scope)
-    monkeypatch.setattr(activities_v2_router, "_refresh_user_time_for_members", refresh)
+    monkeypatch.setattr(activities_router, "session_scope", scope)
+    monkeypatch.setattr(activities_router, "_refresh_user_time_for_members", refresh)
 
     # 删成员会立刻按该成员本人重算缓存：单测只记录，不触达 Oracle。
     time_refresh_calls: list[str] = []
@@ -175,7 +175,7 @@ def env(monkeypatch):
         time_refresh_calls.append((str(oid), allow_cache))
         return {}
 
-    monkeypatch.setattr(activities_v2_router, "calculate_user_time", calculate)
+    monkeypatch.setattr(activities_router, "calculate_user_time", calculate)
 
     return SimpleNamespace(
         activities=activities,
@@ -189,7 +189,7 @@ def env(monkeypatch):
 @pytest.fixture
 def client(env):
     app = FastAPI()
-    app.include_router(activities_v2_router.router, prefix="/api/v1/activities")
+    app.include_router(activities_router.router, prefix="/api/v1/activities")
     return TestClient(app)
 
 

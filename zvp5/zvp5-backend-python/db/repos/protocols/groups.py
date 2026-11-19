@@ -76,7 +76,7 @@ class GroupsRepo(Protocol):
         ``_id`` descending). ``total`` counts the matching activities, i.e.
         every distinct activity of the class, not ``memberships``.
 
-        Lifts ``routers/groups_v2_router.py::get_group_activities_v2``.
+        Lifts ``routers/groups_router.py::get_group_activities_v2``.
         """
         ...
 
@@ -112,7 +112,7 @@ class GroupsRepo(Protocol):
         filter).
 
         Lifts ``routers/users_router.py`` (``permissions $in`` lookup) and
-        ``routers/groups_v2_router.py`` (name ``$regex`` lookup).
+        ``routers/groups_router.py`` (name ``$regex`` lookup).
         """
         ...
 
@@ -121,7 +121,7 @@ class GroupsRepo(Protocol):
 
         Same ``{_id, name, type: "permission", permissions, description}`` shape
         as :meth:`list_permission_groups`. Lifts
-        ``routers/groups_v3_router.py``'s
+        ``routers/groups_router.py``'s
         ``find_one({"_id": ..., "type": "permission"})``.
         """
         ...

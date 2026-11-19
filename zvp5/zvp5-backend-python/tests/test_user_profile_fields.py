@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import users_v3_router
+from routers import users_router
 from util.user import user_profile
 
 PREFIX = "/api/v1/users"
@@ -60,8 +60,8 @@ def client(monkeypatch):
     )
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=PREFIX)
-    app.dependency_overrides[users_v3_router.get_current_user] = lambda: READER
+    app.include_router(users_router.router, prefix=PREFIX)
+    app.dependency_overrides[users_router.get_current_user] = lambda: READER
     return TestClient(app)
 
 
@@ -87,8 +87,8 @@ def test_profile_defaults_when_the_columns_are_null(monkeypatch) -> None:
         backends, "get_users_repo", lambda *a, **k: SimpleNamespace(get_by_oid=get_by_oid)
     )
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=PREFIX)
-    app.dependency_overrides[users_v3_router.get_current_user] = lambda: READER
+    app.include_router(users_router.router, prefix=PREFIX)
+    app.dependency_overrides[users_router.get_current_user] = lambda: READER
 
     data = TestClient(app).get(f"{PREFIX}/{TARGET}").json()["data"]
 

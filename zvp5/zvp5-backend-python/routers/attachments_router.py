@@ -189,7 +189,7 @@ class BindRequest(BaseModel):
 
 
 class DeleteRequest(BaseModel):
-    """软删除的复核令牌；``DELETE`` 也走 body，与 ``users_v3_router`` 一致。"""
+    """软删除的复核令牌；``DELETE`` 也走 body，与 ``users_router`` 一致。"""
 
     verification_token: str | None = None
 

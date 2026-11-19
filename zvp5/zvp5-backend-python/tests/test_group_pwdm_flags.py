@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import groups_router, groups_v3_router
+from routers import groups_router
 from util.cert import hash_password
 from util.object_id import get_current_user
 
@@ -100,17 +100,12 @@ def client(monkeypatch):
     monkeypatch.setattr(
         backends, "get_groups_repo", lambda session=None: _GroupsRepo(ROWS)
     )
-    monkeypatch.setattr(groups_v3_router, "session_scope", _fake_session_scope)
+    monkeypatch.setattr(groups_router, "session_scope", _fake_session_scope)
     app = FastAPI()
     app.include_router(groups_router.router, prefix="/api/groups")
-    app.include_router(groups_v3_router.router, prefix="/api/v1/groups")
+    app.include_router(groups_router.router, prefix="/api/v1/groups")
     app.dependency_overrides[get_current_user] = lambda: READER
     return TestClient(app)
-
-
-def test_v1_page_reports_custom_password_per_row(client) -> None:
-    body = client.get(f"/api/groups/{GROUP_ID}/user?pwdm=true").json()
-    assert [row["password"] for row in body["data"]] == [False, True, False]
 
 
 def test_v3_page_reports_password_hash_presence_per_row(client) -> None:
@@ -119,10 +114,6 @@ def test_v3_page_reports_password_hash_presence_per_row(client) -> None:
 
 
 def test_pwdm_off_never_exposes_password_state(client) -> None:
-    assert all(
-        row["password"] is None
-        for row in client.get(f"/api/groups/{GROUP_ID}/user").json()["data"]
-    )
     assert all(
         row["password"] is None
         for row in client.get(f"/api/v1/groups/{GROUP_ID}/users").json()["data"]
@@ -167,9 +158,9 @@ def test_permission_group_pwdm_reports_has_password(monkeypatch) -> None:
     monkeypatch.setattr(
         backends, "get_users_repo", lambda session=None: _PagedUsersRepo()
     )
-    monkeypatch.setattr(groups_v3_router, "session_scope", _fake_session_scope)
+    monkeypatch.setattr(groups_router, "session_scope", _fake_session_scope)
     app = FastAPI()
-    app.include_router(groups_v3_router.router, prefix="/api/v1/groups")
+    app.include_router(groups_router.router, prefix="/api/v1/groups")
     app.dependency_overrides[get_current_user] = lambda: READER
     body = TestClient(app).get(f"/api/v1/groups/{GROUP_ID}/users?pwdm=true").json()
     assert [row["password"] for row in body["data"]] == [True, False]

@@ -12,7 +12,7 @@
 （不再做 8 位数字/年份窗口/班号座号格式闸），相关回归见
 ``tests/test_v4242_user_admin.py``。
 
-全离线：真跑 ``routers.users_v3_router``（真 bcrypt），只把 users repo 换成内存
+全离线：真跑 ``routers.users_router``（真 bcrypt），只把 users repo 换成内存
 假实现、``inject_log`` 换成桩。需从仓库根运行 pytest（import 时读密钥文件）。
 """
 
@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db import backends
-from routers import users_router, users_v3_router
+from routers import users_router
 from typings.log import inject_log
 from util.cert import check_password, jwt_decode, pwd_strength, rsa_encrypt
 from util.object_id import get_current_user
@@ -79,10 +79,10 @@ def _make_client(monkeypatch, existing_numbers=(), create_raises=None):
 
     repo = SimpleNamespace(find_by_business_id=find_by_business_id, create=create)
     monkeypatch.setattr(backends, "get_users_repo", lambda *a, **k: repo)
-    monkeypatch.setattr(users_v3_router, "get_user_display_name", display_name)
+    monkeypatch.setattr(users_router, "get_user_display_name", display_name)
 
     app = FastAPI()
-    app.include_router(users_v3_router.router, prefix=PREFIX)
+    app.include_router(users_router.router, prefix=PREFIX)
     app.dependency_overrides[get_current_user] = lambda: {"id": ADMIN, "per": ["admin"]}
     app.dependency_overrides[inject_log] = lambda: log
     return TestClient(app), created, log

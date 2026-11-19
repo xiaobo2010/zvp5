@@ -1,8 +1,12 @@
-"""匿名 ``GET /api/users`` 的按 IP 限流。
+"""匿名访问 ``GET /api/v1/users`` 的入口收紧。
 
-未登录且能按学号精确查姓名时，端点就是一条免费的姓名探测通道；现在匿名请求
-按来源 IP 走与登录用户同档的读预算（``read_throttle.LIMIT`` / 分钟），登录
-用户的路径与额度不变。
+未版本化实现曾允许匿名按学号精确查姓名，只能靠按 IP 的读限流
+（``read_throttle``）压低枚举成本；合并后列表端点统一为 v2 实现，
+``get_current_user`` 直接要求登录——匿名探测连预算都没有，直接被 401 拒掉。
+``read_throttle`` 的匿名档随之不再有调用方（本次不改那个模块，避免影响其他
+读取路径的未来复用）。
+
+这里钉住三件事：匿名读列表 / 单用户 / 用户活动一律 401，且不会触达仓储。
 """
 
 from __future__ import annotations
@@ -15,67 +19,54 @@ from fastapi.testclient import TestClient
 
 from db import backends
 from routers import users_router
-from util import read_throttle
-from util.object_id import optional_current_user
 
-PATH = "/api/users"
-LOGGED_IN = {"id": "000000000000000000000001", "per": ["student"]}
+USER_OID = "000000000000000000000001"
 
 
 @pytest.fixture()
 def repo(monkeypatch):
-    calls = []
+    calls: list[tuple] = []
 
-    async def search(query, logged_in, limit=None, offset=0):
-        calls.append((query, logged_in, limit, offset))
+    async def list_page(*args, **kwargs):
+        calls.append(("list_page", args))
         return [], 0
+
+    async def get_by_oid(oid):
+        calls.append(("get_by_oid", oid))
+        return None
 
     monkeypatch.setattr(
         backends,
         "get_users_repo",
-        lambda *a, **k: SimpleNamespace(search=search),
+        lambda *a, **k: SimpleNamespace(list_page=list_page, get_by_oid=get_by_oid),
     )
     return calls
 
 
 @pytest.fixture()
 def anonymous(repo) -> TestClient:
+    # 不覆盖 get_current_user：没有 Authorization 头就是真实的未登录请求。
     app = FastAPI()
-    app.include_router(users_router.router, prefix="/api/users")
-    app.dependency_overrides[optional_current_user] = lambda: None
+    app.include_router(users_router.router, prefix="/api/v1/users")
     return TestClient(app)
 
 
-@pytest.fixture()
-def logged_in(repo) -> TestClient:
-    app = FastAPI()
-    app.include_router(users_router.router, prefix="/api/users")
-    app.dependency_overrides[optional_current_user] = lambda: LOGGED_IN
-    return TestClient(app)
+def test_anonymous_cannot_list_users(anonymous, repo) -> None:
+    response = anonymous.get("/api/v1/users", params={"query": "20240001"})
+
+    assert response.status_code == 401
+    assert repo == []
 
 
-def test_anonymous_probing_is_429_over_the_budget(anonymous) -> None:
-    for index in range(read_throttle.LIMIT):
-        assert anonymous.get(PATH, params={"query": f"2024{index:04d}"}).status_code == 200
+def test_anonymous_cannot_read_a_single_user(anonymous, repo) -> None:
+    response = anonymous.get(f"/api/v1/users/{USER_OID}")
 
-    response = anonymous.get(PATH, params={"query": "20249999"})
-    assert response.status_code == 429
-    assert response.json()["detail"] == {
-        "code": "READ_RATE_LIMITED",
-        "message": "查询过于频繁，请稍后再试",
-    }
-    assert response.headers["Retry-After"] == "60"
+    assert response.status_code == 401
+    assert repo == []
 
 
-def test_logged_in_users_are_not_throttled_by_the_anonymous_budget(logged_in) -> None:
-    for index in range(read_throttle.LIMIT * 2):
-        response = logged_in.get(PATH, params={"query": f"2024{index:04d}"})
-        assert response.status_code == 200
+def test_anonymous_cannot_read_user_activities(anonymous, repo) -> None:
+    response = anonymous.get(f"/api/v1/users/{USER_OID}/activities")
 
-
-def test_anonymous_budget_is_a_separate_key_namespace(anonymous) -> None:
-    for _ in range(read_throttle.LIMIT):
-        anonymous.get(PATH)
-
-    # IP 档只占自己的键；具体用户的读预算键仍然为空。
-    assert list(read_throttle._buckets) == ["ip:testclient"]
+    assert response.status_code == 401
+    assert repo == []

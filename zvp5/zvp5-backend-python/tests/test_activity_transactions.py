@@ -10,8 +10,7 @@ from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
 from db import backends
-from routers import activities_v2_router as v2
-from routers import activities_v3_router as activities, imports_router as imports
+from routers import activities_router as activities, imports_router as imports
 
 ACTIVITY = "000000000000000000000010"
 USER = "000000000000000000000001"
@@ -195,17 +194,16 @@ def store(monkeypatch):
 
     monkeypatch.setattr(activities, "session_scope", scope)
     monkeypatch.setattr(imports, "session_scope", scope)
-    monkeypatch.setattr(v2, "session_scope", scope)
     for name in ("users", "members", "activities", "imports"):
         monkeypatch.setattr(backends, f"get_{name}_repo", lambda session=None, kind=name: Repos(session, kind))
-    # v3/import 在提交后排后台重算；v2 删除活动在提交后按抓到的成员重算。
+    # 批量登记/import 在提交后排后台重算；删除活动在提交后按抓到的成员重算。
     # 这里只记录调用，避免 fire-and-forget 任务读到假仓库。
-    monkeypatch.setattr(v2, "_schedule_user_time_refresh", state.scheduled.append)
+    monkeypatch.setattr(activities, "_schedule_user_time_refresh", state.scheduled.append)
 
     async def refresh(member_ids, activity_id=None):
         state.refreshed.append((list(member_ids), activity_id))
 
-    monkeypatch.setattr(v2, "_refresh_user_time_for_members", refresh)
+    monkeypatch.setattr(activities, "_refresh_user_time_for_members", refresh)
     return state
 
 
@@ -368,7 +366,7 @@ async def test_import_unknown_user_still_rejects_the_whole_workbook(store):
 
 
 def activity_payload(name="支教活动", place="学校", approver="member"):
-    return v2.Activity.model_validate(
+    return activities.Activity.model_validate(
         {
             "_id": ACTIVITY,
             "type": "on-campus",
@@ -389,7 +387,7 @@ def activity_payload(name="支教活动", place="学校", approver="member"):
 
 @pytest.mark.asyncio
 async def test_v2_create_writes_activity_extra_and_audit_in_one_transaction(store):
-    response = await v2.create_activity_v2(
+    response = await activities.create_activity_v2(
         activity_payload(), {"id": USER, "per": ["admin"]}, Log()
     )
 
@@ -406,7 +404,7 @@ async def test_v2_create_rolls_back_the_insert_when_the_extra_write_fails(store)
     before = deepcopy(store.data)
 
     with pytest.raises(RuntimeError):
-        await v2.create_activity_v2(
+        await activities.create_activity_v2(
             activity_payload(), {"id": USER, "per": ["admin"]}, Log()
         )
 
@@ -420,7 +418,7 @@ async def test_v2_delete_locks_parent_first_and_captures_members_before_deleting
     store.data["activities"] = 1
     store.data["members"] = {(USER, "on-campus"): 1.0, (OTHER, "off-campus"): 2.0}
 
-    response = await v2.delete_activity_v2(
+    response = await activities.delete_activity_v2(
         ACTIVITY, {"id": USER, "per": ["admin"]}, Log()
     )
 
@@ -440,7 +438,7 @@ async def test_v2_delete_is_atomic_when_the_parent_delete_fails(store):
     before = deepcopy(store.data)
 
     with pytest.raises(RuntimeError):
-        await v2.delete_activity_v2(ACTIVITY, {"id": USER, "per": ["admin"]}, Log())
+        await activities.delete_activity_v2(ACTIVITY, {"id": USER, "per": ["admin"]}, Log())
 
     # 成员删除与活动删除同一事务：父行失败，子行必须一起回滚。
     assert store.data == before

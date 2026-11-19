@@ -238,7 +238,7 @@ class UsersRepo(Protocol):
     async def list_by_name_or_id(self, pattern: str) -> list[Row]:
         """Return full user docs matching a name/id keyword (empty = all users).
 
-        Lifts ``routers/activities_v2_router.get_activity_members_v2``'s
+        Lifts ``services.agent.tool_impl.list_activity_members``'s
         searched-users lookup; ``pattern`` is a plain keyword matched as a
         case-insensitive literal ``contains`` (LIKE wildcards escaped by the
         repo), not a regular expression.

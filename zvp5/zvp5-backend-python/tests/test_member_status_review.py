@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 
 from db import backends
-from routers import activities_v2_router
+from routers import activities_router
 from util import calculate as calc
 
 ADMIN_OID = "000000000000000000000001"
@@ -196,10 +196,10 @@ async def _call(
     status="refused",
     user=ADMIN,
 ):
-    return await activities_v2_router.modify_activity_member_status_v2(
+    return await activities_router.modify_activity_member_status_v2(
         activity_id,
         session_id,
-        activities_v2_router.PutMemberStatus(status=status),
+        activities_router.PutMemberStatus(status=status),
         user=user,
         log=state["log"],
     )

@@ -1246,7 +1246,7 @@ class OracleUsersRepo:
         """改学号（登录名）并轮换 ``session_id``（旧 token 立即失效）。
 
         唯一冲突由 ``uq_users_business_id`` 抛出 ``IntegrityError``，调用方
-        （``users_v3_router``）转 409——这里不做「先查再写」的软判定，那是端点
+        （``users_router``）转 409——这里不做「先查再写」的软判定，那是端点
         层的友好提示，约束才是最终裁决者。
         """
         stmt = _set_business_id_stmt(normalize_oid(oid), business_id)

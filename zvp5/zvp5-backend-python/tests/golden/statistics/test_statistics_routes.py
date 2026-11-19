@@ -203,39 +203,3 @@ def test_analysis_without_effective_members_returns_the_empty_payload(
     assert response.status_code == 200
     assert response.json() == _EMPTY_ANALYSIS
     assert spy.calls == [{"activity_oid": ACTIVITY_ID, "status": "effective"}]
-
-
-def test_description_keeps_its_in_band_404_for_an_empty_activity(
-    monkeypatch,
-) -> None:
-    _patch_repos(monkeypatch, _SpyMembersRepo([]))
-    response = _client(_login(["secretary"])).get(
-        f"{PREFIX}/{ACTIVITY_ID}/description"
-    )
-    # In-band not-found: HTTP 200, the 404 lives in the body.
-    assert response.status_code == 200
-    assert response.json() == {"code": 404, "status": "not found", "data": None}
-
-
-def test_description_and_layers_also_only_read_effective_members(spy) -> None:
-    client = _client(_login(["secretary"]))
-    description = client.get(f"{PREFIX}/{ACTIVITY_ID}/description")
-    layers = client.get(f"{PREFIX}/{ACTIVITY_ID}/layers")
-    assert description.status_code == 200
-    assert description.json()["total"] == 2
-    assert layers.status_code == 200
-    assert layers.json() == [
-        {"value": 2.0, "count": 1},
-        {"value": 1.0, "count": 1},
-    ]
-    assert spy.calls == [
-        {"activity_oid": ACTIVITY_ID, "status": "effective"},
-        {"activity_oid": ACTIVITY_ID, "status": "effective"},
-    ]
-
-
-def test_description_rejects_a_student() -> None:
-    response = _client(_login(["student"])).get(
-        f"{PREFIX}/{ACTIVITY_ID}/description"
-    )
-    assert response.status_code == 403

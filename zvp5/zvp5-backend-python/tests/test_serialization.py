@@ -42,7 +42,7 @@ def _legacy_iso(value):
 
 def _legacy_iso_seconds(value):
     """``ban_router`` / ``ban_violations_router`` / ``notifications_router`` /
-    ``users_v3_router._iso_or_none`` 的 ``_iso``（替换前）。"""
+    ``users_router._iso_or_none`` 的 ``_iso``（替换前）。"""
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
     return None
