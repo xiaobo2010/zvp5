@@ -1237,8 +1237,15 @@ describe('思考过程展示', () => {
 })
 
 describe('视口适配', () => {
-  it('默认桌面视口：设置卡摊开，输入框 3 行起', async () => {
+  it('默认桌面视口：设置卡收成摘要，点「展开设置」摊开，输入框 3 行起', async () => {
     const wrapper = mountPage()
+    await settle()
+
+    // 纵向像素优先给消息区：设置卡默认收成一行摘要，要改模型再摊开
+    expect(wrapper.find('.ai-chat__settings').classes()).toContain('is-folded')
+    expect(wrapper.find('.ai-chat__settings-summary').exists()).toBe(true)
+
+    await findButton(wrapper, 'ai.chat.expandSettings')!.trigger('click')
     await settle()
 
     expect(wrapper.find('.ai-chat__settings').classes()).not.toContain('is-folded')

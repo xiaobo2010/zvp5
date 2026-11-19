@@ -546,6 +546,28 @@ watch(
 }
 
 /*
+ * 对话页（仅 chat 页签）：纵向像素优先给消息区。
+ * 桌面页头的副标题是对外介绍语，聊天时不需要；页签行收紧一档内距与高度。
+ * 只压缩「非必要头部」，输入区与历史高度约束（页签 flex:none、面板
+ * min-height:0 + overflow:hidden）一字不动。
+ */
+.yg-ai-home--chat {
+  gap: var(--yg-space-3);
+}
+
+.yg-ai-home--chat .ai-gateway-head__subtitle {
+  display: none;
+}
+
+.yg-ai-home--chat .ai-gateway-tabs {
+  margin-bottom: var(--yg-space-3);
+}
+
+.yg-ai-home--chat .ai-gateway-tab {
+  min-height: var(--yg-control-height-md);
+}
+
+/*
  * 极矮横屏（横放手机、横屏小窗）：纵向像素是最稀缺的资源。
  * 页头与页签之间的间距先让出来，剩下的全部留给对话区。
  */
