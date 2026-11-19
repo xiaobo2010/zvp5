@@ -23,8 +23,9 @@ repo / engine，也不依赖 startup hook（惰性建表，首次访问自建）
   :func:`invalidate_cache`，所以**本进程**下一次 :func:`is_enabled` 立刻读到
   ``False``；唯一窗口是「缓存里还压着 True 的那 2s 内」——与既有缓存语义一致。
 
-读路径的故障边界：本模块的读函数在事件循环线程上被每请求调用（同步 sqlite），
-任何 ``sqlite3.Error`` / ``OSError``（库被锁、只读盘、磁盘满）都必须就地消化，
+读路径的故障边界：同步读函数仍在事件循环线程上被调用；准入路径走 async 版，
+热缓存命中不切线程，只有 miss/过期才 offload 到工作线程。任何
+``sqlite3.Error`` / ``OSError``（库被锁、只读盘、磁盘满）都必须就地消化，
 否则一个本地故障会把全站每个 ``/api/`` 请求变成 500。读函数因此**永不抛异常**：
 记一次告警（同类错误只告一次，避免日志风暴）后返回「未维护」这个安全默认值
 （fail-open —— 本地状态库坏了，宁可放行也不要把站点钉死在 503）。
@@ -343,6 +344,23 @@ def _state_with_auto_recovery() -> dict:
         return get_state()
 
 
+def _cached_enabled(path: str, now: float) -> tuple[bool, bool]:
+    """只读热缓存：返回 ``(是否命中, 值)``；未命中不碰库、不写缓存。"""
+    with _cache_lock:
+        # 缓存按路径区分：换库（测试隔离）时不会读到上一个库的值。
+        if _cache_path == path and (now - _cache_at) < CACHE_TTL:
+            return True, _cache_value
+    return False, False
+
+
+def _cached_enabled_fresh(path: str, now: float) -> tuple[bool, bool]:
+    """只读热缓存（fresh 档）：返回 ``(是否命中, 值)``。"""
+    with _fresh_lock:
+        if _fresh_path == path and (now - _fresh_at) < FRESH_CACHE_TTL:
+            return True, _fresh_value
+    return False, False
+
+
 def is_enabled() -> bool:
     """当前是否维护模式，进程内 TTL 缓存兜住读路径。
 
@@ -350,11 +368,9 @@ def is_enabled() -> bool:
     所以本进程读到的立刻是 ``False``。
     """
     path = _db_path()
-    now = time.monotonic()
-    with _cache_lock:
-        # 缓存按路径区分：换库（测试隔离）时不会读到上一个库的值。
-        if _cache_path == path and (now - _cache_at) < CACHE_TTL:
-            return _cache_value
+    hit, value = _cached_enabled(path, time.monotonic())
+    if hit:
+        return value
     value = bool(_state_with_auto_recovery()["enabled"])
     with _cache_lock:
         _set_cache_locked(path, value)
@@ -370,24 +386,28 @@ def is_enabled_fresh() -> bool:
     每次 ``set_state`` 都会调）主动失效 —— 本进程开关即刻生效，跨进程最多 1s。
     """
     path = _db_path()
-    now = time.monotonic()
-    with _fresh_lock:
-        if _fresh_path == path and (now - _fresh_at) < FRESH_CACHE_TTL:
-            return _fresh_value
+    hit, value = _cached_enabled_fresh(path, time.monotonic())
+    if hit:
+        return value
     value = bool(_state_with_auto_recovery()["enabled"])
     with _fresh_lock:
         _set_fresh_cache_locked(path, value)
     return value
 
 
-
 async def is_enabled_async() -> bool:
-    """:func:`is_enabled` 的 async 版本：同步 sqlite 读挪到工作线程。"""
+    """async 版：热缓存命中直接返回，miss/过期才把同步读挪到工作线程。"""
+    hit, value = _cached_enabled(_db_path(), time.monotonic())
+    if hit:
+        return value
     return await asyncio.to_thread(is_enabled)
 
 
 async def is_enabled_fresh_async() -> bool:
-    """:func:`is_enabled_fresh` 的 async 版本：同步 sqlite 读挪到工作线程。"""
+    """async 版（fresh）：热缓存命中直接返回，miss/过期才 offload。"""
+    hit, value = _cached_enabled_fresh(_db_path(), time.monotonic())
+    if hit:
+        return value
     return await asyncio.to_thread(is_enabled_fresh)
 
 

@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import DatabaseError
 
+from db import cache
 from services import db_maintenance
 
 NOW = datetime(2026, 11, 4, 12, 0, 0)
@@ -550,3 +551,56 @@ async def test_refresh_snapshots_always_forces_reload(monkeypatch):
 
     assert result == {"settings": True, "roles": True}
     assert calls == [("refresh", True), ("refresh", True)]
+
+
+# ---------------------------------------------------------------------------
+# 缓存域集合：维护面与 db.cache 的键空间必须一一对应
+# ---------------------------------------------------------------------------
+
+
+def test_cache_scopes_stay_in_sync_with_the_prefix_table():
+    """``CACHE_SCOPES`` 漏一个域 = 维护动作永远刷不到那类 key。"""
+    assert tuple(db_maintenance.CACHE_SCOPES) == tuple(cache.SCOPE_PREFIXES)
+    assert set(db_maintenance.DEFAULT_FLUSH_SCOPES) <= set(db_maintenance.CACHE_SCOPES)
+    assert "notifications" in db_maintenance.CACHE_SCOPES
+    assert "changelog" in db_maintenance.CACHE_SCOPES
+
+
+def test_scope_prefixes_cover_the_notification_and_changelog_keys():
+    notifications = cache.SCOPE_PREFIXES["notifications"]
+    changelog = cache.SCOPE_PREFIXES["changelog"]
+
+    assert "zvms:notif:0:active".startswith(f"{cache.NS}:{notifications[0]}")
+    assert "zvms:changelog:0:all".startswith(f"{cache.NS}:{changelog[0]}")
+
+
+@pytest.mark.asyncio
+async def test_flush_cache_accepts_notification_and_changelog_scopes(monkeypatch):
+    seen: list[list[str]] = []
+
+    async def fake_flush(scopes):
+        seen.append(list(scopes))
+        return {scope: 0 for scope in scopes}
+
+    monkeypatch.setattr(db_maintenance.cache, "flush_scopes", fake_flush, raising=False)
+
+    result = await db_maintenance.flush_cache(["notifications", "changelog"])
+
+    assert seen == [["notifications", "changelog"]]
+    assert result["scopes"] == ["notifications", "changelog"]
+
+
+@pytest.mark.asyncio
+async def test_flush_cache_job_covers_every_scope(monkeypatch, audit_rows):
+    seen: list[list[str]] = []
+
+    async def fake_flush(scopes):
+        seen.append(list(scopes))
+        return {scope: 0 for scope in scopes}
+
+    monkeypatch.setattr(db_maintenance.cache, "flush_scopes", fake_flush, raising=False)
+
+    db_maintenance.start_job("flush_cache", None, False, "admin")
+    await _finish_job()
+
+    assert seen == [list(db_maintenance.CACHE_SCOPES)]

@@ -62,6 +62,8 @@ SCOPE_PREFIXES: dict[str, tuple[str, ...]] = {
     "groups": ("group", "pgroup", "glist", "pglist"),
     "activities": ("activity", "activities"),
     "conversations": ("conv", "convlatest"),
+    "notifications": ("notif",),
+    "changelog": ("changelog",),
     "settings": ("cfg",),
     "roles": ("role",),
 }
@@ -85,6 +87,8 @@ HEALTH_CHECK_SECONDS = 30
 _pending: dict[str, str] = {}
 #: 挂在事件循环上的回填任务集合（持有强引用，避免任务被 GC 掉）。
 _backfills: set[asyncio.Task] = set()
+#: 同 key 并发未命中的裁决表：``key -> (leader 的事件循环, Future)``。
+_inflight: dict[str, tuple[asyncio.AbstractEventLoop, "asyncio.Future[Any]"]] = {}
 
 
 def _uri() -> str:
@@ -220,6 +224,46 @@ def _spawn_backfill(client: Any, key: str, payload: str, ttl: float) -> None:
     task.add_done_callback(_backfills.discard)
 
 
+async def _load_once(
+    key: str, loader: Callable[[], Awaitable[Any]]
+) -> tuple[Any, bool]:
+    """同一 key 的并发未命中只跑一次 ``loader``（进程内 singleflight）。
+
+    返回 ``(值, 是否由本次回源)``：只有领导者负责回填，跟随者拿同一份结果
+    直接返回，不重复 ``SET``，也不重复排队回填。
+
+    领导者登记 ``(当前循环, Future)`` 并亲自回源；同一循环上的跟随者等这个
+    Future。循环不同就各自回源——等一个挂在别人循环上的 Future 只会卡死。
+    领导者失败/取消先把落脚点定在 Future 上再清理登记表，跟随者拿到同一份
+    异常，不会有人等一个永远不完成的 Future。
+    """
+    loop = asyncio.get_running_loop()
+    entry = _inflight.get(key)
+    if entry is not None and entry[0] is loop:
+        return await asyncio.shield(entry[1]), False
+
+    future: asyncio.Future = loop.create_future()
+    _inflight[key] = (loop, future)
+    try:
+        value = await loader()
+    except BaseException as exc:  # noqa: BLE001 - 异常原样广播给所有等待者
+        if not future.done():
+            if isinstance(exc, asyncio.CancelledError):
+                future.cancel()
+            else:
+                future.set_exception(exc)
+                future.exception()
+        raise
+    else:
+        if not future.done():
+            future.set_result(value)
+        return value, True
+    finally:
+        current = _inflight.get(key)
+        if current is not None and current[1] is future:
+            _inflight.pop(key, None)
+
+
 async def remember(
     key: str,
     ttl: float,
@@ -238,6 +282,9 @@ async def remember(
     在途 payload 当作命中——否则「一次请求里读两遍同一个 key」会打两次数据库。
     默认 ``False``：写落库后才返回，语义与历史完全一致（缓存层自己的测试依赖
     这个同步点）。
+
+    同 key 的并发未命中在进程内合并（见 :func:`_load_once`）：只有一个调用者
+    跑 ``loader``，其余等同一次结果；异常对该 key 的所有等待者一致。
     """
     client = await _get_client()
     if client is None:
@@ -254,8 +301,8 @@ async def remember(
             return _decode(json.loads(raw))
         except Exception:  # noqa: BLE001 - 脏值当作未命中，别让旧格式毒死路径
             pass
-    value = await loader()
-    if value is not None:
+    value, owned = await _load_once(key, loader)
+    if value is not None and owned:
         try:
             payload = json.dumps(
                 _encode(value), ensure_ascii=False, separators=(",", ":"), default=str
@@ -311,14 +358,26 @@ async def epoch(scope: str) -> int:
 
 
 async def bump_epoch(scope: str) -> None:
-    """整类失效 + 版本号自增（INCR 后补 30 天 TTL，不允许永久 key）。"""
+    """整类失效 + 版本号自增。
+
+    ``INCR`` 与 ``EXPIRE`` 放进同一个 ``MULTI/EXEC``：两条命令之间一旦断连，
+    就会留下一个没有 TTL 的永久 epoch key。客户端没有 ``pipeline``（测试替身）
+    时退回顺序两条命令，Redis 不可用时的降级语义不变。
+    """
     client = await _get_client()
     if client is None:
         return
     key = f"{NS}:epoch:{scope}"
     try:
-        await client.incr(key)
-        await client.expire(key, EPOCH_TTL_SECONDS)
+        pipeline = getattr(client, "pipeline", None)
+        if callable(pipeline):
+            async with pipeline(transaction=True) as pipe:
+                pipe.incr(key)
+                pipe.expire(key, EPOCH_TTL_SECONDS)
+                await pipe.execute()
+        else:
+            await client.incr(key)
+            await client.expire(key, EPOCH_TTL_SECONDS)
     except Exception:  # noqa: BLE001
         _mark_degraded()
 
@@ -421,3 +480,4 @@ def _reset_for_tests() -> None:
     _forced_client = None
     _degraded_until = 0.0
     _pending.clear()
+    _inflight.clear()

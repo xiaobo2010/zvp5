@@ -45,7 +45,7 @@ def test_jitter_spreads_expiry() -> None:
 
 @pytest.mark.asyncio
 async def test_content_console_invalidates_all_cached_scopes(monkeypatch) -> None:
-    """DB 控制台写下任意行后，五个带缓存的域都必须自增版本号。"""
+    """DB 控制台写下任意行后，每个带缓存的域都必须自增版本号。"""
     bumped: list[str] = []
 
     async def fake_bump(scope: str) -> None:
@@ -53,4 +53,16 @@ async def test_content_console_invalidates_all_cached_scopes(monkeypatch) -> Non
 
     monkeypatch.setattr(cache, "bump_epoch", fake_bump)
     await content_router._invalidate_read_caches()
-    assert bumped == ["users", "groups", "activities", "roles", "settings"]
+
+    # 集合与 db.cache 的键空间对齐（漏域 = 控制台改完仍读到旧值），顺序保持契约。
+    assert set(bumped) == set(cache.SCOPE_PREFIXES)
+    assert bumped == [
+        "users",
+        "groups",
+        "activities",
+        "conversations",
+        "notifications",
+        "changelog",
+        "roles",
+        "settings",
+    ]
