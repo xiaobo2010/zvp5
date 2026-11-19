@@ -22,7 +22,9 @@ import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
@@ -525,37 +527,10 @@ onMounted(() => {
     >
       <ElForm label-position="top">
         <ElFormItem :label="t('ai.quota.request.kind')">
-          <!-- 消耗类型二选一：芯片一次点击即选中，不再先展开下拉 -->
-          <div
-            class="ai-chips ai-chips--dialog"
-            role="radiogroup"
-            :aria-label="t('ai.quota.request.kind')"
-          >
-            <button
-              type="button"
-              role="radio"
-              class="ai-chips__item"
-              :class="{ 'is-active': requestKind === 'chat' }"
-              :aria-checked="requestKind === 'chat'"
-              data-value="chat"
-              :disabled="submitting"
-              @click="requestKind = 'chat'"
-            >
-              {{ t('ai.quota.chatTitle') }}
-            </button>
-            <button
-              type="button"
-              role="radio"
-              class="ai-chips__item"
-              :class="{ 'is-active': requestKind === 'ocr' }"
-              :aria-checked="requestKind === 'ocr'"
-              data-value="ocr"
-              :disabled="submitting"
-              @click="requestKind = 'ocr'"
-            >
-              {{ t('ai.quota.ocrTitle') }}
-            </button>
-          </div>
+          <ElSelect v-model="requestKind" class="w-full" :disabled="submitting">
+            <ElOption :label="t('ai.quota.chatTitle')" value="chat" />
+            <ElOption :label="t('ai.quota.ocrTitle')" value="ocr" />
+          </ElSelect>
           <p class="yg-text-xs yg-text-tertiary mt-1">
             {{ t('ai.quota.request.kindHint') }}
           </p>
@@ -723,58 +698,5 @@ onMounted(() => {
   .ai-quota-af__chevron {
     transition: none;
   }
-}
-
-/* 消耗类型芯片：弹层挂在 body 下、不吃页面级皮肤，这里自带一份直角描边版式 */
-.ai-chips--dialog {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--yg-space-1);
-  width: 100%;
-}
-
-.ai-chips--dialog .ai-chips__item {
-  min-height: calc(var(--yg-control-height-sm) + var(--yg-space-1));
-  padding: 0 var(--yg-space-3);
-  border: 1px solid var(--yg-border-default);
-  border-radius: var(--yg-radius-sm);
-  background: var(--yg-bg-surface);
-  color: var(--yg-text-secondary);
-  font: inherit;
-  font-size: var(--yg-font-size-sm);
-  cursor: pointer;
-  transition:
-    color var(--yg-dur-fast) var(--yg-ease-out),
-    border-color var(--yg-dur-fast) var(--yg-ease-out),
-    background-color var(--yg-dur-fast) var(--yg-ease-out);
-}
-
-.ai-chips--dialog .ai-chips__item:hover {
-  color: var(--yg-text-primary);
-  border-color: var(--yg-border-strong);
-}
-
-.ai-chips--dialog .ai-chips__item:active {
-  background: var(--yg-bg-surface-sunken);
-}
-
-.ai-chips--dialog .ai-chips__item:focus-visible {
-  outline: none;
-  box-shadow: var(--yg-focus-ring);
-}
-
-.ai-chips--dialog .ai-chips__item.is-active {
-  color: var(--yg-text-link);
-  border-color: var(--yg-color-primary);
-  background: var(--yg-color-primary-soft);
-  box-shadow: inset 0 0 0 1px var(--yg-color-primary);
-  font-weight: var(--yg-font-weight-medium);
-}
-
-.ai-chips--dialog .ai-chips__item:disabled {
-  color: var(--yg-text-disabled);
-  border-color: var(--yg-border-default);
-  background: var(--yg-bg-surface-sunken);
-  cursor: not-allowed;
 }
 </style>

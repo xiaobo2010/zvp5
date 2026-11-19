@@ -640,12 +640,7 @@ describe('定时任务列表', () => {
     const wrapper = mountPage(['admin'])
     await flushPromises()
 
-    // 审核状态芯片（替代旧下拉）：一次点击即按新状态重查
-    await wrapper
-      .find(
-        '[aria-label="ai.schedule.admin.reviewFilter"] .ai-chips__item[data-value="approved"]'
-      )
-      .trigger('click')
+    await wrapper.find('.el-select-stub').setValue('approved')
     await flushPromises()
 
     expect(listAiScheduledTasks).toHaveBeenLastCalledWith({

@@ -435,9 +435,7 @@ describe('我的额度面板', () => {
 
     await buttonByText(wrapper, 'ai.quota.request.apply')!.trigger('click')
     await flushPromises()
-    await wrapper
-      .find('[aria-label="ai.quota.request.kind"] .ai-chips__item[data-value="ocr"]')
-      .trigger('click')
+    await wrapper.find('.el-select-stub').setValue('ocr')
     await flushPromises()
     await buttonByText(wrapper, 'ai.quota.request.submit')!.trigger('click')
     await flushPromises()

@@ -589,10 +589,8 @@ describe('调用日志页', () => {
     await flushPromises()
     expect(lastQuery()).toMatchObject({ page: 2 })
 
-    // 筛选芯片一次点击即生效（替代旧下拉）
-    await wrapper
-      .find('[aria-label="ai.logs.capability"] .ai-chips__item[data-value="ocr"]')
-      .trigger('click')
+    const selects = wrapper.findAll('.el-select-stub')
+    await selects[0]!.setValue('ocr')
     await flushPromises()
 
     expect(lastQuery()).toMatchObject({ page: 1, capability: 'ocr' })
@@ -629,10 +627,9 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    // 场景筛选芯片（替代旧下拉）
-    await wrapper
-      .find('[aria-label="ai.logs.purpose"] .ai-chips__item[data-value="markdown-assistant"]')
-      .trigger('click')
+    // 场景是过滤器里的第 4 个下拉（能力、状态、来源之后；统计窗口那个在它后面）。
+    const selects = wrapper.findAll('.el-select-stub')
+    await selects[3]!.setValue('markdown-assistant')
     await flushPromises()
     expect(lastQuery()).toMatchObject({ purpose: 'markdown-assistant' })
 
@@ -672,11 +669,11 @@ describe('调用日志页', () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    // 统计窗口芯片（替代旧下拉）：点 30 天按新窗口取数
-    await wrapper.find('.ai-log-stats__days .ai-chips__item[data-value="30"]').trigger('click')
+    const selects = wrapper.findAll('.el-select-stub')
+    await selects[selects.length - 1]!.setValue('30')
     await flushPromises()
 
-    expect(getAiLogStats).toHaveBeenLastCalledWith(30)
+    expect(getAiLogStats).toHaveBeenLastCalledWith('30')
 
     wrapper.unmount()
   })

@@ -23,8 +23,10 @@ import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElRadio } from 'element-plus/es/components/radio/index.mjs'
 import { ElRadioGroup } from 'element-plus/es/components/radio/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { ElTable } from 'element-plus/es/components/table/index.mjs'
 import { ElTableColumn } from 'element-plus/es/components/table/index.mjs'
@@ -709,58 +711,13 @@ onMounted(() => {
           </div>
           <div class="flex flex-col gap-1">
             <span class="yg-text-xs yg-text-tertiary">{{ t('ai.schedule.admin.reviewFilter') }}</span>
-            <!-- 审核状态芯片：一次点击即生效，选中态始终可见 -->
-            <div
-              class="ai-chips"
-              role="group"
-              :aria-label="t('ai.schedule.admin.reviewFilter')"
-            >
-              <button
-                type="button"
-                class="ai-chips__item"
-                :class="{ 'is-active': reviewFilter === 'all' }"
-                data-value="all"
-                @click="reviewFilter = 'all'; onReviewFilterChange()"
-              >
-                {{ t('ai.schedule.admin.filterAll') }}
-              </button>
-              <button
-                type="button"
-                class="ai-chips__item"
-                :class="{ 'is-active': reviewFilter === 'pending' }"
-                data-value="pending"
-                @click="reviewFilter = 'pending'; onReviewFilterChange()"
-              >
-                {{ t('ai.schedule.admin.filterPending') }}
-              </button>
-              <button
-                type="button"
-                class="ai-chips__item"
-                :class="{ 'is-active': reviewFilter === 'approved' }"
-                data-value="approved"
-                @click="reviewFilter = 'approved'; onReviewFilterChange()"
-              >
-                {{ t('ai.schedule.admin.filterApproved') }}
-              </button>
-              <button
-                type="button"
-                class="ai-chips__item"
-                :class="{ 'is-active': reviewFilter === 'rejected' }"
-                data-value="rejected"
-                @click="reviewFilter = 'rejected'; onReviewFilterChange()"
-              >
-                {{ t('ai.schedule.admin.filterRejected') }}
-              </button>
-              <button
-                type="button"
-                class="ai-chips__item"
-                :class="{ 'is-active': reviewFilter === 'draft' }"
-                data-value="draft"
-                @click="reviewFilter = 'draft'; onReviewFilterChange()"
-              >
-                {{ t('ai.schedule.admin.filterDraft') }}
-              </button>
-            </div>
+            <ElSelect v-model="reviewFilter" class="w-full" @change="onReviewFilterChange">
+              <ElOption :label="t('ai.schedule.admin.filterAll')" value="all" />
+              <ElOption :label="t('ai.schedule.admin.filterPending')" value="pending" />
+              <ElOption :label="t('ai.schedule.admin.filterApproved')" value="approved" />
+              <ElOption :label="t('ai.schedule.admin.filterRejected')" value="rejected" />
+              <ElOption :label="t('ai.schedule.admin.filterDraft')" value="draft" />
+            </ElSelect>
           </div>
         </div>
       </div>

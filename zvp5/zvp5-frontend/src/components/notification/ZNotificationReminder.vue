@@ -8,7 +8,7 @@
  *   - Esc 可以收起；
  *   - 内容区可滚动，操作按钮始终可点。
  *
- * 队列：服务端返回的未读通知逐条展示，右上角给出「第 N / M 条」。
+ * 队列：服务端返回的未读通知逐条展示，头部给出「第 N / M 条」与分段刻度。
  * 「已读」写穿服务端（乐观更新 + 失败回滚），「不再显示」只落本地。
  *
  * 退场与计数只是展示层状态：收起 / 消化掉最后一条时，面板先播完反向动画
@@ -49,6 +49,8 @@ const INITIAL_DELAY_MS = 10_000
 const MIN_CHECK_INTERVAL_MS = 60_000
 /** 退场动画 300ms 播完后留 40ms 余量再摘 DOM，避免尾帧被掐掉。 */
 const LEAVE_MS = 340
+/** 队列刻度最多画几枚：超长队列由「第 N / M 条」文本兜底，不无限占宽。 */
+const MAX_TICKS = 9
 
 const { t } = useI18n()
 const route = useRoute()
@@ -84,6 +86,10 @@ const dismissed = ref(false)
 /** 「第 N / M 条」：纯展示计数。会话从横幅出现开始，到完全隐藏为止。 */
 const shownCount = ref(0)
 const sessionTotal = ref(0)
+
+/** 分段刻度（多条通知时的切换指示）：active 是当前这条，done 是已消化。 */
+const tickTotal = computed(() => Math.min(sessionTotal.value, MAX_TICKS))
+const tickActive = computed(() => Math.min(shownCount.value, MAX_TICKS))
 
 /**
  * 退场快照：收起 / 队列清空时 current 已经变 null，但面板还要播完反向动画，
@@ -236,7 +242,7 @@ watch(
   accountKey,
   () => {
     resetForAccount()
-    // 绑定账号会立刻拉一次已读映射（体积小），其它入口能马上拿到未读真源。
+    // 绑定账号会立刻拉一次已读映射（体积小），且所有入口都要靠它判断未读。
     bindNotificationAccount(accountKey.value)
     if (!accountKey.value) {
       return
@@ -346,76 +352,102 @@ onBeforeUnmount(() => {
       class="zn-banner__panel"
       :class="{ 'is-leaving': leaving }"
     >
-      <header class="zn-banner__head">
-        <span class="zn-banner__tag">{{ t('notificationCenter.bannerTag') }}</span>
-        <span class="zn-banner__count">{{
-          t('notificationCenter.progress', { current: shownCount, total: sessionTotal })
-        }}</span>
-        <button
-          type="button"
-          class="zn-banner__close"
-          :aria-label="t('notificationCenter.close')"
-          @click="dismiss"
-        >
-          ×
-        </button>
-      </header>
-
-      <div class="zn-banner__swap">
-        <Transition name="zn-swap">
-          <article :key="view.id" class="zn-banner__sheet">
-            <h2 class="zn-banner__title">{{ view.title }}</h2>
-            <p class="zn-banner__meta">
-              {{ t('notificationCenter.from', { name: view.author_name || '—' }) }}
-              <span class="zn-banner__dot" aria-hidden="true">·</span>
-              {{ formatDateTime(view.created_at) }}
-            </p>
-            <div class="zn-banner__content">
-              <ZMarkdown :source="view.content" />
-            </div>
-          </article>
-        </Transition>
+      <!-- 左侧强调色竖轨：竖排 HUD 标签，是横幅最显眼的轮廓变化。 -->
+      <div class="zn-banner__rail" aria-hidden="true">
+        <span class="zn-banner__rail-tag">{{ t('notificationCenter.bannerTag') }}</span>
+        <span class="zn-banner__rail-line"></span>
       </div>
 
-      <p v-if="readError" class="zn-banner__error" role="alert">
-        {{ t('notificationCenter.readFailed') }}
-        <button type="button" class="zn-banner__retry" @click="acknowledge">
-          {{ t('notificationCenter.retry') }}
-        </button>
-      </p>
+      <div class="zn-banner__main">
+        <header class="zn-banner__head">
+          <span class="zn-banner__count">{{
+            t('notificationCenter.progress', { current: shownCount, total: sessionTotal })
+          }}</span>
+          <!-- 分段刻度：多条通知时的切换指示，第 N 条亮起、之后的还空着。 -->
+          <ul
+            v-if="tickTotal > 1"
+            class="zn-banner__ticks"
+            aria-hidden="true"
+          >
+            <li
+              v-for="tick in tickTotal"
+              :key="tick"
+              class="zn-banner__tick"
+              :class="{
+                'is-active': tick === tickActive,
+                'is-done': tick < tickActive
+              }"
+            ></li>
+          </ul>
+          <button
+            type="button"
+            class="zn-banner__close"
+            :aria-label="t('notificationCenter.close')"
+            @click="dismiss"
+          >
+            <span class="zn-banner__close-glyph" aria-hidden="true">✕</span>
+          </button>
+        </header>
 
-      <footer class="zn-banner__actions">
-        <button type="button" class="zn-banner__link" @click="openInbox">
-          {{ t('notificationCenter.viewAll') }}
-        </button>
-        <button
-          type="button"
-          class="zn-banner__btn"
-          :disabled="advancing"
-          @click="suppress"
-        >
-          {{ t('notificationCenter.suppress') }}
-        </button>
-        <button
-          type="button"
-          class="zn-banner__btn zn-banner__btn--primary"
-          :disabled="advancing"
-          @click="acknowledge"
-        >
-          {{ t('notificationCenter.read') }}
-        </button>
-      </footer>
+        <div class="zn-banner__swap">
+          <Transition name="zn-swap">
+            <article :key="view.id" class="zn-banner__sheet">
+              <h2 class="zn-banner__title">{{ view.title }}</h2>
+              <p class="zn-banner__meta">
+                <span class="zn-banner__meta-item">{{
+                  t('notificationCenter.from', { name: view.author_name || '—' })
+                }}</span>
+                <span class="zn-banner__meta-sep" aria-hidden="true"></span>
+                <span class="zn-banner__meta-item">{{ formatDateTime(view.created_at) }}</span>
+              </p>
+              <div class="zn-banner__content">
+                <ZMarkdown :source="view.content" />
+              </div>
+            </article>
+          </Transition>
+        </div>
+
+        <p v-if="readError" class="zn-banner__error" role="alert">
+          {{ t('notificationCenter.readFailed') }}
+          <button type="button" class="zn-banner__retry" @click="acknowledge">
+            {{ t('notificationCenter.retry') }}
+          </button>
+        </p>
+
+        <footer class="zn-banner__actions">
+          <button type="button" class="zn-banner__link" @click="openInbox">
+            {{ t('notificationCenter.viewAll') }}
+            <span class="zn-banner__link-arrow" aria-hidden="true">→</span>
+          </button>
+          <button
+            type="button"
+            class="zn-banner__btn"
+            :disabled="advancing"
+            @click="suppress"
+          >
+            {{ t('notificationCenter.suppress') }}
+          </button>
+          <button
+            type="button"
+            class="zn-banner__btn zn-banner__btn--primary"
+            :disabled="advancing"
+            @click="acknowledge"
+          >
+            {{ t('notificationCenter.read') }}
+          </button>
+        </footer>
+      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
 /* ==========================================================================
-   Phi 棱角系统 · 顶部通知横幅
-   - 与 user-v2 通知收件页同一套切角面板 + HUD 标签语言
-   - 层次：--yg-shadow-lg 柔和双层投影 + 1px 切角描边 + 实色面板（不透底）
-   - 动效：入场 / 退场 transform+opacity，300ms 苹果曲线；
-     队列切换（第 N → N+1 条）带方向位移，收起反向播放
+   Phi 棱角系统 · 顶部通知横幅（函件式重做）
+   - 轮廓：左侧强调色竖轨 + 竖排 HUD 标签，替代旧的「居中对称卡片」
+   - 层级：头部一条沉底信息条（计数 / 刻度 / 收起），正文独立可滚动
+   - 队列指示：斜切分段刻度，当前条亮、未读条空，一眼看出还剩几条
+   - 动效：入场按「竖轨 → 头部 → 正文 → 操作」编排展开；退场反向收拢
    - 深浅两套主题都靠 --yg-* 令牌自适应，不写死颜色
    ========================================================================== */
 .zn-banner {
@@ -424,10 +456,9 @@ onBeforeUnmount(() => {
   --zn-muted: var(--yg-text-tertiary);
   --zn-surface: var(--yg-bg-surface-raised);
   --zn-sunken: var(--yg-bg-surface-sunken);
+  --zn-line: var(--yg-border-default);
   --zn-hud: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
   --zn-ease: cubic-bezier(0.19, 1, 0.22, 1);
-  --zn-cut: 18px; /* 面板右上大切角 */
-  --zn-cut-s: 8px; /* 左下小切角 + 迷你控件切角 */
 
   position: fixed;
   inset-block-start: 0;
@@ -445,20 +476,21 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* 面板本体保持完整矩形：柔和双层阴影走语义令牌，切角轮廓交给
-   ::before（描边）/ ::after（实色面）两层绘制，box-shadow 不会被裁掉。 */
+/* 面板本体：竖轨 + 主列的两栏构图。右下角一枚大切角呼应全站棱角语言，
+   柔和双层投影走语义令牌，不与切角轮廓打架。 */
 .zn-banner__panel {
   pointer-events: auto;
   position: relative;
   isolation: isolate;
   display: flex;
-  flex-direction: column;
-  gap: var(--yg-space-3);
-  width: min(680px, 100%);
+  align-items: stretch;
+  width: min(720px, 100%);
   max-height: min(72vh, 620px);
-  padding: var(--yg-space-4) var(--yg-space-5);
   overflow: hidden;
   color: var(--zn-ink);
+  background-color: var(--zn-surface);
+  border: 1px solid var(--zn-line);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
   box-shadow: var(--yg-shadow-lg);
   animation: zn-panel-in var(--yg-dur-slow) var(--zn-ease) both;
 }
@@ -469,155 +501,161 @@ onBeforeUnmount(() => {
   animation: zn-panel-out var(--yg-dur-slow) var(--zn-ease) both;
 }
 
-/* 1px 切角描边层：右上切角沿线一段强调色斜边。 */
-.zn-banner__panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
+/* ---- 左侧竖轨：强调色渐隐到底，竖排 HUD 标签顺着轨走 ---- */
+.zn-banner__rail {
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-4) 0 var(--yg-space-3);
+  border-inline-end: 1px solid var(--yg-border-subtle);
   background:
     linear-gradient(
-      225deg,
-      var(--zn-accent) 0 calc(var(--zn-cut) * 0.9),
-      transparent calc(var(--zn-cut) * 0.9 + 1px)
-    ),
-    color-mix(in srgb, var(--zn-ink) 16%, transparent);
-  clip-path: polygon(
-    0 0,
-    calc(100% - var(--zn-cut)) 0,
-    100% var(--zn-cut),
-    100% 100%,
-    var(--zn-cut-s) 100%,
-    0 calc(100% - var(--zn-cut-s))
-  );
-}
-
-/* 实色面板：不透明底 + 顶部强调刻线 + 左缘强调渐隐线。 */
-.zn-banner__panel::after {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  z-index: -1;
-  background:
-    linear-gradient(90deg, var(--zn-accent), transparent) left top / 96px 2px no-repeat,
-    linear-gradient(180deg, var(--zn-accent), transparent 72%) left top / 2px 100%
-      no-repeat,
-    linear-gradient(
-      120deg,
-      color-mix(in srgb, var(--zn-accent) 5%, var(--zn-surface)),
-      var(--zn-surface) 52%
+      to bottom,
+      color-mix(in srgb, var(--zn-accent) 16%, transparent),
+      color-mix(in srgb, var(--zn-accent) 3%, transparent) 62%,
+      transparent
     );
-  clip-path: polygon(
-    0 0,
-    calc(100% - var(--zn-cut)) 0,
-    100% var(--zn-cut),
-    100% 100%,
-    var(--zn-cut-s) 100%,
-    0 calc(100% - var(--zn-cut-s))
-  );
+  animation: zn-rail-in var(--yg-dur-slow) var(--zn-ease) both;
 }
 
-/* ---------- 头部：标签 + 第 N / M 条 + 收起 ---------- */
+.zn-banner__rail-tag {
+  color: var(--zn-accent);
+  font-family: var(--zn-hud), var(--yg-font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+
+.zn-banner__rail-line {
+  flex: 1 1 auto;
+  width: 2px;
+  min-height: 0;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--zn-accent) 55%, transparent),
+    transparent
+  );
+  transform: skewX(-40deg);
+}
+
+/* ---- 主列 ---- */
+.zn-banner__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* 头部沉底信息条：计数、刻度、收起聚在一层浅坑里，和正文拉开层级。 */
 .zn-banner__head {
   display: flex;
   align-items: center;
   gap: var(--yg-space-3);
-  animation: zn-rise var(--yg-dur-slow) 40ms var(--zn-ease) both;
-}
-
-.zn-banner__tag {
-  flex: 0 0 auto;
-  padding: 2px 8px 1px;
-  color: var(--zn-accent);
-  background: color-mix(in srgb, var(--zn-accent) 14%, transparent);
-  font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: var(--yg-font-size-xs);
-  font-weight: var(--yg-font-weight-bold);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+  padding: var(--yg-space-2) var(--yg-space-4);
+  border-block-end: 1px solid var(--yg-border-subtle);
+  background: var(--zn-sunken);
+  animation: zn-layer-in var(--yg-dur-slow) var(--zn-ease) 60ms both;
 }
 
 .zn-banner__count {
-  flex: 0 0 auto;
-  padding: 2px 8px 1px;
   color: var(--zn-muted);
-  background: var(--zn-sunken);
   font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: var(--yg-font-size-xs);
-  font-weight: var(--yg-font-weight-bold);
+  font-size: 13px;
+  font-weight: 500;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+  white-space: nowrap;
+}
+
+/* 分段刻度：斜切平行四边形，进行中的实心发亮，已消化的沉底，未到的空心。 */
+.zn-banner__ticks {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zn-banner__tick {
+  width: 16px;
+  height: 5px;
+  border: 1px solid var(--yg-border-strong);
+  transform: skewX(-40deg);
+  transition:
+    background-color var(--yg-dur-base) var(--zn-ease),
+    border-color var(--yg-dur-base) var(--zn-ease),
+    box-shadow var(--yg-dur-base) var(--zn-ease);
+}
+
+.zn-banner__tick.is-done {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--zn-accent) 32%, transparent);
+}
+
+.zn-banner__tick.is-active {
+  border-color: var(--zn-accent);
+  background: var(--zn-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--zn-accent) 55%, transparent);
 }
 
 .zn-banner__close {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
-  margin-inline-start: auto;
-  min-width: var(--yg-control-height-md);
-  min-height: var(--yg-control-height-md);
   padding: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--zn-muted);
-  font-size: var(--yg-font-size-2xl);
-  line-height: 1;
   cursor: pointer;
   transition:
     color var(--yg-dur-fast) var(--zn-ease),
-    background-color var(--yg-dur-fast) var(--zn-ease),
-    border-color var(--yg-dur-fast) var(--zn-ease);
+    border-color var(--yg-dur-fast) var(--zn-ease),
+    background-color var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__close:hover {
   color: var(--zn-ink);
+  border-color: var(--yg-border-strong);
   background: var(--yg-bg-hover);
-  border-color: var(--yg-border-default);
 }
 
-/* ---------- 正文区：可滚动，队列切换带方向位移 ---------- */
+.zn-banner__close-glyph {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.zn-banner__close:focus-visible {
+  outline: 2px solid var(--zn-accent);
+  outline-offset: 2px;
+}
+
+/* ---- 正文：独立滚动区，长 markdown 压不扁操作 ---- */
 .zn-banner__swap {
-  position: relative;
   min-height: 0;
   overflow-y: auto;
-  animation: zn-rise var(--yg-dur-slow) 80ms var(--zn-ease) both;
+  padding: var(--yg-space-4) var(--yg-space-5);
 }
 
 .zn-banner__sheet {
-  min-height: 0;
-}
-
-/* 上一条向左淡出，下一条自右侧滑入：切条不是硬切。 */
-.zn-swap-enter-active {
-  transition:
-    opacity var(--yg-dur-slow) var(--zn-ease),
-    transform var(--yg-dur-slow) var(--zn-ease);
-}
-
-.zn-swap-leave-active {
-  position: absolute;
-  inset-block: 0 auto;
-  inset-inline: 0;
-  transition:
-    opacity var(--yg-dur-base) var(--zn-ease),
-    transform var(--yg-dur-base) var(--zn-ease);
-}
-
-.zn-swap-enter-from {
-  opacity: 0;
-  transform: translateX(var(--yg-space-5));
-}
-
-.zn-swap-leave-to {
-  opacity: 0;
-  transform: translateX(calc(var(--yg-space-5) * -1));
+  animation: zn-layer-in var(--yg-dur-slow) var(--zn-ease) 120ms both;
 }
 
 .zn-banner__title {
   margin: 0;
   color: var(--zn-ink);
-  font-size: var(--yg-font-size-lg);
+  font-size: var(--yg-font-size-xl);
   font-weight: var(--yg-font-weight-semibold);
   line-height: var(--yg-line-height-snug);
   overflow-wrap: anywhere;
@@ -628,16 +666,23 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--yg-space-2);
-  margin: var(--yg-space-1) 0 0;
+  margin: var(--yg-space-2) 0 0;
+}
+
+.zn-banner__meta-item {
   color: var(--zn-muted);
   font-family: var(--zn-hud), var(--yg-font-sans);
-  font-size: var(--yg-font-size-sm);
-  font-weight: var(--yg-font-weight-medium);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-.zn-banner__dot {
-  color: var(--yg-border-strong);
+/* 发布人 / 时间中间的斜切短线：呼应竖轨与刻度的棱角记号。 */
+.zn-banner__meta-sep {
+  width: 10px;
+  height: 2px;
+  background: var(--zn-accent);
+  opacity: 0.65;
+  transform: skewX(-40deg);
 }
 
 .zn-banner__content {
@@ -652,18 +697,42 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
-/* ---------- 已读写失败：软危险底 + 重试入口 ---------- */
+/* 队列切换（第 N → N+1 条）：旧文上移淡出、新文下移淡入。 */
+.zn-swap-enter-active,
+.zn-swap-leave-active {
+  transition:
+    opacity var(--yg-dur-base) var(--zn-ease),
+    transform var(--yg-dur-base) var(--zn-ease);
+}
+
+.zn-swap-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.zn-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.zn-swap-leave-active {
+  position: absolute;
+  inset-inline: var(--yg-space-5);
+  pointer-events: none;
+}
+
+/* ---- 写穿失败：沉底警示条，重试是下划线动作 ---- */
 .zn-banner__error {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--yg-space-2);
   margin: 0;
-  padding: var(--yg-space-2) var(--yg-space-3);
+  padding: var(--yg-space-2) var(--yg-space-5);
+  border-block-start: 1px solid color-mix(in srgb, var(--yg-text-danger) 32%, transparent);
   color: var(--yg-text-danger);
   background: var(--yg-color-danger-soft);
   font-size: var(--yg-font-size-sm);
-  clip-path: polygon(0 0, calc(100% - var(--zn-cut-s)) 0, 100% var(--zn-cut-s), 100% 100%, 0 100%);
-  animation: zn-rise var(--yg-dur-base) var(--zn-ease) both;
 }
 
 .zn-banner__retry {
@@ -677,63 +746,69 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* ---------- 操作区：查看全部弱化为文字链，已阅是唯一实色主操作 ---------- */
+.zn-banner__retry:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* ---- 操作区：细线分界，主操作是唯一实底强调块 ---- */
 .zn-banner__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--yg-space-2);
-  padding-top: var(--yg-space-1);
-  border-top: 1px solid var(--yg-border-subtle);
-  animation: zn-rise var(--yg-dur-slow) 120ms var(--zn-ease) both;
+  margin-block-start: auto;
+  padding: var(--yg-space-3) var(--yg-space-5);
+  border-block-start: 1px solid var(--yg-border-subtle);
+  animation: zn-layer-in var(--yg-dur-slow) var(--zn-ease) 180ms both;
 }
 
 .zn-banner__link {
   display: inline-flex;
   align-items: center;
+  gap: var(--yg-space-1);
   margin-inline-end: auto;
-  min-height: var(--yg-control-height-md);
-  padding: 0 var(--yg-space-1);
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--zn-accent);
-  font: inherit;
   font-size: var(--yg-font-size-sm);
   cursor: pointer;
-  transition: color var(--yg-dur-fast) var(--zn-ease);
+  transition: gap var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__link:hover {
   text-decoration: underline;
-  text-underline-offset: 0.24em;
+}
+
+.zn-banner__link:hover .zn-banner__link-arrow {
+  transform: translateX(2px);
+}
+
+.zn-banner__link-arrow {
+  transition: transform var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__btn {
-  min-height: var(--yg-control-height-md);
+  min-height: 36px;
   padding: 0 var(--yg-space-4);
-  border: 1px solid color-mix(in srgb, var(--zn-ink) 14%, transparent);
+  border: 1px solid var(--zn-line);
   background: transparent;
   color: var(--zn-ink);
-  font-family: var(--zn-hud), var(--yg-font-sans);
+  font-family: inherit;
   font-size: var(--yg-font-size-sm);
   font-weight: var(--yg-font-weight-medium);
-  letter-spacing: 0.04em;
   cursor: pointer;
-  clip-path: polygon(0 0, calc(100% - var(--zn-cut-s)) 0, 100% var(--zn-cut-s), 100% 100%, 0 100%);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
   transition:
-    color var(--yg-dur-fast) var(--zn-ease),
     border-color var(--yg-dur-fast) var(--zn-ease),
     background-color var(--yg-dur-fast) var(--zn-ease),
-    transform var(--yg-dur-fast) var(--zn-ease);
+    color var(--yg-dur-fast) var(--zn-ease);
 }
 
 .zn-banner__btn:hover:not(:disabled) {
-  border-color: var(--zn-accent);
-  background: color-mix(in srgb, var(--zn-accent) 8%, transparent);
-}
-
-.zn-banner__btn:active:not(:disabled) {
-  transform: scale(0.97);
+  border-color: var(--yg-border-strong);
+  background: var(--yg-bg-hover);
 }
 
 .zn-banner__btn:disabled {
@@ -749,75 +824,81 @@ onBeforeUnmount(() => {
 }
 
 .zn-banner__btn--primary:hover:not(:disabled) {
-  background: var(--yg-color-primary-strong-hover);
+  background: color-mix(in srgb, var(--zn-accent) 84%, #000);
 }
 
-.zn-banner__close:focus-visible,
 .zn-banner__btn:focus-visible,
-.zn-banner__link:focus-visible,
-.zn-banner__retry:focus-visible {
+.zn-banner__link:focus-visible {
   outline: 2px solid var(--zn-accent);
   outline-offset: 2px;
 }
 
-/* ---------- 动效 ---------- */
+/* ---- 进出场编排 ---- */
 @keyframes zn-panel-in {
   from {
     opacity: 0;
-    transform: translateY(calc(var(--yg-space-3) * -1));
+    transform: translateY(-14px);
   }
-
   to {
     opacity: 1;
-    transform: none;
+    transform: translateY(0);
   }
 }
 
 @keyframes zn-panel-out {
   from {
     opacity: 1;
-    transform: none;
+    transform: translateY(0);
   }
-
   to {
     opacity: 0;
-    transform: translateY(calc(var(--yg-space-3) * -1));
+    transform: translateY(-14px);
   }
 }
 
-@keyframes zn-rise {
+/* 竖轨自顶向下铺开：强调色先立住，正文随后入场。 */
+@keyframes zn-rail-in {
   from {
     opacity: 0;
-    transform: translateY(var(--yg-space-2));
+    transform: scaleY(0.2);
   }
-
   to {
     opacity: 1;
-    transform: none;
+    transform: scaleY(1);
   }
 }
 
-/* 减少动态：动画全部关闭（不是缩短），只保留静态呈现。 */
+@keyframes zn-layer-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 减少动态：只保留静态呈现，编排动画全部关闭。 */
 @media (prefers-reduced-motion: reduce) {
   .zn-banner__panel,
-  .zn-banner__panel.is-leaving,
+  .zn-banner__rail,
   .zn-banner__head,
-  .zn-banner__swap,
-  .zn-banner__actions,
-  .zn-banner__error {
+  .zn-banner__sheet,
+  .zn-banner__actions {
     animation: none;
   }
 
   .zn-swap-enter-active,
-  .zn-swap-leave-active,
-  .zn-banner__close,
-  .zn-banner__btn,
-  .zn-banner__link {
+  .zn-swap-leave-active {
     transition: none;
   }
 
-  .zn-banner__btn:active:not(:disabled) {
-    transform: none;
+  .zn-banner__tick,
+  .zn-banner__btn,
+  .zn-banner__close,
+  .zn-banner__link-arrow {
+    transition: none;
   }
 }
 
@@ -828,7 +909,7 @@ onBeforeUnmount(() => {
    base.css 的原值一致，视觉上等于「没有横幅」。
    ========================================================================== */
 :global(.yg-layout__content) {
-  transition: padding-top 220ms cubic-bezier(0.19, 1, 0.22, 1);
+  transition: padding-top var(--yg-dur-slow) var(--zn-ease);
   padding-top: calc(var(--yg-space-6) + var(--zn-banner-offset, 0px));
 }
 
@@ -838,7 +919,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ---------- 窄屏：不溢出 + 触控目标 ≥ 40px ---------- */
+/* ---- 竖屏 / 窄屏：竖轨收窄，长文滚动照旧，操作按钮铺满一行 ---- */
 @media (max-width: 599px) {
   .zn-banner {
     padding:
@@ -848,19 +929,35 @@ onBeforeUnmount(() => {
       calc(env(safe-area-inset-left, 0px) + var(--yg-space-2));
   }
 
-  .zn-banner__panel {
-    --zn-cut: 14px;
+  .zn-banner__rail {
+    width: 24px;
+    padding: var(--yg-space-3) 0 var(--yg-space-2);
+  }
+
+  .zn-banner__rail-tag {
+    display: none;
+  }
+
+  .zn-banner__head {
+    gap: var(--yg-space-2);
+    padding: var(--yg-space-2) var(--yg-space-3);
+  }
+
+  .zn-banner__tick {
+    width: 12px;
+  }
+
+  .zn-banner__swap {
     padding: var(--yg-space-3) var(--yg-space-4);
   }
 
-  .zn-banner__close {
-    min-width: var(--yg-control-height-lg);
-    min-height: var(--yg-control-height-lg);
+  .zn-banner__actions {
+    gap: var(--yg-space-2);
+    padding: var(--yg-space-3) var(--yg-space-4);
   }
 
   .zn-banner__link {
     width: 100%;
-    min-height: var(--yg-control-height-lg);
     margin-inline-end: 0;
     text-align: start;
   }
@@ -868,7 +965,6 @@ onBeforeUnmount(() => {
   .zn-banner__btn {
     flex: 1 1 0;
     min-width: 0;
-    min-height: var(--yg-control-height-lg);
   }
 }
 </style>
