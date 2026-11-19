@@ -92,9 +92,9 @@ def register_index(app: FastAPI) -> None:
                 "license": "MIT",
                 "source": "https://github.com/xiaobo2010/zvp5.git",
                 "apis": {
-                    "user": "/api/users",
-                    "activity": "/api/activities",
-                    "group": "/api/groups",
+                    "user": "/api/v1/users",
+                    "activity": "/api/v1/activities",
+                    "group": "/api/v1/groups",
                     "exports": "/api/exports",
                     "imports": "/api/imports",
                     "logs": "/api/logs",

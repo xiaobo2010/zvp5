@@ -175,3 +175,24 @@ async def test_falls_back_to_local_window_when_redis_fails(fake_redis):
 
     assert fake_redis.zsets == {}
     assert len(login_throttle._buckets[("account", OID.lower())]) == login_throttle.ACCOUNT_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_full_ip_tier_rejects_without_counting_the_account_tier(fake_redis):
+    """IP 档已满 → 只读预检直接拒绝，账号档一次都不写。
+
+    与本地实现（两档都过才一起写）语义对齐：同出口 IP 的其他账号不被
+    「IP 档已满的那次尝试」消耗账号档名额。
+    """
+    ip = "10.0.0.5"
+    # 灌满 IP 档：每个账号只来一次，账号档永远不超限。
+    for index in range(login_throttle.IP_LIMIT):
+        await login_throttle.check(f"seed-{index}", ip)
+
+    with pytest.raises(login_throttle.LoginRateLimited):
+        await login_throttle.check("fresh-account", ip)
+
+    # 账号档未留下任何成员；IP 档维持满员，未被这次被拒的请求多算。
+    assert "zvms:state:win:login:acct:fresh-account" not in fake_redis.zsets
+    ip_key = f"zvms:state:win:login:ip:{ip}"
+    assert len(fake_redis.zsets[ip_key]) == login_throttle.IP_LIMIT

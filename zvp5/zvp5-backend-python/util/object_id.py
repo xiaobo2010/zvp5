@@ -163,7 +163,7 @@ async def require_password_verification(
 ) -> dict:
     """高危操作的「密码再认证」闸：必须是一张**本人**的 ``purpose=verify`` 短令牌。
 
-    令牌由 ``POST /api/users/auth``（purpose='verify'）用密码换出，5 分钟有效。
+    令牌由 ``POST /api/v1/users/auth``（purpose='verify'）用密码换出，5 分钟有效。
     这里沿用 ``_authenticate`` 的既有一切判定（签名、过期、scope、封禁、sid），
     只把「缺令牌 / 无效 / 过期 / 伪造 / 不是本人」统一翻成 **403**：
 

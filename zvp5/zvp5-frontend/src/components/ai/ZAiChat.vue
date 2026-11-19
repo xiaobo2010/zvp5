@@ -12,7 +12,7 @@ import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { ElTag } from 'element-plus/es/components/tag/index.mjs'
-import { Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
+import { CaretLeft, CaretRight, Menu, Promotion, VideoPause, WarningFilled } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import {
   AiRequestError,
@@ -129,11 +129,84 @@ async function changeModel(value: string) {
   }
 }
 
+/**
+ * 设置卡折叠：默认收成一行摘要（对话区纵向像素优先），用户按账号记住选择。
+ * 短视口沿用历史行为：无论偏好如何都强制折叠，但点一下可以临时摊开。
+ */
+const SETTINGS_FOLD_PREF_KEY = 'zvms.ai.settingsFolded'
+
 /** 短视口（横屏平板 / 笔记本半屏）：设置卡收成一行摘要。 */
 const isShortViewport = computed(() => height.value < SHORT_VIEWPORT_HEIGHT)
-/** 用户手动展开过：短视口下也允许临时摊开看全部设置。 */
+
+function readSettingsFoldPreference(): boolean {
+  try {
+    const raw = localStorage.getItem(`${SETTINGS_FOLD_PREF_KEY}.${userStore._id || 'anon'}`)
+    return raw === null ? true : raw === '1'
+  } catch {
+    return true
+  }
+}
+
+/** 用户偏好：收起（true）还是摊开（false）。默认收起。 */
+const settingsFoldPref = ref(readSettingsFoldPreference())
+/** 短视口强制折叠时的临时摊开标记。 */
 const settingsExpanded = ref(false)
-const settingsFolded = computed(() => isShortViewport.value && !settingsExpanded.value)
+const settingsFolded = computed(
+  () => (settingsFoldPref.value || isShortViewport.value) && !settingsExpanded.value
+)
+
+function toggleSettings(): void {
+  if (settingsFolded.value) {
+    // 展开一次：短视口强制折叠下只做临时展开（沿用历史语义）；
+    // 常规视口下则记住「用户喜欢摊开」，下次进来不用再点。
+    if (isShortViewport.value) {
+      settingsExpanded.value = true
+    } else {
+      settingsFoldPref.value = false
+    }
+  } else {
+    // 收起：偏好落成「收起」，临时展开标记同时清掉
+    settingsFoldPref.value = true
+    settingsExpanded.value = false
+  }
+  try {
+    localStorage.setItem(
+      `${SETTINGS_FOLD_PREF_KEY}.${userStore._id || 'anon'}`,
+      settingsFoldPref.value ? '1' : '0'
+    )
+  } catch {
+    /* 隐私模式写不进去也要让本次会话生效 */
+  }
+}
+
+/**
+ * 会话栏折叠：桌面侧栏收成一条窄轨，宽度全让给对话列。按账号记住选择。
+ * 窄屏本来就走抽屉，不适用这条偏好。
+ */
+const SIDEBAR_FOLD_PREF_KEY = 'zvms.ai.sessionSidebar'
+
+function readSidebarFoldPreference(): boolean {
+  try {
+    const raw = localStorage.getItem(`${SIDEBAR_FOLD_PREF_KEY}.${userStore._id || 'anon'}`)
+    return raw === '1'
+  } catch {
+    return false
+  }
+}
+
+const sidebarCollapsed = ref(readSidebarFoldPreference())
+
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try {
+    localStorage.setItem(
+      `${SIDEBAR_FOLD_PREF_KEY}.${userStore._id || 'anon'}`,
+      sidebarCollapsed.value ? '1' : '0'
+    )
+  } catch {
+    /* 隐私模式写不进去也要让本次会话生效 */
+  }
+}
 
 /**
  * 流式输出偏好。
@@ -1547,27 +1620,58 @@ onUnmounted(() => {
 
 <template>
   <div class="ai-chat">
-    <!-- 桌面：会话栏固定在左侧 -->
-    <aside v-if="!isNarrow" class="ai-chat__sidebar">
-      <ZAiSessionList
-        :conversations="store.conversations"
-        :current-oid="store.currentOid"
-        :loading="store.listLoading"
-        :failed="store.listFailed"
-        :has-more="Boolean(store.nextCursor)"
-        :archived="store.archivedConversations"
-        :archived-loading="store.archivedLoading"
-        :archived-failed="store.archivedFailed"
-        @select="selectSession"
-        @create="createSession"
-        @rename="openRename"
-        @archive="archiveSession"
-        @unarchive="unarchiveSession"
-        @remove="removeSession"
-        @load-more="store.loadMoreConversations()"
-        @load-archived="store.loadArchivedConversations()"
-      />
+    <!-- 桌面：会话栏固定在左侧，可收成窄轨把宽度全让给对话列 -->
+    <aside
+      v-if="!isNarrow"
+      class="ai-chat__sidebar"
+      :class="{ 'is-collapsed': sidebarCollapsed }"
+    >
+      <!-- 收起态：一条窄轨，展开按钮 + 竖排标签，宽度全还给主列 -->
+      <button
+        v-if="sidebarCollapsed"
+        type="button"
+        class="ai-chat__sidebar-rail"
+        :aria-expanded="false"
+        :aria-label="t('ai.chat.sessions.list')"
+        @click="toggleSidebar"
+      >
+        <ElIcon :size="16" class="ai-chat__sidebar-rail-icon"><CaretRight /></ElIcon>
+        <span class="ai-chat__sidebar-rail-label">{{ t('ai.chat.sessions.list') }}</span>
+      </button>
+      <template v-else>
+        <ZAiSessionList
+          :conversations="store.conversations"
+          :current-oid="store.currentOid"
+          :loading="store.listLoading"
+          :failed="store.listFailed"
+          :has-more="Boolean(store.nextCursor)"
+          :archived="store.archivedConversations"
+          :archived-loading="store.archivedLoading"
+          :archived-failed="store.archivedFailed"
+          @select="selectSession"
+          @create="createSession"
+          @rename="openRename"
+          @archive="archiveSession"
+          @unarchive="unarchiveSession"
+          @remove="removeSession"
+          @load-more="store.loadMoreConversations()"
+          @load-archived="store.loadArchivedConversations()"
+        />
+      </template>
     </aside>
+
+    <!-- 折叠把手：跨在侧栏与对话列的缝上，点了把会话栏收成窄轨。
+         挂在 .ai-chat 根上（aside 有 overflow:hidden，放里面会被裁掉） -->
+    <button
+      v-if="!isNarrow && !sidebarCollapsed"
+      type="button"
+      class="ai-chat__sidebar-handle"
+      :aria-expanded="true"
+      :aria-label="t('ai.chat.sessions.list')"
+      @click="toggleSidebar"
+    >
+      <ElIcon :size="14"><CaretLeft /></ElIcon>
+    </button>
 
     <!-- 窄屏：会话栏收进抽屉 -->
     <ElDrawer
@@ -1617,14 +1721,13 @@ onUnmounted(() => {
                 <ElIcon class="mr-1"><Menu /></ElIcon>
                 {{ t('ai.chat.sessions.openDrawer') }}
               </ElButton>
-              <!-- 短视口：设置卡默认收成一行摘要，要改再摊开 -->
+              <!-- 设置卡折叠：任何视口都能收成一行摘要，把纵向像素还给消息区 -->
               <ElButton
-                v-if="isShortViewport"
                 text
                 size="small"
                 class="yg-btn yg-btn--text yg-btn--sm"
                 :aria-expanded="!settingsFolded"
-                @click="settingsExpanded = !settingsExpanded"
+                @click="toggleSettings"
               >
                 {{ settingsFolded ? t('ai.chat.expandSettings') : t('ai.chat.foldSettings') }}
               </ElButton>
@@ -2212,6 +2315,7 @@ onUnmounted(() => {
 
 <style scoped>
 .ai-chat {
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: var(--yg-space-4);
@@ -2223,8 +2327,10 @@ onUnmounted(() => {
   flex: 1 1 auto;
 }
 
-/* 桌面侧栏：固定宽度，跟主区等高；大屏按视口略微加宽，别让会话名挤成一条 */
+/* 桌面侧栏：固定宽度，跟主区等高；大屏按视口略微加宽，别让会话名挤成一条。
+   收起时换成 40px 窄轨（内部渲染折叠按钮），宽度全部让给对话列。 */
 .ai-chat__sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: none;
@@ -2238,13 +2344,93 @@ onUnmounted(() => {
   background: var(--yg-bg-surface);
   /* 会话多时只让内部列表滚，侧栏本身不被内容顶高 */
   overflow: hidden;
+  transition: width var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.ai-chat__sidebar.is-collapsed {
+  width: 40px;
+  padding: var(--yg-space-2) 0;
+}
+
+/* 收起态窄轨：竖排「会话列表」标签 + 展开箭头，键盘可达（原生 button） */
+.ai-chat__sidebar-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-3);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--yg-space-2) 0;
+  border: 0;
+  background: transparent;
+  color: var(--yg-text-tertiary);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-chat__sidebar-rail:hover {
+  color: var(--yg-color-primary);
+}
+
+.ai-chat__sidebar-rail:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
+}
+
+.ai-chat__sidebar-rail-icon {
+  flex: none;
+}
+
+.ai-chat__sidebar-rail-label {
+  /* 竖排标签顺着窄轨走：writing-mode 不占横向空间 */
+  writing-mode: vertical-rl;
+  font-size: var(--yg-font-size-xs);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+/* 折叠把手：跨在侧栏与对话列的缝上（挂在 .ai-chat 根上，不受侧栏
+   overflow:hidden 裁剪），一眼能看出会话栏可以收起。 */
+.ai-chat__sidebar-handle {
+  position: absolute;
+  top: 50%;
+  /* 侧栏外缘 = clamp 宽度（border-box）；把手圆心落在侧栏与主列的缝中间 */
+  inset-inline-start: calc(clamp(260px, 18vw, 340px) + (var(--yg-space-4) / 2) - 13px);
+  transform: translateY(-50%);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--yg-border-default);
+  border-radius: 50%;
+  background: var(--yg-bg-surface-raised);
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  box-shadow: var(--yg-shadow-sm);
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.ai-chat__sidebar-handle:hover {
+  color: var(--yg-color-primary);
+  border-color: var(--yg-color-primary);
+}
+
+.ai-chat__sidebar-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--yg-focus-ring);
 }
 
 .ai-chat__main {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--yg-space-4);
+  /* 设置卡与对话卡之间的缝收紧一档：纵向像素优先给消息区 */
+  gap: var(--yg-space-3);
   min-width: 0;
   /* 这一列的高度完全交给面板分配：里面的两张卡有各自的下限，
      断掉这层最小尺寸链，压不进面板时才会溢出到面板外。 */
@@ -3058,6 +3244,11 @@ onUnmounted(() => {
   }
 
   .ai-agent__event-row {
+    transition: none;
+  }
+
+  .ai-chat__sidebar,
+  .ai-chat__sidebar-handle {
     transition: none;
   }
 }

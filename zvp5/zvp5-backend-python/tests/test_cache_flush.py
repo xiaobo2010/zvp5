@@ -165,6 +165,8 @@ def test_flush_scopes_uses_the_contract_mapping(client: FakeClient) -> None:
         ("groups", ["zvms:group:g", "zvms:pgroup:p", "zvms:glist:0:x", "zvms:pglist:0:x"], "zvms:user:u"),
         ("activities", ["zvms:activity:a", "zvms:activities:effective:0"], "zvms:user:u"),
         ("conversations", ["zvms:conv:c", "zvms:convlatest:o:s"], "zvms:user:u"),
+        ("notifications", ["zvms:notif:0:active"], "zvms:user:u"),
+        ("changelog", ["zvms:changelog:0:all"], "zvms:user:u"),
         ("settings", ["zvms:cfg:ai.allowed_roles"], "zvms:user:u"),
         ("roles", ["zvms:role:policy:student"], "zvms:user:u"),
     ],

@@ -21,7 +21,7 @@
 ``users.get_names``        每次写审计文案    用户 epoch + 300s
 ``users.list_by_class``    班级成员/统计页   用户 epoch + 300s
 ``groups.get``             权限校验+详情     写 group 后精确删除（300s）
-``groups.list_classes``    ``GET /api/groups``  group epoch + 60s
+``groups.list_classes``    ``GET /api/v1/groups``  group epoch + 60s
 ``activities.get``         详情/成员页       写活动后精确删除（60s）
 ``activities.list_effective`` 时长重算/导出  活动 epoch + 600s
 ``ai_conversations.get``   会话打开/run 启动 写会话后按 oid 删除（30s）
@@ -37,7 +37,8 @@ from __future__ import annotations
 
 import hashlib
 import random
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 from db import cache
 from db.ids import normalize_oid
@@ -213,18 +214,36 @@ class CachedUsersRepo(_CachedRepo):
 
     async def set_ban(self, *args: Any, **kwargs: Any) -> Any:
         result = await self._inner.set_ban(*args, **kwargs)
-        await self._forget_user(args[0] if args else kwargs.get("oid"))
+        # 守卫：事务内（_use_cache=False 的 caller-owned session）禁止提前 FORGET，
+        # 提交前删 key 等于把旧值重新灌进缓存，提交后又没人再删。
+        if self._use_cache:
+            await self._forget_user(args[0] if args else kwargs.get("oid"))
         return result
 
     async def set_ban_if_stronger(self, *args: Any, **kwargs: Any) -> Any:
         result = await self._inner.set_ban_if_stronger(*args, **kwargs)
-        await self._forget_user(args[0] if args else kwargs.get("oid"))
+        if self._use_cache:
+            await self._forget_user(args[0] if args else kwargs.get("oid"))
         return result
 
     async def clear_ban(self, *args: Any, **kwargs: Any) -> None:
         result = await self._inner.clear_ban(*args, **kwargs)
-        await self._forget_user(args[0] if args else kwargs.get("oid"))
+        if self._use_cache:
+            await self._forget_user(args[0] if args else kwargs.get("oid"))
         return result
+
+    @asynccontextmanager
+    async def ban_unit(self, oid: str) -> AsyncIterator[Any]:
+        """封禁事务单元：**内层提交之后**才失效缓存，事务内写不提前删 key。
+
+        内层 ``ban_unit`` 交出 caller-owned session，调用方在其上写 USERS 行；
+        这里把失效推迟到 ``yield`` 正常退出（内层 commit 之后）——否则事务内
+        的写还没提交，缓存先被清掉，读路径会把旧值重新灌回，被禁用户最长
+        TTL_AUTH（180s）仍能过认证。
+        """
+        async with self._inner.ban_unit(oid) as session:
+            yield session
+        await self._forget_user(oid)
 
     async def set_primary_xuehai(self, *args: Any, **kwargs: Any) -> None:
         result = await self._inner.set_primary_xuehai(*args, **kwargs)
@@ -288,7 +307,10 @@ class CachedGroupsRepo(_CachedRepo):
         if not self._use_cache:
             return await _call()
         version = await cache.epoch("groups")
-        key = _k("glist", version, query, page, size if size is not None else "-")
+        # 用户输入的查询串（可能是姓名片段、班级名）不落 key 空间，只带摘要。
+        key = _k(
+            "glist", version, _digest([query]), page, size if size is not None else "-"
+        )
         return await cache.remember(key, _ttl(TTL_GROUP_LIST), _call, async_backfill=True)
 
     async def list_permission_groups(
@@ -298,7 +320,7 @@ class CachedGroupsRepo(_CachedRepo):
             return await self._inner.list_permission_groups(query, permissions)
         version = await cache.epoch("groups")
         key = _k(
-            "pglist", version, query, _digest(sorted(permissions or []))
+            "pglist", version, _digest([query]), _digest(sorted(permissions or []))
         )
         return await cache.remember(
             key,

@@ -601,7 +601,7 @@ def test_approve_uses_the_target_users_roles_for_the_snapshot(api) -> None:
     ]
 
     assert data["quota"]["af"]["source"] == "role_default"
-    assert data["quota"]["af"]["limit"] == 200_000  # department 的默认 af
+    assert data["quota"]["af"]["limit"] == 10_000  # department 的默认 af
 
 
 def test_approving_twice_is_a_conflict(api) -> None:
@@ -770,13 +770,13 @@ def test_user_table_carries_quota_and_pending_flag(api) -> None:
 
 
 def test_user_table_uses_the_target_users_roles_as_baseline(api) -> None:
-    """没有额度行时按目标用户的角色算默认值（staff 的 chat 是 200_000）。"""
+    """没有额度行时按目标用户的角色算默认值（staff 的 chat 是 10_000）。"""
     client, _repo, _quota_repo, _audits, _users = api
 
     data = client.get(f"{PREFIX}/users").json()["data"]
     by_oid = {item["oid"]: item for item in data["items"]}
 
-    assert by_oid[STAFF_OID]["chat"]["limit"] == 200_000
+    assert by_oid[STAFF_OID]["chat"]["limit"] == 10_000
     assert by_oid[STAFF_OID]["chat"]["source"] == "role_default"
     # admin 是代码里的无限额度：默认值来自角色表，不是全局 DEFAULT_QUOTA。
     assert by_oid[ADMIN_OID]["chat"]["limit"] > by_oid[STAFF_OID]["chat"]["limit"]

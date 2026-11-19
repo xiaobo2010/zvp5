@@ -648,7 +648,7 @@ def _list_by_class_stmt(class_oid: str):
 
 
 def _search_filter(query: str, logged_in: bool):
-    """``GET /api/users`` 的谓词；空关键字 = 无谓词。
+    """``GET /api/v1/users`` 的谓词；空关键字 = 无谓词。
 
     ``query`` 去空白后为空时，登录态返回空列表：列表页就是「整页用户」，
     不应该为它拼三条 ``REGEXP_LIKE``（其中 ``past`` 那条还要逐行

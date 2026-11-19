@@ -115,7 +115,9 @@ async def _list_permission_group_members(
 async def get_groups_v2(
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
-    query: str = Query(""),
+    # 查询串会进 Redis key（缓存代理只带摘要），但仍要硬上限：超长原文
+    # 连摘要前的日志/审计空间都不该被灌。
+    query: str = Query("", max_length=64),
     user=Depends(get_current_user),
 ):
     """
@@ -234,7 +236,7 @@ async def get_group_users_v3(
     group_id: str,
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
-    query: str = Query(""),
+    query: str = Query("", max_length=64),
     pwdm: bool = Query(False),
     user=Depends(get_current_user),
 ):
@@ -318,9 +320,11 @@ async def get_group_activities_v2(
 @router.get("/{group_id}/time")
 async def read_group_time(
     group_id: str,
-    query: str = Query("", description="Search query for user name or ID"),
+    query: str = Query(
+        "", max_length=64, description="Search query for user name or ID"
+    ),
     search: str = Query(
-        "", description="Alias of query (legacy frontend parameter)"
+        "", max_length=64, description="Alias of query (legacy frontend parameter)"
     ),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     perpage: int = Query(5, ge=1, le=100, description="Number of items per page"),

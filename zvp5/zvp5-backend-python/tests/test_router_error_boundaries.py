@@ -21,9 +21,7 @@ from routers import (
     activities_router,
     ban_router,
     groups_router,
-    groups_router,
     times_router,
-    users_router,
     users_router,
 )
 from services import device_guard

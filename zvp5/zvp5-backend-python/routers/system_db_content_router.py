@@ -111,9 +111,19 @@ async def _invalidate_read_caches() -> None:
 
     控制台能改任意表的任意行，缓存代理根本看不到这次写（它只包了仓储方法），
     所以失效只能在这里补。用 ``bump_epoch`` 而不是 ``flush_scopes``：O(1)、不发
-    SCAN，旧 key 靠 TTL 自然淘汰。只 bump 有缓存的五个域。
+    SCAN，旧 key 靠 TTL 自然淘汰。必须覆盖 ``cache.SCOPE_PREFIXES`` 里的全部域
+    （漏一个，控制台改完那类数据仍旧从缓存读到旧值）。
     """
-    for scope in ("users", "groups", "activities", "roles", "settings"):
+    for scope in (
+        "users",
+        "groups",
+        "activities",
+        "conversations",
+        "notifications",
+        "changelog",
+        "roles",
+        "settings",
+    ):
         await cache.bump_epoch(scope)
 
 

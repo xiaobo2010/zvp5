@@ -60,7 +60,16 @@ ACTIONS = (
 SQL_ACTIONS = ("gather_stats", "rebuild_indexes", "shrink_space", "purge_recyclebin")
 DEFAULT_FLUSH_SCOPES = ("users", "groups", "activities", "conversations")
 #: ``/cache/flush`` 与 ``flush_cache`` 动作可以显式失效的全部逻辑域。
-CACHE_SCOPES = ("users", "groups", "activities", "conversations", "settings", "roles")
+CACHE_SCOPES = (
+    "users",
+    "groups",
+    "activities",
+    "conversations",
+    "notifications",
+    "changelog",
+    "settings",
+    "roles",
+)
 
 MAX_TABLES = 50
 #: 计划条目上限：给「重建某表全部索引」这类请求一个硬边界。
