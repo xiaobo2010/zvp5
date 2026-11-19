@@ -1,45 +1,119 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  CanaryApiError,
+  clearSession,
+  currentUserId,
+  fetchGroupName,
+  fetchNotices,
+  fetchProfile,
+  isLoggedIn
+} from '@/api/canary'
+import type { CanaryNotice, CanaryUser } from '@/api/canary'
 
 const router = useRouter()
 
-// Static profile data matching HomeView
-const profile = {
-  name: '林知远',
-  id: '20240117',
-  className: '高二(2)班',
-  group: '图书馆志愿者协会',
-  roles: ['志愿者', '学生'],
-  status: '正常',
-  banned: false
-}
-
-const initials = computed(() => profile.name.slice(-2))
-
-// Mock notices
-const notices = ref([
-  {
-    id: '1',
-    title: '关于寒假志愿活动安排的通知',
-    author: '系统管理员',
-    time: '2026-11-15 14:30',
-    content: '寒假期间将开展多项志愿服务活动，请各位志愿者关注活动通知并积极参与。活动详情将在近期公布，敬请关注。'
-  },
-  {
-    id: '2',
-    title: '志愿时长统计已更新',
-    author: '系统管理员',
-    time: '2026-11-10 09:15',
-    content: '本学期志愿时长统计已完成更新，请各位同学在个人主页查看详细记录。如有疑问，请联系组织负责人。'
-  }
-])
+const profile = ref<CanaryUser | null>(null)
+const className = ref('')
+const notices = ref<CanaryNotice[]>([])
+const loading = ref(true)
+const unauthenticated = ref(false)
+const error = ref('')
+const noticesLoading = ref(false)
+const noticesError = ref('')
 const openNoticeId = ref('')
 const actionMessage = ref('')
 let actionTimer: ReturnType<typeof setTimeout> | null = null
 
+const ROLE_LABELS: Record<string, string> = {
+  student: '学生',
+  volunteer: '志愿者',
+  admin: '管理员',
+  department: '部门',
+  secretary: '秘书',
+  auditor: '审计',
+  teacher: '教师',
+  system: '系统'
+}
+
+const displayRoles = computed(() => {
+  const roles = (profile.value?.roles ?? []) as string[]
+  const source = roles.length ? roles : ['student']
+  return source.map((role) => ROLE_LABELS[role] ?? role)
+})
+
+const initials = computed(() => profile.value?.name?.slice(-2) || '—')
+
+const classDisplay = computed(() => {
+  if (className.value) return className.value
+  if (profile.value?.class_id) return profile.value.class_id
+  return '未设置班级'
+})
+
+const statusLabel = computed(() => (profile.value?.banned ? '已封禁' : '正常'))
+
+function readableError(reason: unknown, fallback: string): string {
+  return reason instanceof CanaryApiError ? reason.message : fallback
+}
+
+function isAuthError(reason: unknown): boolean {
+  if (reason instanceof CanaryApiError && reason.status === 401) {
+    unauthenticated.value = true
+    profile.value = null
+    return true
+  }
+  return false
+}
+
+async function loadProfile(): Promise<boolean> {
+  try {
+    const data = await fetchProfile()
+    profile.value = data
+    className.value = data.class_id ? await fetchGroupName(data.class_id) : ''
+    return true
+  } catch (reason) {
+    if (isAuthError(reason)) return false
+    error.value = readableError(reason, '个人资料加载失败，请稍后重试。')
+    return false
+  }
+}
+
+async function loadNotices(): Promise<boolean> {
+  if (unauthenticated.value) return false
+  noticesLoading.value = true
+  noticesError.value = ''
+  try {
+    const result = await fetchNotices()
+    notices.value = result.notifications ?? []
+    return true
+  } catch (reason) {
+    if (isAuthError(reason)) return false
+    noticesError.value = readableError(reason, '通知加载失败，请稍后重试。')
+    return false
+  } finally {
+    noticesLoading.value = false
+  }
+}
+
+async function loadPage() {
+  loading.value = true
+  error.value = ''
+  const profileOk = await loadProfile()
+  loading.value = false
+  if (profileOk) void loadNotices()
+}
+
 function toggleNotice(id: string) {
   openNoticeId.value = openNoticeId.value === id ? '' : id
+}
+
+function formatNoticeTime(value: string | null): string {
+  if (!value) return '时间未知'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function announceAction(message: string) {
@@ -51,17 +125,41 @@ function announceAction(message: string) {
   }, 2800)
 }
 
+function handleRefreshNotices() {
+  if (noticesLoading.value) return
+  void (async () => {
+    const ok = await loadNotices()
+    if (ok) announceAction('通知已刷新。')
+    else if (!unauthenticated.value) announceAction('通知刷新失败，请稍后重试。')
+  })()
+}
+
+function handleRetry() {
+  if (loading.value) return
+  void loadPage()
+}
+
 function handleChangePassword() {
-  announceAction('修改密码需要在接入会话后打开安全设置。')
+  announceAction('修改密码功能将在安全设置中提供。')
 }
 
 function handleLogout() {
-  announceAction('退出登录将在接入会话后执行。')
+  clearSession()
+  void router.replace('/login')
 }
 
 function handleAbout() {
   announceAction('关于页将在后续版本接入。')
 }
+
+onMounted(() => {
+  if (!isLoggedIn() || !currentUserId()) {
+    unauthenticated.value = true
+    loading.value = false
+    return
+  }
+  void loadPage()
+})
 
 onUnmounted(() => {
   if (actionTimer) clearTimeout(actionTimer)
@@ -82,106 +180,158 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <!-- Profile hero card with frosted glass -->
-    <section class="glass-card profile-hero-card">
-      <div class="profile-hero">
-        <div class="profile-avatar">{{ initials }}</div>
-        <div class="profile-identity">
-          <div class="profile-name-line">
-            <span class="profile-name">{{ profile.name }}</span>
-            <span v-for="role in profile.roles" :key="role" class="role-badge">
-              {{ role }}
-            </span>
+    <!-- Loading state -->
+    <section v-if="loading" class="glass-card state-card" role="status" aria-live="polite">
+      <span class="state-spinner" aria-hidden="true"></span>
+      <p class="state-title">正在加载个人资料</p>
+      <p class="state-description">正在从 canary 同步账号信息…</p>
+    </section>
+
+    <!-- Unauthenticated state -->
+    <section v-else-if="unauthenticated" class="glass-card state-card" role="alert">
+      <h2 class="state-title">需要登录</h2>
+      <p class="state-description">登录后即可查看个人资料、班级与站内通知。</p>
+      <RouterLink class="liquid-btn liquid-btn--primary" to="/login?redirect=/me">
+        去登录
+      </RouterLink>
+    </section>
+
+    <!-- API error state -->
+    <section v-else-if="error" class="glass-card state-card" role="alert">
+      <h2 class="state-title">个人资料加载失败</h2>
+      <p class="state-description">{{ error }}</p>
+      <button
+        class="liquid-btn liquid-btn--secondary"
+        type="button"
+        :disabled="loading"
+        @click="handleRetry"
+      >
+        重新加载
+      </button>
+    </section>
+
+    <template v-else-if="profile">
+      <!-- Profile hero card with frosted glass -->
+      <section class="glass-card profile-hero-card">
+        <div class="profile-hero">
+          <div class="profile-avatar">{{ initials }}</div>
+          <div class="profile-identity">
+            <div class="profile-name-line">
+              <span class="profile-name">{{ profile.name }}</span>
+              <span v-for="role in displayRoles" :key="role" class="role-badge">
+                {{ role }}
+              </span>
+            </div>
+            <span class="profile-class">{{ classDisplay }}</span>
           </div>
-          <span class="profile-class">{{ profile.className }}</span>
+          <span class="profile-status" :class="profile.banned ? 'is-banned' : 'is-normal'">
+            {{ statusLabel }}
+          </span>
         </div>
-        <span class="profile-status" :class="profile.banned ? 'is-banned' : 'is-normal'">
-          {{ profile.status }}
-        </span>
-      </div>
 
-      <dl class="profile-kv">
-        <dt>姓名</dt>
-        <dd>{{ profile.name }}</dd>
-        <dt>学号</dt>
-        <dd>{{ profile.id }}</dd>
-        <dt>班级</dt>
-        <dd>{{ profile.className }}</dd>
-        <dt>组织</dt>
-        <dd>{{ profile.group }}</dd>
-        <dt>身份</dt>
-        <dd class="profile-kv-roles">
-          <span v-for="role in profile.roles" :key="role" class="role-badge">{{ role }}</span>
-        </dd>
-      </dl>
-    </section>
+        <dl class="profile-kv">
+          <dt>姓名</dt>
+          <dd>{{ profile.name }}</dd>
+          <dt>学号</dt>
+          <dd>{{ profile.id }}</dd>
+          <dt>班级</dt>
+          <dd>{{ classDisplay }}</dd>
+          <dt>身份</dt>
+          <dd class="profile-kv-roles">
+            <span v-for="role in displayRoles" :key="role" class="role-badge">{{ role }}</span>
+          </dd>
+        </dl>
+      </section>
 
-    <!-- Notices section with frosted glass -->
-    <section class="glass-card notices-card">
-      <div class="notices-head">
-        <h2 class="section-title">站内通知</h2>
-        <button
-          class="liquid-btn liquid-btn--secondary liquid-btn--sm"
-          type="button"
-          @click="announceAction('通知已是最新。')"
-        >
-          刷新
-        </button>
-      </div>
-
-      <ul v-if="notices.length" class="notice-list">
-        <li v-for="notice in notices" :key="notice.id" class="notice-item">
+      <!-- Notices section with frosted glass -->
+      <section class="glass-card notices-card">
+        <div class="notices-head">
+          <h2 class="section-title">站内通知</h2>
           <button
+            class="liquid-btn liquid-btn--secondary liquid-btn--sm"
             type="button"
-            class="notice-head"
-            :aria-expanded="openNoticeId === notice.id"
-            @click="toggleNotice(notice.id)"
+            :disabled="noticesLoading"
+            @click="handleRefreshNotices"
           >
-            <span class="notice-title">{{ notice.title }}</span>
-            <span class="notice-meta">
-              {{ notice.author }} · {{ notice.time }}
-            </span>
-            <svg
-              class="notice-caret"
-              :class="{ 'is-open': openNoticeId === notice.id }"
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              aria-hidden="true"
-            >
-              <path
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="m6 9 6 6 6-6"
-              />
-            </svg>
+            {{ noticesLoading ? '刷新中…' : '刷新' }}
           </button>
-          <div v-if="openNoticeId === notice.id" class="notice-body">
-            <p>{{ notice.content }}</p>
-          </div>
-        </li>
-      </ul>
-      <div v-else class="empty-state">
-        <p class="empty-state__title">暂时没有新通知</p>
-        <p class="empty-state__description">有新的公告或提醒时会出现在这里</p>
-      </div>
-    </section>
+        </div>
 
-    <!-- Account actions with frosted glass -->
-    <section class="glass-card actions-card">
-      <button class="liquid-btn liquid-btn--primary liquid-btn--full" type="button" @click="handleChangePassword">
-        修改密码
-      </button>
-      <button class="liquid-btn liquid-btn--secondary liquid-btn--full" type="button" @click="handleAbout">
-        关于 ZVMS
-      </button>
-      <button class="liquid-btn liquid-btn--danger liquid-btn--full" type="button" @click="handleLogout">
-        退出登录
-      </button>
-    </section>
+        <div
+          v-if="noticesLoading && !notices.length"
+          class="empty-state"
+          role="status"
+          aria-live="polite"
+        >
+          <p class="empty-state__title">正在加载通知</p>
+          <p class="empty-state__description">正在获取最新的站内公告…</p>
+        </div>
+        <div v-else-if="noticesError" class="empty-state" role="alert">
+          <p class="empty-state__title">通知加载失败</p>
+          <p class="empty-state__description">{{ noticesError }}</p>
+          <button
+            class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+            type="button"
+            :disabled="noticesLoading"
+            @click="handleRefreshNotices"
+          >
+            重试
+          </button>
+        </div>
+        <ul v-else-if="notices.length" class="notice-list">
+          <li v-for="notice in notices" :key="notice.id" class="notice-item">
+            <button
+              type="button"
+              class="notice-head"
+              :aria-expanded="openNoticeId === notice.id"
+              @click="toggleNotice(notice.id)"
+            >
+              <span class="notice-title">{{ notice.title }}</span>
+              <span class="notice-meta">
+                {{ notice.author_name || '系统' }} · {{ formatNoticeTime(notice.created_at) }}
+              </span>
+              <svg
+                class="notice-caret"
+                :class="{ 'is-open': openNoticeId === notice.id }"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+            </button>
+            <div v-if="openNoticeId === notice.id" class="notice-body">
+              <p>{{ notice.content }}</p>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="empty-state">
+          <p class="empty-state__title">暂时没有新通知</p>
+          <p class="empty-state__description">有新的公告或提醒时会出现在这里</p>
+        </div>
+      </section>
+
+      <!-- Account actions with frosted glass -->
+      <section class="glass-card actions-card">
+        <button class="liquid-btn liquid-btn--primary liquid-btn--full" type="button" @click="handleChangePassword">
+          修改密码
+        </button>
+        <button class="liquid-btn liquid-btn--secondary liquid-btn--full" type="button" @click="handleAbout">
+          关于 ZVMS
+        </button>
+        <button class="liquid-btn liquid-btn--danger liquid-btn--full" type="button" @click="handleLogout">
+          退出登录
+        </button>
+      </section>
+    </template>
 
     <Transition name="action-feedback">
       <p v-if="actionMessage" class="action-feedback" role="status" aria-live="polite">
@@ -209,35 +359,90 @@ onUnmounted(() => {
 }
 
 .back-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
   padding: 0;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.48) 0%,
+    rgba(255, 255, 255, 0.28) 100%
+  );
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 50%;
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-spring);
-  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.08),
+    0 0 8px rgba(18, 48, 82, 0.06);
+}
+
+.back-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(255, 255, 255, 0.35) 0%,
+    transparent 70%
+  );
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.back-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 22%,
+    rgba(255, 255, 255, 0.65) 46%,
+    rgba(255, 255, 255, 0.08) 56%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  border-radius: 50%;
+  opacity: 0;
+  transform: translateX(-100%);
+  transition: all var(--duration-base) var(--ease-smooth);
+  pointer-events: none;
 }
 
 .back-btn:hover {
   color: var(--color-text-primary);
   transform: scale(1.05);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.1),
+    0 0 14px rgba(18, 48, 82, 0.1);
+}
+
+.back-btn:hover::after {
+  opacity: 1;
+  transform: translateX(100%);
 }
 
 .back-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.92);
 }
 
 .back-btn:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
+}
+
+.back-btn svg {
+  position: relative;
+  z-index: 1;
 }
 
 .profile-header__content {
@@ -530,6 +735,53 @@ onUnmounted(() => {
   margin: 0;
 }
 
+.empty-state .liquid-btn {
+  margin-top: var(--space-2);
+}
+
+/* Loading / error states */
+.state-card {
+  padding: var(--space-9) var(--space-6);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.state-title {
+  font-size: var(--font-size-headline);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.state-description {
+  font-size: var(--font-size-callout);
+  color: var(--color-text-secondary);
+  margin: 0;
+  max-width: 46ch;
+}
+
+.state-card .liquid-btn {
+  margin-top: var(--space-2);
+}
+
+.state-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(0, 113, 227, 0.18);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: state-spin 0.9s linear infinite;
+}
+
+@keyframes state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Action buttons section */
 .actions-card {
   display: flex;
@@ -725,6 +977,10 @@ onUnmounted(() => {
 
   .notice-caret {
     transition: none;
+  }
+
+  .state-spinner {
+    animation: none;
   }
 }
 </style>

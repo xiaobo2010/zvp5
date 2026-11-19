@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-
-const router = useRouter()
+import {
+  CanaryApiError,
+  fetchActivities,
+  fetchProfile,
+  isLoggedIn
+} from '@/api/canary'
+import type { ActivityScope, CanaryActivity } from '@/api/canary'
 
 type ActivityStatus = 'draft' | 'pending' | 'refused' | 'effective'
+type ActivityType = CanaryActivity['type']
 
 interface Activity {
   id: string
@@ -14,145 +20,212 @@ interface Activity {
   type: string
   status: ActivityStatus
   duration: number
+  creator: string
 }
 
-const activeTab = ref<'mine' | 'class' | 'campus'>('mine')
+const router = useRouter()
+
+const TYPE_LABELS: Record<ActivityType, string> = {
+  'on-campus': '校内活动',
+  'off-campus': '校外活动',
+  'social-practice': '社会实践',
+  hybrid: '混合活动'
+}
+
+const pageSize = 12
+
+const activeTab = ref<ActivityScope>('mine')
 const searchWord = ref('')
+const appliedSearch = ref('')
 const activePage = ref(1)
-const pageSize = ref(12)
-const loading = ref(false)
+const loading = ref(true)
+const activities = ref<Activity[]>([])
+const totalActivities = ref(0)
 const selectedActivity = ref<Activity | null>(null)
+const error = ref('')
+const unauthenticated = ref(false)
+const classId = ref('')
 
-// Mock activities data
-const allActivities: Activity[] = [
-  {
-    id: '1',
-    name: '图书馆整理图书',
-    date: '2026-11-10',
-    place: '图书馆',
-    type: '日常志愿',
-    status: 'effective',
-    duration: 2.5
-  },
-  {
-    id: '2',
-    name: '校园环境清洁',
-    date: '2026-11-08',
-    place: '校园',
-    type: '日常志愿',
-    status: 'effective',
-    duration: 3
-  },
-  {
-    id: '3',
-    name: '社区敬老院服务',
-    date: '2026-11-05',
-    place: '阳光敬老院',
-    type: '大型活动',
-    status: 'effective',
-    duration: 4
-  },
-  {
-    id: '4',
-    name: '科技馆讲解服务',
-    date: '2026-10-28',
-    place: '市科技馆',
-    type: '社会实践',
-    status: 'pending',
-    duration: 3.5
-  },
-  {
-    id: '5',
-    name: '图书馆阅读指导',
-    date: '2026-10-22',
-    place: '图书馆',
-    type: '日常志愿',
-    status: 'effective',
-    duration: 2
-  },
-  {
-    id: '6',
-    name: '校运会志愿服务',
-    date: '2026-10-15',
-    place: '运动场',
-    type: '大型活动',
-    status: 'effective',
-    duration: 5.5
-  },
-  {
-    id: '7',
-    name: '新生图书馆导览',
-    date: '2026-09-12',
-    place: '图书馆',
-    type: '日常志愿',
-    status: 'effective',
-    duration: 2
-  },
-  {
-    id: '8',
-    name: '献血活动协助',
-    date: '2026-09-05',
-    place: '体育馆',
-    type: '特殊志愿',
-    status: 'effective',
-    duration: 3
+let requestSeq = 0
+
+const totalPages = computed(() => Math.ceil(totalActivities.value / pageSize))
+const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
+
+function readableError(reason: unknown, fallback: string): string {
+  return reason instanceof CanaryApiError ? reason.message : fallback
+}
+
+function isAuthError(reason: unknown): boolean {
+  if (reason instanceof CanaryApiError && reason.status === 401) {
+    unauthenticated.value = true
+    activities.value = []
+    totalActivities.value = 0
+    return true
   }
-]
+  return false
+}
 
-const activities = computed(() => {
-  let filtered = allActivities
+function normalizeStatus(value: string | undefined): ActivityStatus {
+  if (value === 'draft' || value === 'refused' || value === 'effective') {
+    return value
+  }
+  return 'pending'
+}
 
-  if (searchWord.value.trim()) {
-    filtered = filtered.filter(a =>
-      a.name.toLowerCase().includes(searchWord.value.toLowerCase()) ||
-      a.place.toLowerCase().includes(searchWord.value.toLowerCase())
+function mapActivity(activity: CanaryActivity): Activity {
+  const mine = activity.mine
+  return {
+    id: activity._id,
+    name: activity.name || '未命名活动',
+    date: activity.date || '',
+    place: activity.place || '',
+    type: TYPE_LABELS[activity.type] ?? activity.type ?? '活动',
+    status: normalizeStatus(mine?.status ?? activity.status),
+    duration: typeof mine?.duration === 'number' ? mine.duration : 0,
+    creator: activity.creator_name || ''
+  }
+}
+
+async function loadProfile(): Promise<boolean> {
+  try {
+    const profile = await fetchProfile()
+    classId.value = profile.class_id ?? ''
+    return true
+  } catch (reason) {
+    if (isAuthError(reason)) return false
+    error.value = readableError(reason, '个人资料加载失败，请稍后重试。')
+    return false
+  }
+}
+
+async function loadActivities() {
+  if (needsClass.value) {
+    requestSeq += 1
+    loading.value = false
+    error.value = ''
+    activities.value = []
+    totalActivities.value = 0
+    selectedActivity.value = null
+    return
+  }
+
+  const seq = ++requestSeq
+  loading.value = true
+  error.value = ''
+  try {
+    const result = await fetchActivities(
+      activeTab.value,
+      activePage.value,
+      pageSize,
+      appliedSearch.value,
+      classId.value
     )
+    if (seq !== requestSeq) return
+    activities.value = (result.activities ?? []).map(mapActivity)
+    totalActivities.value = result.total ?? activities.value.length
+    const pageCount = Math.ceil(totalActivities.value / pageSize)
+    if (pageCount > 0 && activePage.value > pageCount) {
+      activePage.value = pageCount
+      void loadActivities()
+      return
+    }
+    if (
+      selectedActivity.value &&
+      !activities.value.some((activity) => activity.id === selectedActivity.value?.id)
+    ) {
+      selectedActivity.value = null
+    }
+  } catch (reason) {
+    if (seq !== requestSeq) return
+    if (!isAuthError(reason)) {
+      activities.value = []
+      totalActivities.value = 0
+      error.value = readableError(reason, '活动加载失败，请稍后重试。')
+    }
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
+}
+
+async function bootstrap() {
+  if (!isLoggedIn()) {
+    unauthenticated.value = true
+    loading.value = false
+    return
   }
 
-  const start = (activePage.value - 1) * pageSize.value
-  return filtered.slice(start, start + pageSize.value)
-})
-
-const totalActivities = computed(() => {
-  if (searchWord.value.trim()) {
-    return allActivities.filter(a =>
-      a.name.toLowerCase().includes(searchWord.value.toLowerCase()) ||
-      a.place.toLowerCase().includes(searchWord.value.toLowerCase())
-    ).length
+  requestSeq += 1
+  unauthenticated.value = false
+  loading.value = true
+  error.value = ''
+  const profileOk = await loadProfile()
+  if (!profileOk) {
+    loading.value = false
+    return
   }
-  return allActivities.length
-})
-
-const totalPages = computed(() => Math.ceil(totalActivities.value / pageSize.value))
+  await loadActivities()
+}
 
 function handleSearch() {
+  const next = searchWord.value.trim()
+  if (next === appliedSearch.value) return
+  appliedSearch.value = next
   activePage.value = 1
+  void loadActivities()
+}
+
+function handleSearchBlur(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (next instanceof HTMLElement && next.closest('.search-clear')) return
+  handleSearch()
 }
 
 function handleRefresh() {
-  loading.value = true
-  setTimeout(() => {
-    loading.value = false
-  }, 600)
+  if (loading.value) return
+  void bootstrap()
 }
 
-function handleTabChange(tab: 'mine' | 'class' | 'campus') {
+function handleTabChange(tab: ActivityScope) {
+  if (activeTab.value === tab) return
   activeTab.value = tab
   activePage.value = 1
+  selectedActivity.value = null
+  void loadActivities()
 }
 
 function handlePageChange(page: number) {
+  if (page === activePage.value || page < 1) return
+  if (totalPages.value > 0 && page > totalPages.value) return
   activePage.value = page
+  selectedActivity.value = null
+  void loadActivities()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+function handleRetry() {
+  if (loading.value) return
+  void bootstrap()
+}
+
 function formatDate(date: string) {
-  const d = new Date(date)
-  return {
-    day: String(d.getDate()).padStart(2, '0'),
-    month: `${d.getMonth() + 1}月`,
-    weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
+  const parsed = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(date)
+  if (!date || Number.isNaN(parsed.getTime())) {
+    return { day: '--', month: '--', weekday: '--' }
   }
+  return {
+    day: String(parsed.getDate()).padStart(2, '0'),
+    month: `${parsed.getMonth() + 1}月`,
+    weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][parsed.getDay()]
+  }
+}
+
+function formatDetailDate(date: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`
+  return date || '—'
 }
 
 function getStatusLabel(status: ActivityStatus) {
@@ -182,16 +255,27 @@ function openActivity(activity: Activity) {
 function closeActivity() {
   selectedActivity.value = null
 }
+
+onMounted(() => {
+  void bootstrap()
+})
 </script>
 
 <template>
   <div class="volunteer-page">
     <!-- Page header with frosted glass -->
     <header class="page-header glass-card">
-      <div class="page-header__content">
-        <p class="page-header__eyebrow">志愿服务</p>
-        <h1 class="page-header__title">义工列表</h1>
-        <p class="page-header__subtitle">共 {{ totalActivities }} 个项目</p>
+      <div class="page-header__lead">
+        <button class="back-btn" type="button" aria-label="返回首页" @click="router.push('/')">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M12 4L6 10L12 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="page-header__content">
+          <p class="page-header__eyebrow">志愿服务</p>
+          <h1 class="page-header__title">义工列表</h1>
+          <p class="page-header__subtitle">共 {{ totalActivities }} 个项目</p>
+        </div>
       </div>
       <div class="page-header__actions">
         <button
@@ -249,7 +333,7 @@ function closeActivity() {
         type="search"
         placeholder="搜索项目名称或地点"
         @keydown.enter="handleSearch"
-        @blur="handleSearch"
+        @blur="handleSearchBlur"
       />
       <button
         v-if="searchWord"
@@ -265,7 +349,48 @@ function closeActivity() {
     </div>
 
     <!-- Activities list with frosted glass cards -->
-    <div v-if="loading" class="activities-skeleton">
+    <div v-if="unauthenticated" class="empty-state glass-card" role="alert">
+      <p class="empty-title">需要登录</p>
+      <p class="empty-description">登录后即可查看你的义工记录。</p>
+      <RouterLink
+        class="liquid-btn liquid-btn--primary liquid-btn--sm"
+        to="/login?redirect=/volunteers"
+      >
+        去登录
+      </RouterLink>
+    </div>
+
+    <div v-else-if="error" class="empty-state glass-card" role="alert">
+      <p class="empty-title">活动加载失败</p>
+      <p class="empty-description">{{ error }}</p>
+      <button
+        class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+        type="button"
+        :disabled="loading"
+        @click="handleRetry"
+      >
+        重试
+      </button>
+    </div>
+
+    <div v-else-if="needsClass" class="empty-state glass-card" role="status">
+      <svg class="empty-icon" width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+        <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <p class="empty-title">尚未绑定班级</p>
+      <p class="empty-description">
+        绑定班级后即可查看班级活动；你也可以先浏览“我的活动”或“校园活动”。
+      </p>
+    </div>
+
+    <div
+      v-else-if="loading"
+      class="activities-skeleton"
+      role="status"
+      aria-live="polite"
+      aria-label="正在加载活动"
+    >
       <div v-for="n in 6" :key="n" class="activity-skeleton glass-card">
         <div class="skeleton-date"></div>
         <div class="skeleton-content">
@@ -283,7 +408,7 @@ function closeActivity() {
       </svg>
       <p class="empty-title">没有找到相关项目</p>
       <p class="empty-description">
-        {{ searchWord ? '尝试使用其他关键词搜索' : '暂时没有活动记录' }}
+        {{ appliedSearch ? '尝试使用其他关键词搜索' : '暂时没有活动记录' }}
       </p>
     </div>
 
@@ -304,7 +429,7 @@ function closeActivity() {
         <div class="activity-content">
           <div class="activity-kicker">
             <span class="activity-type">{{ activity.type }}</span>
-            <span class="activity-place">{{ activity.place }}</span>
+            <span v-if="activity.place" class="activity-place">{{ activity.place }}</span>
           </div>
           <h3 class="activity-name">{{ activity.name }}</h3>
           <div class="activity-meta">
@@ -335,11 +460,15 @@ function closeActivity() {
 
         <dl class="activity-detail__kv">
           <dt>日期</dt>
-          <dd>{{ selectedActivity.date }}</dd>
+          <dd>{{ formatDetailDate(selectedActivity.date) }}</dd>
           <dt>地点</dt>
-          <dd>{{ selectedActivity.place }}</dd>
+          <dd>{{ selectedActivity.place || '—' }}</dd>
           <dt>类型</dt>
           <dd>{{ selectedActivity.type }}</dd>
+          <template v-if="selectedActivity.creator">
+            <dt>创建者</dt>
+            <dd>{{ selectedActivity.creator }}</dd>
+          </template>
           <dt>状态</dt>
           <dd>
             <span class="activity-status" :class="getStatusClass(selectedActivity.status)">
@@ -353,7 +482,11 @@ function closeActivity() {
     </Transition>
 
     <!-- Pagination with liquid glass buttons -->
-    <nav v-if="totalPages > 1 && !loading" class="pagination glass-card" aria-label="分页导航">
+    <nav
+      v-if="totalPages > 1 && !loading && !error && !unauthenticated && !needsClass"
+      class="pagination glass-card"
+      aria-label="分页导航"
+    >
       <button
         class="liquid-btn liquid-btn--secondary liquid-btn--sm"
         type="button"
@@ -434,9 +567,105 @@ function closeActivity() {
   flex-wrap: wrap;
 }
 
+.page-header__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex: 1;
+  min-width: 200px;
+}
+
 .page-header__content {
   flex: 1;
   min-width: 200px;
+}
+
+.back-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.48) 0%,
+    rgba(255, 255, 255, 0.28) 100%
+  );
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.08),
+    0 0 8px rgba(18, 48, 82, 0.06);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  flex-shrink: 0;
+  transition: all var(--duration-fast) var(--ease-spring);
+}
+
+.back-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(255, 255, 255, 0.35) 0%,
+    transparent 70%
+  );
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.back-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 22%,
+    rgba(255, 255, 255, 0.65) 46%,
+    rgba(255, 255, 255, 0.08) 56%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  border-radius: 50%;
+  opacity: 0;
+  transform: translateX(-100%);
+  transition: all var(--duration-base) var(--ease-smooth);
+  pointer-events: none;
+}
+
+.back-btn:hover {
+  color: var(--color-text-primary);
+  transform: scale(1.05);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -0.5px 0 rgba(0, 0, 0, 0.1),
+    0 0 14px rgba(18, 48, 82, 0.1);
+}
+
+.back-btn:hover::after {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+.back-btn:active {
+  transform: scale(0.92);
+}
+
+.back-btn:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.back-btn svg {
+  position: relative;
+  z-index: 1;
 }
 
 .page-header__eyebrow {
@@ -643,9 +872,39 @@ function closeActivity() {
   gap: 2px;
   min-width: 64px;
   padding: var(--space-3);
-  background: rgba(0, 113, 227, 0.08);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.15) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--radius-md);
+  -webkit-backdrop-filter: blur(12px) saturate(170%) brightness(1.04);
+  backdrop-filter: blur(12px) saturate(170%) brightness(1.04);
   flex-shrink: 0;
+  position: relative;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.1), 0 8px 32px rgba(0, 113, 227, 0.1);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+}
+
+.activity-date::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  height: 1px;
+  background: radial-gradient(ellipse 100% 100%, rgba(255, 255, 255, 0.8) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.activity-date:hover {
+  transform: scale(1.02);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.1), 0 12px 40px rgba(0, 113, 227, 0.15);
+}
+
+@supports not (backdrop-filter: blur(12px)) {
+  .activity-date {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(0, 113, 227, 0.2);
+  }
 }
 
 .activity-day {
@@ -1089,6 +1348,10 @@ function closeActivity() {
   }
 
   .activity-card:active {
+    transform: none;
+  }
+
+  .activity-date:hover {
     transform: none;
   }
 

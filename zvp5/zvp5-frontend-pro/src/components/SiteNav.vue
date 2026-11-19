@@ -5,14 +5,23 @@ import { useRouter, useRoute } from 'vue-router'
 const router = useRouter()
 const route = useRoute()
 
-const links = [
-  { label: '首页', path: '/' },
+// Primary nav link
+const primaryLink = { label: '首页', path: '/' }
+
+// Dropdown menu items
+const dropdownItems = [
   { label: '义工列表', path: '/volunteers' },
   { label: '个人主页', path: '/me' }
 ]
 
 const mobileMenuOpen = ref(false)
+const dropdownOpen = ref(false)
 const activePath = computed(() => route.path)
+
+// Check if current route is in dropdown
+const isDropdownActive = computed(() =>
+  dropdownItems.some(item => item.path === activePath.value)
+)
 
 // Spring indicator state
 const linksRef = ref<HTMLElement>()
@@ -57,35 +66,40 @@ function updateIndicator(animate = true) {
   const pill = indicatorRef.value
   if (!root || !pill) return
 
-  const active = root.querySelector<HTMLElement>('.site-nav__link.is-active')
-  if (!active) {
+  // Find the active link based on current route
+  let activeElement: HTMLElement | null = null
+
+  if (activePath.value === primaryLink.path) {
+    activeElement = root.querySelector<HTMLElement>('.site-nav__link[data-primary]')
+  } else if (isDropdownActive.value) {
+    activeElement = root.querySelector<HTMLElement>('.site-nav__dropdown-trigger')
+  }
+
+  if (!activeElement) {
     indicator.value = { ...indicator.value, visible: false }
     return
   }
 
-  const target = active.offsetLeft
+  // offsetLeft is relative to the nearest positioned ancestor, which is the
+  // dropdown wrapper for the trigger. Measure against the nav track instead so
+  // the spring pill lands exactly under the active control.
+  const rootRect = root.getBoundingClientRect()
+  const activeRect = activeElement.getBoundingClientRect()
+  const target = activeRect.left - rootRect.left
   if (!animate || reduceMotion()) {
     indicatorAnimation?.cancel()
     indicatorAnimation = null
-    indicator.value = { x: target, w: active.offsetWidth, visible: true }
+    indicator.value = { x: target, w: activeRect.width, visible: true }
     return
   }
 
   const from = renderedTranslateX(pill)
   const size = indicator.value.w
-  indicator.value = { x: target, w: active.offsetWidth, visible: true }
+  indicator.value = { x: target, w: activeRect.width, visible: true }
   pill.style.transform = `translateX(${target}px) translateY(-50%)`
 
   if (Math.abs(from - target) < 0.5) return
   playIndicator(from, target, size)
-}
-
-function previewIndicator(index: number) {
-  const root = linksRef.value
-  const pill = indicatorRef.value
-  const link = root?.querySelectorAll<HTMLElement>('.site-nav__link')?.[index]
-  if (!pill || !link) return
-  playIndicator(renderedTranslateX(pill), link.offsetLeft, indicator.value.w)
 }
 
 function pulseIcon(event: MouseEvent) {
@@ -101,21 +115,25 @@ function pulseIcon(event: MouseEvent) {
   )
 }
 
-function handleNavClick(path: string, event: MouseEvent, index: number) {
+function handlePrimaryClick(event: MouseEvent) {
   event.preventDefault()
   pulseIcon(event)
-  const root = linksRef.value
-  if (root) {
-    previewIndicator(index)
-  }
+  dropdownOpen.value = false
+  router.push(primaryLink.path)
+}
+
+function toggleDropdown() {
+  dropdownOpen.value = !dropdownOpen.value
+}
+
+function handleDropdownItemClick(path: string) {
+  dropdownOpen.value = false
   router.push(path)
 }
 
-const indicatorStyle = computed(() => ({
-  width: indicator.value.w + 'px',
-  opacity: indicator.value.visible ? 1 : 0,
-  transform: `translateX(${indicator.value.x}px) translateY(-50%)`
-}))
+function closeDropdown() {
+  dropdownOpen.value = false
+}
 
 function toggleMobileMenu() {
   mobileMenuOpen.value = !mobileMenuOpen.value
@@ -126,8 +144,19 @@ function closeMobileMenu() {
 }
 
 function handleEscape(e: KeyboardEvent) {
-  if (e.key === 'Escape' && mobileMenuOpen.value) {
-    closeMobileMenu()
+  if (e.key === 'Escape') {
+    if (dropdownOpen.value) {
+      closeDropdown()
+    } else if (mobileMenuOpen.value) {
+      closeMobileMenu()
+    }
+  }
+}
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (dropdownOpen.value && !target.closest('.site-nav__dropdown')) {
+    closeDropdown()
   }
 }
 
@@ -137,18 +166,23 @@ function onResize() {
 
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
+  document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', onResize)
   nextTick(() => updateIndicator(false))
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
+  document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', onResize)
   indicatorAnimation?.cancel()
   indicatorAnimation = null
 })
 
-watch(activePath, () => updateIndicator(true))
+watch(activePath, () => {
+  closeDropdown()
+  updateIndicator(true)
+})
 </script>
 
 <template>
@@ -160,18 +194,61 @@ watch(activePath, () => updateIndicator(true))
 
       <!-- Desktop navigation with liquid glass indicator -->
       <nav ref="linksRef" class="site-nav__links" aria-label="主导航">
-        <span ref="indicatorRef" class="site-nav__indicator" :style="indicatorStyle" aria-hidden="true" />
+        <span ref="indicatorRef" class="site-nav__indicator" :style="{
+          width: indicator.w + 'px',
+          opacity: indicator.visible ? 1 : 0,
+          transform: `translateX(${indicator.x}px) translateY(-50%)`
+        }" aria-hidden="true" />
+
         <router-link
-          v-for="(link, index) in links"
-          :key="link.label"
-          :to="link.path"
+          :to="primaryLink.path"
           class="site-nav__link"
-          :class="{ 'is-active': link.path === activePath }"
-          :aria-current="link.path === activePath ? 'page' : undefined"
-          @click="handleNavClick(link.path, $event, index)"
+          :class="{ 'is-active': primaryLink.path === activePath }"
+          :aria-current="primaryLink.path === activePath ? 'page' : undefined"
+          data-primary
+          @click="handlePrimaryClick"
         >
-          {{ link.label }}
+          {{ primaryLink.label }}
         </router-link>
+
+        <div class="site-nav__dropdown">
+          <button
+            class="site-nav__dropdown-trigger"
+            :class="{ 'is-active': isDropdownActive }"
+            :aria-expanded="dropdownOpen"
+            aria-haspopup="true"
+            @click="toggleDropdown"
+          >
+            更多
+            <svg
+              class="dropdown-chevron"
+              :class="{ 'is-open': dropdownOpen }"
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <Transition name="dropdown">
+            <div v-if="dropdownOpen" class="site-nav__dropdown-menu">
+              <router-link
+                v-for="item in dropdownItems"
+                :key="item.path"
+                :to="item.path"
+                class="site-nav__dropdown-item"
+                :class="{ 'is-active': item.path === activePath }"
+                :aria-current="item.path === activePath ? 'page' : undefined"
+                @click="handleDropdownItemClick(item.path)"
+              >
+                {{ item.label }}
+              </router-link>
+            </div>
+          </Transition>
+        </div>
       </nav>
 
       <!-- Right controls -->
@@ -215,13 +292,24 @@ watch(activePath, () => updateIndicator(true))
         aria-label="移动导航"
       >
         <router-link
-          v-for="link in links"
-          :key="link.label"
-          :to="link.path"
+          :to="primaryLink.path"
           class="site-nav__mobile-link"
+          :class="{ 'is-active': primaryLink.path === activePath }"
+          :aria-current="primaryLink.path === activePath ? 'page' : undefined"
           @click="closeMobileMenu"
         >
-          {{ link.label }}
+          {{ primaryLink.label }}
+        </router-link>
+        <router-link
+          v-for="item in dropdownItems"
+          :key="item.path"
+          :to="item.path"
+          class="site-nav__mobile-link"
+          :class="{ 'is-active': item.path === activePath }"
+          :aria-current="item.path === activePath ? 'page' : undefined"
+          @click="closeMobileMenu"
+        >
+          {{ item.label }}
         </router-link>
         <div class="site-nav__mobile-divider" />
         <button class="site-nav__mobile-link" @click="closeMobileMenu">
@@ -310,7 +398,7 @@ watch(activePath, () => updateIndicator(true))
 
 .site-nav__indicator {
   position: absolute;
-  left: 4px;
+  left: 0;
   top: 50%;
   transform: translateY(-50%);
   height: calc(100% - 8px);
@@ -352,14 +440,154 @@ watch(activePath, () => updateIndicator(true))
   transform: scale(0.94);
 }
 
-.site-nav__link.is-active,
-.site-nav__link.router-link-active {
+.site-nav__link.is-active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
   color: var(--color-brand);
 }
 
 .site-nav__link:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
+}
+
+/* Dropdown */
+.site-nav__dropdown {
+  position: relative;
+}
+
+.site-nav__dropdown-trigger {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-callout);
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  backdrop-filter: blur(10px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-smooth),
+    background var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-spring);
+  min-height: 36px;
+}
+
+.site-nav__dropdown-trigger:hover {
+  color: var(--color-text-primary);
+}
+
+.site-nav__dropdown-trigger:active {
+  transform: scale(0.94);
+}
+
+.site-nav__dropdown-trigger.is-active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--color-brand);
+}
+
+.site-nav__dropdown-trigger:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.dropdown-chevron {
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.dropdown-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.site-nav__dropdown-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 160px;
+  padding: 6px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.85) 0%,
+    rgba(248, 251, 255, 0.78) 100%
+  );
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 8px 24px rgba(18, 48, 82, 0.12),
+    0 2px 8px rgba(0, 113, 227, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.site-nav__dropdown-item {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  font-size: var(--font-size-callout);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--duration-fast) var(--ease-smooth),
+    color var(--duration-fast) var(--ease-smooth);
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
+
+.site-nav__dropdown-item:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.12) 0%,
+    rgba(0, 113, 227, 0.08) 100%
+  );
+  color: var(--color-brand);
+}
+
+.site-nav__dropdown-item.is-active {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.15) 0%,
+    rgba(0, 113, 227, 0.1) 100%
+  );
+  color: var(--color-brand);
+  font-weight: 600;
+}
+
+.site-nav__dropdown-item:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-spring);
+}
+
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 
 .site-nav__controls {
@@ -626,6 +854,16 @@ watch(activePath, () => updateIndicator(true))
   align-items: center;
 }
 
+.site-nav__mobile-link.is-active {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.16) 0%,
+    rgba(255, 255, 255, 0.26) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.7);
+  color: var(--color-brand);
+}
+
 .site-nav__mobile-link:hover {
   background: linear-gradient(
     135deg,
@@ -694,8 +932,13 @@ watch(activePath, () => updateIndicator(true))
   .site-nav__icon-btn:active,
   .site-nav__avatar:active,
   .site-nav__toggle:active,
-  .site-nav__mobile-link:active {
+  .site-nav__mobile-link:active,
+  .site-nav__dropdown-trigger:active {
     transform: none;
+  }
+
+  .dropdown-chevron {
+    transition: none;
   }
 }
 </style>
