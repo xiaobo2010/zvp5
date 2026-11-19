@@ -358,7 +358,7 @@ jobs:
           set -euo pipefail
           pnpm run build
           grep -R -F "$VITE_API_RACE_BASE" dist/assets >/dev/null
-          node .github/scripts/verify-static-base.cjs dist "$VITE_STATIC_BASE" "$VITE_PAGE_BASE"
+          node "$GITHUB_WORKSPACE/.github/scripts/verify-static-base.cjs" dist "$VITE_STATIC_BASE" "$VITE_PAGE_BASE"
           race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
           grep -F "$race_origin" dist/index.html >/dev/null
 
