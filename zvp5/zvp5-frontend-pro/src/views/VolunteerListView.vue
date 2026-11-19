@@ -22,6 +22,8 @@ interface Activity {
   detailDate: string
   place: string
   type: string
+  typeKey: CanaryActivity['type']
+  typeClass: string
   status: ActivityStatus
   statusLabel: string
   statusClass: string
@@ -38,7 +40,7 @@ const TYPE_LABELS: Record<ActivityType, string> = {
   hybrid: '混合活动'
 }
 
-const pageSize = 12
+const pageSize = 8
 
 const activeTab = ref<ActivityScope>('mine')
 const searchWord = ref('')
@@ -99,6 +101,8 @@ function mapActivity(activity: CanaryActivity): Activity {
     detailDate: formatDetailDate(date),
     place: activity.place || '',
     type: TYPE_LABELS[activity.type] ?? activity.type ?? '活动',
+    typeKey: activity.type,
+    typeClass: `activity-type--${activity.type}`,
     status,
     statusLabel: getStatusLabel(status),
     statusClass: getStatusClass(status),
@@ -220,7 +224,8 @@ function handlePageChange(page: number) {
   activePage.value = page
   selectedActivity.value = null
   void loadActivities()
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  // Keep the reader's scroll position: the pagination itself plays the
+  // transition instead of jumping the whole page to the top.
 }
 
 function handleRetry() {
@@ -450,7 +455,7 @@ onMounted(() => {
 
         <div class="activity-content">
           <div class="activity-kicker">
-            <span class="activity-type">{{ activity.type }}</span>
+            <span class="activity-type" :class="activity.typeClass">{{ activity.type }}</span>
             <span v-if="activity.place" class="activity-place">{{ activity.place }}</span>
           </div>
           <h3 class="activity-name">{{ activity.name }}</h3>
@@ -517,7 +522,7 @@ onMounted(() => {
       >
         上一页
       </button>
-      <div class="pagination-pages">
+      <div :key="activePage" class="pagination-pages">
         <button
           v-for="page in visiblePages"
           :key="page"
@@ -828,6 +833,14 @@ onMounted(() => {
   color: var(--color-text-tertiary);
 }
 
+/* The browser's native search clear control duplicates our own glass X. */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration {
+  display: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 .search-clear {
   width: 28px;
   height: 28px;
@@ -987,11 +1000,33 @@ onMounted(() => {
 
 .activity-type {
   padding: 4px 8px;
-  background: rgba(0, 113, 227, 0.12);
-  border: 1px solid rgba(0, 113, 227, 0.24);
+  border: 1px solid;
   border-radius: var(--radius-xs);
   font-weight: 500;
-  color: var(--color-brand);
+}
+
+.activity-type--on-campus {
+  color: var(--tone-blue);
+  background: var(--tone-blue-bg);
+  border-color: rgba(0, 113, 227, 0.2);
+}
+
+.activity-type--off-campus {
+  color: var(--tone-teal);
+  background: var(--tone-teal-bg);
+  border-color: rgba(48, 176, 199, 0.2);
+}
+
+.activity-type--social-practice {
+  color: var(--tone-amber);
+  background: var(--tone-amber-bg);
+  border-color: rgba(255, 159, 10, 0.2);
+}
+
+.activity-type--hybrid {
+  color: var(--tone-violet);
+  background: var(--tone-violet-bg);
+  border-color: rgba(175, 82, 222, 0.2);
 }
 
 .activity-place {
@@ -1149,6 +1184,18 @@ onMounted(() => {
   gap: var(--space-2);
   flex-wrap: wrap;
   justify-content: center;
+  animation: pagination-pop 320ms var(--ease-spring);
+}
+
+@keyframes pagination-pop {
+  from {
+    opacity: 0.55;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .pagination-page {

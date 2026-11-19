@@ -10,11 +10,19 @@ const primaryLink = { label: '首页', path: '/' }
 // Drawer menu items
 const drawerItems = [
   { label: '义工列表', path: '/volunteers' },
-  { label: '个人主页', path: '/me' }
+  { label: '个人主页', path: '/me' },
+  { label: '关于', path: '/about' }
 ]
 
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
+
+// Drag-to-pull state for the collapsed edge handle.
+const dragOffset = ref(0)
+const dragging = ref(false)
+let dragStartX = 0
+let dragMoved = false
+let suppressHandleClick = false
 
 // Focus trap refs
 const drawerRef = ref<HTMLElement>()
@@ -29,8 +37,53 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
-function handleDrawerItemClick() {
-  closeDrawer()
+function drawerWidth() {
+  return drawerRef.value?.offsetWidth ?? 300
+}
+
+function startHandleDrag(event: PointerEvent) {
+  if (drawerOpen.value || event.button !== 0) return
+  dragStartX = event.clientX
+  dragMoved = false
+  dragOffset.value = 0
+  dragging.value = true
+  window.addEventListener('pointermove', moveHandleDrag, { passive: false })
+  window.addEventListener('pointerup', endHandleDrag, { once: true })
+  window.addEventListener('pointercancel', endHandleDrag, { once: true })
+}
+
+function moveHandleDrag(event: PointerEvent) {
+  if (!dragging.value) return
+  const delta = event.clientX - dragStartX
+  if (Math.abs(delta) > 6) dragMoved = true
+  dragOffset.value = Math.min(drawerWidth(), Math.max(0, delta))
+  if (dragMoved) event.preventDefault()
+}
+
+function endHandleDrag() {
+  window.removeEventListener('pointermove', moveHandleDrag)
+  window.removeEventListener('pointerup', endHandleDrag)
+  window.removeEventListener('pointercancel', endHandleDrag)
+  if (!dragging.value) return
+
+  const shouldOpen = dragMoved && dragOffset.value >= drawerWidth() * 0.28
+  dragging.value = false
+  dragOffset.value = 0
+  if (dragMoved) {
+    drawerOpen.value = shouldOpen
+    suppressHandleClick = true
+    window.setTimeout(() => {
+      suppressHandleClick = false
+    }, 0)
+  }
+}
+
+function onHandleClick() {
+  if (suppressHandleClick) {
+    suppressHandleClick = false
+    return
+  }
+  toggleDrawer()
 }
 
 function handleEscape(e: KeyboardEvent) {
@@ -96,6 +149,9 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
   window.removeEventListener('keydown', handleDrawerKeydown)
+  window.removeEventListener('pointermove', moveHandleDrag)
+  window.removeEventListener('pointerup', endHandleDrag)
+  window.removeEventListener('pointercancel', endHandleDrag)
   setScrollLock(false)
 })
 
@@ -121,12 +177,9 @@ watch(drawerOpen, (isOpen) => {
   }
 })
 
-watch(
-  () => route.path,
-  () => {
-    closeDrawer()
-  }
-)
+// Keep the drawer open when a destination is chosen. It closes only from the
+// explicit close button, Escape, or the overlay.
+
 </script>
 
 <template>
@@ -145,7 +198,8 @@ watch(
     id="drawer"
     ref="drawerRef"
     class="site-nav__drawer"
-    :class="{ 'is-open': drawerOpen }"
+    :class="{ 'is-open': drawerOpen, 'is-dragging': dragging }"
+    :style="{ '--drawer-drag': `${dragOffset}px` }"
     :aria-hidden="!drawerOpen"
     :inert="!drawerOpen"
     aria-labelledby="drawer-title"
@@ -186,7 +240,6 @@ watch(
         class="site-nav__drawer-link"
         :class="{ 'is-active': primaryLink.path === activePath }"
         :aria-current="primaryLink.path === activePath ? 'page' : undefined"
-        @click="handleDrawerItemClick"
       >
         {{ primaryLink.label }}
       </router-link>
@@ -198,7 +251,6 @@ watch(
         class="site-nav__drawer-link"
         :class="{ 'is-active': item.path === activePath }"
         :aria-current="item.path === activePath ? 'page' : undefined"
-        @click="handleDrawerItemClick"
       >
         {{ item.label }}
       </router-link>
@@ -207,9 +259,13 @@ watch(
     <div class="site-nav__drawer-divider" />
 
     <div class="site-nav__drawer-section">
-      <button class="site-nav__drawer-action" type="button">搜索</button>
-      <button class="site-nav__drawer-action" type="button">通知</button>
-      <button class="site-nav__drawer-action" type="button">账户设置</button>
+      <router-link
+        class="site-nav__drawer-action"
+        :class="{ 'is-active': activePath === '/notifications' }"
+        to="/notifications"
+      >
+        通知
+      </router-link>
     </div>
   </div>
 
@@ -217,12 +273,14 @@ watch(
   <button
     ref="drawerHandleRef"
     class="site-nav__handle"
+    :class="{ 'is-dragging': dragging }"
     type="button"
     :aria-expanded="drawerOpen"
     aria-controls="drawer"
     :aria-label="drawerOpen ? '关闭导航菜单' : '打开导航菜单'"
     :tabindex="drawerOpen ? -1 : 0"
-    @click="toggleDrawer"
+    @pointerdown="startHandleDrag"
+    @click="onHandleClick"
   >
     <svg
       class="site-nav__handle-icon"
@@ -265,7 +323,8 @@ watch(
   border-left: none;
   border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
   color: var(--color-text-primary);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   transition:
     transform var(--duration-fast) var(--ease-spring),
     color var(--duration-fast) var(--ease-smooth),
@@ -296,6 +355,10 @@ watch(
 .site-nav__handle:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
+}
+
+.site-nav__handle.is-dragging {
+  cursor: grabbing;
 }
 
 .site-nav__handle-icon {
@@ -334,7 +397,7 @@ watch(
   gap: var(--space-4);
   overflow-y: auto;
   overscroll-behavior: contain;
-  transform: translateX(-100%);
+  transform: translateX(calc(-100% + var(--drawer-drag, 0px)));
   opacity: 0;
   transition: transform var(--duration-base) var(--ease-smooth),
     opacity var(--duration-base) var(--ease-smooth);
@@ -344,6 +407,11 @@ watch(
 .site-nav__drawer.is-open {
   transform: translateX(0);
   opacity: 1;
+}
+
+.site-nav__drawer.is-dragging {
+  opacity: 1;
+  transition: none;
 }
 
 /* Drawer navigation */
@@ -568,6 +636,19 @@ watch(
     inset 0 -1px 0 rgba(0, 0, 0, 0.06),
     0 4px 14px rgba(18, 48, 82, 0.1);
   transform: translateX(4px);
+}
+
+.site-nav__drawer-action.is-active {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.2) 0%,
+    rgba(255, 255, 255, 0.66) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.92);
+  color: var(--color-brand);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 4px 14px rgba(0, 113, 227, 0.12);
 }
 
 .site-nav__drawer-action:active {

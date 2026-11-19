@@ -172,6 +172,13 @@ const hourCategories = computed<HourCategory[]>(() => {
   })
 })
 
+function progressTone(percent: number): string {
+  if (percent >= 100) return 'green'
+  if (percent >= 70) return 'blue'
+  if (percent >= 40) return 'amber'
+  return 'rose'
+}
+
 function activityStatus(activity: CanaryActivity): string {
   return activity.mine?.status ?? activity.status
 }
@@ -653,7 +660,21 @@ onUnmounted(() => {
           <p ref="totalValueRef" class="total-hours__value">
             {{ totalHoursLabel }}<span class="total-hours__unit">h</span>
           </p>
-          <p class="total-hours__note">包含三类时长</p>
+          <div class="total-hours__breakdown">
+            <div
+              v-for="category in hourCategories"
+              :key="category.key"
+              class="breakdown-item"
+            >
+              <span
+                class="breakdown-dot"
+                :class="`breakdown-dot--${category.key}`"
+                aria-hidden="true"
+              ></span>
+              <span class="breakdown-label">{{ category.title.slice(0, 2) }}</span>
+              <span class="breakdown-value">{{ formatHours(category.actual) }}</span>
+            </div>
+          </div>
         </article>
       </section>
 
@@ -698,18 +719,19 @@ onUnmounted(() => {
               <h3 class="hour-category__title">{{ category.title }}</h3>
               <span
                 class="hour-category__progress"
-                :class="
-                  category.percent >= 100
-                    ? 'hour-category__progress--good'
-                    : 'hour-category__progress--warn'
-                "
+                :class="`hour-category__progress--${progressTone(category.percent)}`"
               >
                 {{ category.percent }}%
               </span>
             </div>
             <div class="hour-category__values">
               <div class="hour-category__main">
-                <span class="hour-category__actual">{{ formatHours(category.actual) }}</span>
+                <span
+                  class="hour-category__actual"
+                  :class="`hour-category__actual--${progressTone(category.percent)}`"
+                >
+                  {{ formatHours(category.actual) }}
+                </span>
                 <span class="hour-category__unit">h</span>
               </div>
               <div class="hour-category__detail">
@@ -729,6 +751,7 @@ onUnmounted(() => {
             <div class="hour-category__bar">
               <div
                 class="hour-category__fill"
+                :class="`hour-category__fill--${progressTone(category.percent)}`"
                 :style="{ transform: `scaleX(${category.barPercent / 100})` }"
               ></div>
             </div>
@@ -1038,7 +1061,7 @@ onUnmounted(() => {
   line-height: var(--line-height-tight);
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
-  margin: 0 0 var(--space-2) 0;
+  margin: 0 0 var(--space-3) 0;
 }
 
 .total-hours__unit {
@@ -1046,6 +1069,50 @@ onUnmounted(() => {
   font-weight: 400;
   color: var(--color-text-secondary);
   margin-left: var(--space-1);
+}
+
+.total-hours__breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.breakdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-caption);
+}
+
+.breakdown-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.breakdown-dot--on-campus {
+  background: var(--tone-blue);
+}
+
+.breakdown-dot--off-campus {
+  background: var(--tone-teal);
+}
+
+.breakdown-dot--social-practice {
+  background: var(--tone-amber);
+}
+
+.breakdown-label {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  min-width: 28px;
+}
+
+.breakdown-value {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  margin-left: auto;
 }
 
 .total-hours__note {
@@ -1309,6 +1376,26 @@ onUnmounted(() => {
   border-radius: var(--radius-xs);
 }
 
+.hour-category__progress--green {
+  background: var(--tone-green-bg);
+  color: var(--tone-green);
+}
+
+.hour-category__progress--blue {
+  background: var(--tone-blue-bg);
+  color: var(--tone-blue);
+}
+
+.hour-category__progress--amber {
+  background: var(--tone-amber-bg);
+  color: var(--tone-amber);
+}
+
+.hour-category__progress--rose {
+  background: var(--tone-rose-bg);
+  color: var(--tone-rose);
+}
+
 .hour-category__progress--good {
   background: rgba(52, 199, 89, 0.15);
   color: #34c759;
@@ -1335,7 +1422,22 @@ onUnmounted(() => {
   font-weight: 600;
   line-height: 1;
   letter-spacing: -0.02em;
-  color: var(--color-text-primary);
+}
+
+.hour-category__actual--green {
+  color: var(--tone-green);
+}
+
+.hour-category__actual--blue {
+  color: var(--tone-blue);
+}
+
+.hour-category__actual--amber {
+  color: var(--tone-amber);
+}
+
+.hour-category__actual--rose {
+  color: var(--tone-rose);
 }
 
 .hour-category__unit {
@@ -1378,10 +1480,25 @@ onUnmounted(() => {
 .hour-category__fill {
   height: 100%;
   width: 100%;
-  background: var(--color-brand);
   border-radius: var(--radius-pill);
   transform-origin: left center;
   /* 比例由 :style 以 scaleX 绑定，刷新时用 WAAPI 从 0 生长，不触发布局。 */
+}
+
+.hour-category__fill--green {
+  background: var(--tone-green);
+}
+
+.hour-category__fill--blue {
+  background: var(--tone-blue);
+}
+
+.hour-category__fill--amber {
+  background: var(--tone-amber);
+}
+
+.hour-category__fill--rose {
+  background: var(--tone-rose);
 }
 
 .hours-panel__note {

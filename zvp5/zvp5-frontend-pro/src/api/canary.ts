@@ -252,6 +252,12 @@ export async function fetchNotices(): Promise<CanaryNoticeList> {
   return request<CanaryNoticeList>('/v1/notifications')
 }
 
+export async function fetchVersion(): Promise<string> {
+  const value = await request<string | { version?: string }>('/version')
+  if (typeof value === 'string') return value
+  return value?.version ?? ''
+}
+
 export async function fetchTime(): Promise<CanaryTime> {
   const id = currentUserId()
   if (!id) throw new CanaryApiError('请先登录 canary 账号。', 401)

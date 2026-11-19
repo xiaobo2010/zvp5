@@ -22,6 +22,22 @@
   --color-border-moderate: rgb(0 0 0 / 0.12);
   --color-border-hairline: rgb(0 0 0 / 0.06);
 
+  /* Semantic tones for progress and status */
+  --tone-green: #34c759;
+  --tone-green-bg: rgba(52, 199, 89, 0.12);
+  --tone-blue: #0071e3;
+  --tone-blue-bg: rgba(0, 113, 227, 0.12);
+  --tone-amber: #ff9f0a;
+  --tone-amber-bg: rgba(255, 159, 10, 0.12);
+  --tone-rose: #ff3b30;
+  --tone-rose-bg: rgba(255, 59, 48, 0.12);
+  --tone-teal: #30b0c7;
+  --tone-teal-bg: rgba(48, 176, 199, 0.12);
+  --tone-violet: #af52de;
+  --tone-violet-bg: rgba(175, 82, 222, 0.12);
+  --tone-ink: #6e6e73;
+  --tone-ink-bg: rgba(110, 110, 115, 0.12);
+
   /* Liquid Glass Material (authoritative recipe) */
   --glass-bg: linear-gradient(
     135deg,

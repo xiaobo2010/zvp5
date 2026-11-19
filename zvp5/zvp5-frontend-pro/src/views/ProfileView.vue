@@ -149,7 +149,7 @@ function handleLogout() {
 }
 
 function handleAbout() {
-  announceAction('关于页将在后续版本接入。')
+  void router.push('/about')
 }
 
 onMounted(() => {
@@ -247,14 +247,22 @@ onUnmounted(() => {
       <section class="glass-card notices-card surface-enter" :style="{ '--i': 1 }">
         <div class="notices-head">
           <h2 class="section-title">站内通知</h2>
-          <button
-            class="liquid-btn liquid-btn--secondary liquid-btn--sm"
-            type="button"
-            :disabled="noticesLoading"
-            @click="handleRefreshNotices"
-          >
-            {{ noticesLoading ? '刷新中…' : '刷新' }}
-          </button>
+          <div class="notices-actions">
+            <RouterLink
+              class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+              to="/notifications"
+            >
+              全部
+            </RouterLink>
+            <button
+              class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+              type="button"
+              :disabled="noticesLoading"
+              @click="handleRefreshNotices"
+            >
+              {{ noticesLoading ? '刷新中…' : '刷新' }}
+            </button>
+          </div>
         </div>
 
         <div
@@ -324,7 +332,7 @@ onUnmounted(() => {
         <button class="liquid-btn liquid-btn--primary liquid-btn--full" type="button" @click="handleChangePassword">
           修改密码
         </button>
-        <button class="liquid-btn liquid-btn--secondary liquid-btn--full" type="button" @click="handleAbout">
+        <button class="liquid-btn liquid-btn--neutral liquid-btn--full" type="button" @click="handleAbout">
           关于 ZVMS
         </button>
         <button class="liquid-btn liquid-btn--danger liquid-btn--full" type="button" @click="handleLogout">
@@ -627,6 +635,13 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.notices-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .section-title {
@@ -892,18 +907,37 @@ onUnmounted(() => {
   transform: scale(1.02);
 }
 
+.liquid-btn--neutral {
+  background: linear-gradient(135deg, rgba(110, 110, 115, 0.12) 0%, rgba(156, 163, 175, 0.08) 100%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  border-color: rgba(110, 110, 115, 0.22);
+  color: var(--tone-ink);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 3px 10px rgba(18, 48, 82, 0.06);
+}
+
+.liquid-btn--neutral:hover {
+  background: linear-gradient(135deg, rgba(110, 110, 115, 0.16) 0%, rgba(156, 163, 175, 0.12) 100%);
+  border-color: rgba(110, 110, 115, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 4px 12px rgba(18, 48, 82, 0.08);
+  transform: scale(1.02);
+}
+
 .liquid-btn--danger {
-  background: linear-gradient(135deg, rgba(220, 38, 38, 0.95) 0%, rgba(220, 38, 38, 0.85) 100%);
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.92) 0%, rgba(239, 68, 68, 0.86) 100%);
   -webkit-backdrop-filter: blur(12px) saturate(170%);
   backdrop-filter: blur(12px) saturate(170%);
-  border-color: rgba(255, 255, 255, 0.72);
+  border-color: rgba(255, 255, 255, 0.7);
   color: white;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 4px 12px rgba(220, 38, 38, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 4px 12px rgba(255, 59, 48, 0.28);
 }
 
 .liquid-btn--danger:hover {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(239, 68, 68, 0.85) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 6px 18px rgba(220, 38, 38, 0.4);
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.95) 0%, rgba(239, 68, 68, 0.9) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 18px rgba(255, 59, 48, 0.35);
 }
 
 .liquid-btn--full {
