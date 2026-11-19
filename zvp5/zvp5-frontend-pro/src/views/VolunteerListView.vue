@@ -16,9 +16,15 @@ interface Activity {
   id: string
   name: string
   date: string
+  dateDay: string
+  dateMonth: string
+  dateWeekday: string
+  detailDate: string
   place: string
   type: string
   status: ActivityStatus
+  statusLabel: string
+  statusClass: string
   duration: number
   creator: string
 }
@@ -49,6 +55,12 @@ const classId = ref('')
 let requestSeq = 0
 
 const totalPages = computed(() => Math.ceil(totalActivities.value / pageSize))
+const visiblePages = computed(() => {
+  const total = totalPages.value
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1)
+  const start = Math.max(1, Math.min(activePage.value - 3, total - 6))
+  return Array.from({ length: 7 }, (_, index) => start + index)
+})
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
 
 function readableError(reason: unknown, fallback: string): string {
@@ -74,13 +86,22 @@ function normalizeStatus(value: string | undefined): ActivityStatus {
 
 function mapActivity(activity: CanaryActivity): Activity {
   const mine = activity.mine
+  const status = normalizeStatus(mine?.status ?? activity.status)
+  const date = activity.date || ''
+  const parts = formatDate(date)
   return {
     id: activity._id,
     name: activity.name || '未命名活动',
-    date: activity.date || '',
+    date,
+    dateDay: parts.day,
+    dateMonth: parts.month,
+    dateWeekday: parts.weekday,
+    detailDate: formatDetailDate(date),
     place: activity.place || '',
     type: TYPE_LABELS[activity.type] ?? activity.type ?? '活动',
-    status: normalizeStatus(mine?.status ?? activity.status),
+    status,
+    statusLabel: getStatusLabel(status),
+    statusClass: getStatusClass(status),
     duration: typeof mine?.duration === 'number' ? mine.duration : 0,
     creator: activity.creator_name || ''
   }
@@ -264,7 +285,7 @@ onMounted(() => {
 <template>
   <div class="volunteer-page">
     <!-- Page header with frosted glass -->
-    <header class="page-header glass-card">
+    <header class="page-header glass-card surface-enter" :style="{ '--i': 0 }">
       <div class="page-header__lead">
         <button class="back-btn" type="button" aria-label="返回首页" @click="router.push('/')">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -290,7 +311,7 @@ onMounted(() => {
     </header>
 
     <!-- Scope tabs with frosted glass -->
-    <nav class="scope-tabs glass-card" role="tablist" aria-label="活动范围">
+    <nav class="scope-tabs glass-card surface-enter" :style="{ '--i': 1 }" role="tablist" aria-label="活动范围">
       <button
         class="scope-tab"
         :class="{ 'is-active': activeTab === 'mine' }"
@@ -322,7 +343,7 @@ onMounted(() => {
     </nav>
 
     <!-- Search bar with frosted glass -->
-    <div class="search-bar glass-card">
+    <div class="search-bar glass-card surface-enter" :style="{ '--i': 2 }">
       <svg class="search-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
         <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -349,7 +370,7 @@ onMounted(() => {
     </div>
 
     <!-- Activities list with frosted glass cards -->
-    <div v-if="unauthenticated" class="empty-state glass-card" role="alert">
+    <div v-if="unauthenticated" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <p class="empty-title">需要登录</p>
       <p class="empty-description">登录后即可查看你的义工记录。</p>
       <RouterLink
@@ -360,7 +381,7 @@ onMounted(() => {
       </RouterLink>
     </div>
 
-    <div v-else-if="error" class="empty-state glass-card" role="alert">
+    <div v-else-if="error" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <p class="empty-title">活动加载失败</p>
       <p class="empty-description">{{ error }}</p>
       <button
@@ -373,7 +394,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <div v-else-if="needsClass" class="empty-state glass-card" role="status">
+    <div v-else-if="needsClass" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }" role="status">
       <svg class="empty-icon" width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2" opacity="0.3"/>
         <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
@@ -401,7 +422,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-else-if="activities.length === 0" class="empty-state glass-card">
+    <div v-else-if="activities.length === 0" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }">
       <svg class="empty-icon" width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2" opacity="0.3"/>
         <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
@@ -414,16 +435,17 @@ onMounted(() => {
 
     <div v-else class="activities-list">
       <button
-        v-for="activity in activities"
+        v-for="(activity, index) in activities"
         :key="activity.id"
-        class="activity-card glass-card"
+        class="activity-card glass-card surface-enter"
+        :style="{ '--i': index }"
         type="button"
         @click="openActivity(activity)"
       >
         <div class="activity-date">
-          <span class="activity-day">{{ formatDate(activity.date).day }}</span>
-          <span class="activity-month">{{ formatDate(activity.date).month }}</span>
-          <span class="activity-weekday">{{ formatDate(activity.date).weekday }}</span>
+          <span class="activity-day">{{ activity.dateDay }}</span>
+          <span class="activity-month">{{ activity.dateMonth }}</span>
+          <span class="activity-weekday">{{ activity.dateWeekday }}</span>
         </div>
 
         <div class="activity-content">
@@ -433,8 +455,8 @@ onMounted(() => {
           </div>
           <h3 class="activity-name">{{ activity.name }}</h3>
           <div class="activity-meta">
-            <span class="activity-status" :class="getStatusClass(activity.status)">
-              {{ getStatusLabel(activity.status) }}
+            <span class="activity-status" :class="activity.statusClass">
+              {{ activity.statusLabel }}
             </span>
             <span class="activity-duration">{{ activity.duration }}h</span>
           </div>
@@ -443,7 +465,7 @@ onMounted(() => {
     </div>
 
     <Transition name="activity-detail">
-      <section v-if="selectedActivity" class="glass-card activity-detail" aria-live="polite">
+      <section v-if="selectedActivity" class="glass-card activity-detail surface-enter" :style="{ '--i': 0 }" aria-live="polite">
         <header class="activity-detail__head">
           <div>
             <p class="activity-detail__eyebrow">活动详情</p>
@@ -460,7 +482,7 @@ onMounted(() => {
 
         <dl class="activity-detail__kv">
           <dt>日期</dt>
-          <dd>{{ formatDetailDate(selectedActivity.date) }}</dd>
+          <dd>{{ selectedActivity.detailDate }}</dd>
           <dt>地点</dt>
           <dd>{{ selectedActivity.place || '—' }}</dd>
           <dt>类型</dt>
@@ -471,8 +493,8 @@ onMounted(() => {
           </template>
           <dt>状态</dt>
           <dd>
-            <span class="activity-status" :class="getStatusClass(selectedActivity.status)">
-              {{ getStatusLabel(selectedActivity.status) }}
+            <span class="activity-status" :class="selectedActivity.statusClass">
+              {{ selectedActivity.statusLabel }}
             </span>
           </dd>
           <dt>时长</dt>
@@ -484,7 +506,7 @@ onMounted(() => {
     <!-- Pagination with liquid glass buttons -->
     <nav
       v-if="totalPages > 1 && !loading && !error && !unauthenticated && !needsClass"
-      class="pagination glass-card"
+      class="pagination glass-card surface-enter"
       aria-label="分页导航"
     >
       <button
@@ -497,7 +519,7 @@ onMounted(() => {
       </button>
       <div class="pagination-pages">
         <button
-          v-for="page in totalPages"
+          v-for="page in visiblePages"
           :key="page"
           class="pagination-page"
           :class="{ 'is-active': page === activePage }"
@@ -590,12 +612,12 @@ onMounted(() => {
   padding: 0;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.48) 0%,
-    rgba(255, 255, 255, 0.28) 100%
+    rgba(255, 255, 255, 0.74) 0%,
+    rgba(232, 242, 252, 0.54) 100%
   );
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 50%;
   box-shadow:
     inset 0 0.5px 0 rgba(255, 255, 255, 0.85),
@@ -606,7 +628,10 @@ onMounted(() => {
   overflow: hidden;
   isolation: isolate;
   flex-shrink: 0;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth),
+    color var(--duration-fast) var(--ease-smooth);
 }
 
 .back-btn::before {
@@ -636,7 +661,9 @@ onMounted(() => {
   border-radius: 50%;
   opacity: 0;
   transform: translateX(-100%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -711,14 +738,16 @@ onMounted(() => {
   padding: var(--space-3) var(--space-4);
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.34) 0%,
-    rgba(255, 255, 255, 0.18) 100%
+    rgba(255, 255, 255, 0.68) 0%,
+    rgba(232, 242, 252, 0.46) 100%
   );
-  -webkit-backdrop-filter: blur(10px) saturate(160%);
-  backdrop-filter: blur(10px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.48);
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: var(--radius-pill);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 2px 6px rgba(18, 48, 82, 0.04);
   font-size: var(--font-size-callout);
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -808,17 +837,21 @@ onMounted(() => {
   justify-content: center;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.48) 0%,
-    rgba(255, 255, 255, 0.24) 100%
+    rgba(255, 255, 255, 0.74) 0%,
+    rgba(232, 242, 252, 0.5) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-  backdrop-filter: blur(8px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.58);
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.84);
   border-radius: 50%;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    0 1px 4px rgba(18, 48, 82, 0.05);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-smooth);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    background-color var(--duration-fast) var(--ease-smooth);
   flex-shrink: 0;
 }
 
@@ -844,7 +877,9 @@ onMounted(() => {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
   text-align: left;
 }
 
@@ -870,45 +905,53 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-width: 64px;
-  padding: var(--space-3);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.15) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: var(--radius-md);
-  -webkit-backdrop-filter: blur(12px) saturate(170%) brightness(1.04);
-  backdrop-filter: blur(12px) saturate(170%) brightness(1.04);
+  min-width: 54px;
+  padding: var(--space-2) 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(226, 240, 252, 0.44) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  -webkit-backdrop-filter: blur(8px) saturate(170%);
+  backdrop-filter: blur(8px) saturate(170%);
   flex-shrink: 0;
   position: relative;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.1), 0 8px 32px rgba(0, 113, 227, 0.1);
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 3px rgba(18, 48, 82, 0.05);
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth);
 }
 
 .activity-date::before {
   content: '';
   position: absolute;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80%;
+  top: 0;
+  left: 10px;
+  right: 10px;
   height: 1px;
-  background: radial-gradient(ellipse 100% 100%, rgba(255, 255, 255, 0.8) 0%, transparent 70%);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: var(--radius-pill);
   pointer-events: none;
 }
 
 .activity-date:hover {
-  transform: scale(1.02);
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4), inset 0 -1px 2px rgba(0, 0, 0, 0.1), 0 12px 40px rgba(0, 113, 227, 0.15);
+  background: rgba(255, 255, 255, 0.74);
+  border-color: rgba(255, 255, 255, 0.94);
 }
 
-@supports not (backdrop-filter: blur(12px)) {
+@supports not (backdrop-filter: blur(8px)) {
   .activity-date {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(0, 113, 227, 0.2);
+    background: rgba(240, 245, 251, 0.92);
+    border-color: rgba(0, 113, 227, 0.18);
   }
 }
 
 .activity-day {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--color-brand);
   line-height: 1;
@@ -1117,19 +1160,24 @@ onMounted(() => {
   justify-content: center;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.38) 0%,
-    rgba(255, 255, 255, 0.2) 100%
+    rgba(255, 255, 255, 0.68) 0%,
+    rgba(232, 242, 252, 0.48) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-  backdrop-filter: blur(8px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: blur(9px) saturate(170%);
+  backdrop-filter: blur(9px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: var(--radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 4px rgba(18, 48, 82, 0.04);
   font-size: var(--font-size-callout);
   font-weight: 600;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-smooth);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth);
 }
 
 .pagination-page:hover {
@@ -1164,7 +1212,9 @@ onMounted(() => {
   font-weight: 600;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
   isolation: isolate;
   overflow: hidden;
   border: 1px solid;
@@ -1192,7 +1242,9 @@ onMounted(() => {
   border-radius: var(--radius-pill);
   opacity: 0;
   transform: translateX(-100%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -1219,13 +1271,35 @@ onMounted(() => {
   outline-offset: 2px;
 }
 
+.liquid-btn--primary {
+  background: linear-gradient(135deg, rgba(0, 113, 227, 0.96) 0%, rgba(0, 113, 227, 0.86) 100%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.82);
+  color: white;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 4px 14px rgba(0, 113, 227, 0.28);
+}
+
+.liquid-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(0, 119, 237, 0.98) 0%, rgba(0, 119, 237, 0.88) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 6px 18px rgba(0, 113, 227, 0.36);
+  transform: scale(1.02);
+}
+
 .liquid-btn--secondary {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.28) 100%);
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border-color: rgba(255, 255, 255, 0.72);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(232, 242, 252, 0.56) 100%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.88);
   color: var(--color-text-primary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 2px 6px rgba(18, 48, 82, 0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 3px 10px rgba(18, 48, 82, 0.08);
 }
 
 .liquid-btn--secondary:hover:not(:disabled) {
@@ -1314,13 +1388,16 @@ onMounted(() => {
 
   .activity-date {
     flex-direction: row;
-    width: 100%;
-    min-width: unset;
-    justify-content: flex-start;
+    width: fit-content;
+    min-width: 96px;
+    align-self: flex-start;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
   }
 
   .activity-day {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .pagination {

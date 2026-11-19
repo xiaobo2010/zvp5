@@ -43,7 +43,7 @@ async function submit() {
 
 <template>
   <div class="login-page">
-    <section class="glass-card login-card" aria-labelledby="login-title">
+    <section class="glass-card login-card surface-enter" :style="{ '--i': 0 }" aria-labelledby="login-title">
       <p class="login-eyebrow">ZVMS</p>
       <h1 id="login-title" class="login-title">欢迎回来</h1>
       <p class="login-subtitle">登录后查看你的义工记录与个人资料。</p>
@@ -211,7 +211,9 @@ async function submit() {
   font-size: var(--font-size-callout);
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
   isolation: isolate;
   overflow: hidden;
 }
@@ -237,7 +239,9 @@ async function submit() {
   border-radius: var(--radius-pill);
   opacity: 0;
   transform: translateX(-100%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -267,15 +271,15 @@ async function submit() {
 }
 
 .liquid-btn--secondary {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.28));
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border-color: rgba(255, 255, 255, 0.72);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(232, 242, 252, 0.56));
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.88);
   color: var(--color-text-primary);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 6px rgba(18, 48, 82, 0.06);
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 3px 10px rgba(18, 48, 82, 0.08);
 }
 
 @media (max-width: 767px) {

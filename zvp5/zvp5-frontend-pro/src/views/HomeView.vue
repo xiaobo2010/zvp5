@@ -1,5 +1,73 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
+import {
+  CanaryApiError,
+  fetchActivities,
+  fetchGroupName,
+  fetchProfile,
+  fetchTime,
+  isLoggedIn
+} from '@/api/canary'
+import type { CanaryActivity, CanaryTime, CanaryUser } from '@/api/canary'
+
+type HourKey = keyof CanaryTime
+
+interface HourCategory {
+  key: HourKey
+  title: string
+  actual: number
+  standard: number
+  converted: number
+  bonus: number
+  percent: number
+  barPercent: number
+}
+
+const HOUR_STANDARDS: Record<HourKey, number> = {
+  'on-campus': 25,
+  'off-campus': 15,
+  'social-practice': 18
+}
+
+const HOUR_CATEGORIES: { key: HourKey; title: string }[] = [
+  { key: 'on-campus', title: '校内时长' },
+  { key: 'off-campus', title: '校外时长' },
+  { key: 'social-practice', title: '社会实践' }
+]
+
+const ROLE_LABELS: Record<string, string> = {
+  student: '学生',
+  volunteer: '志愿者',
+  admin: '管理员',
+  department: '部门',
+  secretary: '秘书',
+  auditor: '审计',
+  teacher: '教师',
+  system: '系统'
+}
+
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)'
+
+const homeRef = ref<HTMLElement | null>(null)
+const hoursPanelRef = ref<HTMLElement | null>(null)
+const totalValueRef = ref<HTMLElement | null>(null)
+const refreshIconRef = ref<SVGSVGElement | null>(null)
+
+const profile = ref<CanaryUser | null>(null)
+const time = ref<CanaryTime | null>(null)
+const activities = ref<CanaryActivity[]>([])
+const groupName = ref('')
+
+// 首帧即确定登录状态，避免先闪骨架再跳到「需要登录」。
+const initiallySignedIn = isLoggedIn()
+
+const loading = ref(initiallySignedIn)
+const unauthenticated = ref(!initiallySignedIn)
+const error = ref('')
+const hoursRefreshing = ref(false)
 
 const greetingVisible = ref(false)
 const sectionsVisible = ref<Record<string, boolean>>({
@@ -10,116 +78,420 @@ const sectionsVisible = ref<Record<string, boolean>>({
 
 let observer: IntersectionObserver | null = null
 let greetingTimeout: ReturnType<typeof setTimeout> | null = null
+let refreshAnimations: Animation[] = []
+let loadSequence = 0
+let disposed = false
 
-// Hours refresh animation state
-const hoursRefreshing = ref(false)
-let refreshAnimation: Animation | null = null
-let refreshIconAnimation: Animation | null = null
+const displayName = computed(() => profile.value?.name?.trim() ?? '')
 
-function reduceMotion() {
+const avatarInitial = computed(() => displayName.value.slice(0, 1) || '—')
+
+const studentId = computed(() => {
+  const id = profile.value?.id
+  return id === undefined || id === null || id === '' ? '未设置' : String(id)
+})
+
+const classLabel = computed(
+  () => groupName.value || profile.value?.class_id || '未设置班级'
+)
+
+const rolesLabel = computed(() => {
+  const roles = (profile.value?.roles ?? []) as string[]
+  if (!roles.length) return '学生'
+  return Array.from(new Set(roles))
+    .map((role) => ROLE_LABELS[role] ?? role)
+    .join(' / ')
+})
+
+const greetingText = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 5) return '晚上好'
+  if (hour < 9) return '早上好'
+  if (hour < 12) return '上午好'
+  if (hour < 18) return '下午好'
+  return '晚上好'
+})
+
+const todayLabel = computed(() => {
+  const now = new Date()
+  return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${WEEKDAYS[now.getDay()]}`
+})
+
+function rawHours(key: HourKey): number {
+  const value = Number(time.value?.[key] ?? 0)
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
+const totalHours = computed(
+  () => rawHours('on-campus') + rawHours('off-campus') + rawHours('social-practice')
+)
+
+const totalHoursLabel = computed(() => formatHours(totalHours.value))
+
+const hourCategories = computed<HourCategory[]>(() => {
+  const onCampus = rawHours('on-campus')
+  const offCampus = rawHours('off-campus')
+  const socialPractice = rawHours('social-practice')
+
+  // 页面说明：超标的校外时长按 2:1 折算为校内，超标的校内时长按 3:1 折算为校外。
+  const onCampusBonus = Math.max(0, offCampus - HOUR_STANDARDS['off-campus']) / 2
+  const offCampusBonus = Math.max(0, onCampus - HOUR_STANDARDS['on-campus']) / 3
+
+  const converted: Record<HourKey, number> = {
+    'on-campus': onCampus + onCampusBonus,
+    'off-campus': offCampus + offCampusBonus,
+    'social-practice': socialPractice
+  }
+
+  const bonuses: Record<HourKey, number> = {
+    'on-campus': onCampusBonus,
+    'off-campus': offCampusBonus,
+    'social-practice': 0
+  }
+
+  const actuals: Record<HourKey, number> = {
+    'on-campus': onCampus,
+    'off-campus': offCampus,
+    'social-practice': socialPractice
+  }
+
+  return HOUR_CATEGORIES.map(({ key, title }) => {
+    const standard = HOUR_STANDARDS[key]
+    const actual = actuals[key]
+    const percent = Math.max(0, Math.round((actual / standard) * 100))
+    return {
+      key,
+      title,
+      actual,
+      standard,
+      converted: converted[key],
+      bonus: bonuses[key],
+      percent,
+      barPercent: Math.min(100, percent)
+    }
+  })
+})
+
+function activityStatus(activity: CanaryActivity): string {
+  return activity.mine?.status ?? activity.status
+}
+
+const pendingActivities = computed(() =>
+  activities.value
+    .filter((activity) => {
+      const status = activityStatus(activity)
+      return status === 'pending' || status === 'draft'
+    })
+    .slice(0, 3)
+)
+
+const recentActivities = computed(() =>
+  activities.value
+    .filter((activity) => {
+      const status = activityStatus(activity)
+      return status === 'effective' || status === 'refused'
+    })
+    .slice(0, 3)
+)
+
+function formatHours(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(1) : '0.0'
+}
+
+function formatCompactHours(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+function formatActivityDate(value: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const now = new Date()
+  const yearPrefix = date.getFullYear() === now.getFullYear() ? '' : `${date.getFullYear()}年`
+  return `${yearPrefix}${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+function pendingMeta(activity: CanaryActivity): string {
+  const place = (activity.place ?? '').trim()
+  const date = formatActivityDate(activity.date)
+  return [place, date].filter(Boolean).join(' · ')
+}
+
+function recentMeta(activity: CanaryActivity): string {
+  const duration = Number(activity.mine?.duration ?? 0)
+  return `${formatActivityDate(activity.date)} · ${formatHours(duration)}h`
+}
+
+function recentStatusLabel(activity: CanaryActivity): string {
+  return activityStatus(activity) === 'refused' ? '已拒绝' : '已确认'
+}
+
+function recentStatusClass(activity: CanaryActivity): string {
+  return activityStatus(activity) === 'refused'
+    ? 'work-item__status--refused'
+    : 'work-item__status--done'
+}
+
+function reduceMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 }
 
-async function handleHoursRefresh() {
-  if (hoursRefreshing.value || reduceMotion()) return
-  hoursRefreshing.value = true
+function readableError(reason: unknown, fallback: string): string {
+  return reason instanceof CanaryApiError ? reason.message : fallback
+}
 
-  const refreshBtn = document.querySelector('.hours-refresh-btn')
-  const refreshIcon = refreshBtn?.querySelector('svg')
-  const hoursGrid = document.querySelector('.hours-grid')
-  const categoryCards = hoursGrid?.querySelectorAll('.hour-category')
+function isAuthError(reason: unknown): boolean {
+  return reason instanceof CanaryApiError && reason.status === 401
+}
 
-  // Spin the refresh icon with spring bounce
-  if (refreshIcon) {
-    refreshIconAnimation?.cancel()
-    refreshIconAnimation = refreshIcon.animate(
-      [
-        { transform: 'rotate(0deg) scale(1)' },
-        { transform: 'rotate(180deg) scale(1.15)', offset: 0.5 },
-        { transform: 'rotate(360deg) scale(1)' }
-      ],
-      {
-        duration: 600,
-        easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-        fill: 'forwards'
-      }
+function cancelRefreshAnimations() {
+  refreshAnimations.forEach((animation) => {
+    try {
+      animation.cancel()
+    } catch {
+      /* already finished */
+    }
+  })
+  refreshAnimations = []
+}
+
+function observeSections() {
+  if (disposed) return
+  const root = homeRef.value
+  if (!root) return
+
+  const targets = root.querySelectorAll<HTMLElement>('[data-section]')
+
+  if (typeof IntersectionObserver === 'undefined') {
+    targets.forEach((target) => {
+      const id = target.dataset.section
+      if (id) sectionsVisible.value[id] = true
+    })
+    return
+  }
+
+  if (!observer) {
+    observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return
+          const id = entry.target.getAttribute('data-section')
+          if (id && !sectionsVisible.value[id]) sectionsVisible.value[id] = true
+          // 一次进入即可，元素显示后立刻解除观察，避免持续回调。
+          observer?.unobserve(entry.target)
+        })
+      },
+      { threshold: 0.1, rootMargin: '-60px' }
     )
   }
 
-  // Give the total a softer single bounce so the whole display responds.
-  const totalValue = document.querySelector('.total-hours__value')
-  totalValue?.animate(
-    [
-      { transform: 'scale(1)' },
-      { transform: 'scale(1.08)', offset: 0.42 },
-      { transform: 'scale(0.98)', offset: 0.7 },
-      { transform: 'scale(1)' }
-    ],
-    {
-      duration: 620,
-      easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-      fill: 'forwards'
-    }
-  )
+  targets.forEach((target) => {
+    const id = target.dataset.section
+    if (id && sectionsVisible.value[id]) return
+    observer?.observe(target)
+  })
+}
 
-  // Animate each category card with stagger and spring bounce
-  if (categoryCards) {
-    categoryCards.forEach((card, index) => {
-      const actualValue = card.querySelector('.hour-category__actual')
-      if (actualValue) {
-        setTimeout(() => {
-          const anim = actualValue.animate(
-            [
-              { transform: 'scale(1)' },
-              { transform: 'scale(1.18)', offset: 0.4 },
-              { transform: 'scale(0.95)', offset: 0.65 },
-              { transform: 'scale(1.05)', offset: 0.82 },
-              { transform: 'scale(1)' }
-            ],
-            {
-              duration: 680,
-              easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-              fill: 'forwards'
-            }
-          )
-          if (index === 0) {
-            refreshAnimation = anim
+async function loadPage() {
+  if (disposed) return
+  const sequence = ++loadSequence
+  loading.value = true
+  error.value = ''
+  unauthenticated.value = false
+
+  try {
+    const [profileResult, timeResult, activitiesResult] = await Promise.allSettled([
+      fetchProfile(),
+      fetchTime(),
+      fetchActivities('mine', 1, 6, '')
+    ])
+
+    if (sequence !== loadSequence || disposed) return
+
+    const failure = [
+      profileResult,
+      timeResult,
+      activitiesResult
+    ].find((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+    if (failure && isAuthError(failure.reason)) {
+      profile.value = null
+      time.value = null
+      activities.value = []
+      groupName.value = ''
+      unauthenticated.value = true
+      return
+    }
+
+    if (profileResult.status === 'fulfilled') profile.value = profileResult.value
+    if (timeResult.status === 'fulfilled') time.value = timeResult.value
+    if (activitiesResult.status === 'fulfilled') {
+      activities.value = activitiesResult.value.activities ?? []
+    }
+
+    if (failure) {
+      error.value = readableError(failure.reason, '首页数据加载失败，请稍后重试。')
+      return
+    }
+
+    const classId = profile.value?.class_id
+    if (classId) {
+      groupName.value = await fetchGroupName(classId)
+    }
+  } finally {
+    if (sequence === loadSequence && !disposed) {
+      loading.value = false
+      await nextTick()
+      observeSections()
+    }
+  }
+}
+
+function handleRetry() {
+  if (loading.value) return
+  void loadPage()
+}
+
+function playRefreshAnimation(): Promise<void> {
+  cancelRefreshAnimations()
+  if (reduceMotion()) return Promise.resolve()
+
+  const animations: Animation[] = []
+
+  const icon = refreshIconRef.value
+  if (icon) {
+    animations.push(
+      icon.animate(
+        [
+          { transform: 'rotate(0deg) scale(1)' },
+          { transform: 'rotate(180deg) scale(1.12)', offset: 0.5 },
+          { transform: 'rotate(360deg) scale(1)' }
+        ],
+        { duration: 600, easing: SPRING, fill: 'none' }
+      )
+    )
+  }
+
+  const total = totalValueRef.value
+  if (total) {
+    animations.push(
+      total.animate(
+        [
+          { transform: 'scale(1)' },
+          { transform: 'scale(1.06)', offset: 0.4 },
+          { transform: 'scale(0.99)', offset: 0.7 },
+          { transform: 'scale(1)' }
+        ],
+        { duration: 640, easing: SPRING, fill: 'backwards' }
+      )
+    )
+  }
+
+  const panel = hoursPanelRef.value
+  if (panel) {
+    const widths = hourCategories.value.map((category) => category.barPercent)
+
+    panel.querySelectorAll<HTMLElement>('.hour-category__actual').forEach((el, index) => {
+      animations.push(
+        el.animate(
+          [
+            { transform: 'scale(1)' },
+            { transform: 'scale(1.12)', offset: 0.4 },
+            { transform: 'scale(0.97)', offset: 0.72 },
+            { transform: 'scale(1)' }
+          ],
+          {
+            duration: 640,
+            delay: 60 + index * 70,
+            easing: SPRING,
+            fill: 'backwards'
           }
-        }, index * 80)
-      }
+        )
+      )
+    })
+
+    // 进度条从 0 生长到新比例。用 transform 而不是 width，避免刷新时触发布局。
+    panel.querySelectorAll<HTMLElement>('.hour-category__fill').forEach((el, index) => {
+      const target = (widths[index] ?? 0) / 100
+      animations.push(
+        el.animate(
+          [{ transform: 'scaleX(0)' }, { transform: `scaleX(${target})` }],
+          {
+            duration: 560,
+            delay: index * 80,
+            easing: EASE_OUT,
+            fill: 'backwards'
+          }
+        )
+      )
     })
   }
 
-  // Wait for animations to complete
-  await new Promise(resolve => setTimeout(resolve, 800))
-  hoursRefreshing.value = false
+  refreshAnimations = animations
+  if (!animations.length) return Promise.resolve()
+  return Promise.allSettled(animations.map((animation) => animation.finished)).then(
+    () => undefined
+  )
+}
+
+async function handleHoursRefresh() {
+  if (hoursRefreshing.value || loading.value || unauthenticated.value || !profile.value) {
+    return
+  }
+
+  hoursRefreshing.value = true
+  error.value = ''
+
+  try {
+    const [timeResult, activitiesResult] = await Promise.allSettled([
+      fetchTime(),
+      fetchActivities('mine', 1, 6, '')
+    ])
+
+    if (disposed) return
+
+    const failure = [timeResult, activitiesResult].find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+
+    if (failure && isAuthError(failure.reason)) {
+      unauthenticated.value = true
+      profile.value = null
+      return
+    }
+
+    if (timeResult.status === 'rejected') {
+      error.value = readableError(timeResult.reason, '时长刷新失败，请稍后重试。')
+      return
+    }
+
+    time.value = timeResult.value
+    if (activitiesResult.status === 'fulfilled') {
+      activities.value = activitiesResult.value.activities ?? []
+    }
+
+    await nextTick()
+    if (!disposed) await playRefreshAnimation()
+  } finally {
+    if (!disposed) hoursRefreshing.value = false
+  }
 }
 
 onMounted(() => {
   greetingTimeout = setTimeout(() => {
     greetingVisible.value = true
+    greetingTimeout = null
   }, 100)
 
-  observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const id = entry.target.getAttribute('data-section')
-          if (id) {
-            sectionsVisible.value[id] = true
-          }
-        }
-      })
-    },
-    { threshold: 0.1, rootMargin: '-60px' }
-  )
+  if (!initiallySignedIn) return
 
-  document.querySelectorAll('[data-section]').forEach((el) => {
-    observer?.observe(el)
-  })
+  void loadPage()
 })
 
 onUnmounted(() => {
+  disposed = true
+  loadSequence += 1
   if (observer) {
     observer.disconnect()
     observer = null
@@ -128,238 +500,299 @@ onUnmounted(() => {
     clearTimeout(greetingTimeout)
     greetingTimeout = null
   }
-  refreshAnimation?.cancel()
-  refreshAnimation = null
-  refreshIconAnimation?.cancel()
-  refreshIconAnimation = null
+  cancelRefreshAnimations()
 })
 </script>
 
 <template>
-  <div id="home" class="home">
+  <div id="home" ref="homeRef" class="home">
     <!-- Greeting -->
     <section class="greeting" :class="{ visible: greetingVisible }">
-      <h1 class="greeting__title">下午好，知远。</h1>
-      <p class="greeting__date">2026年11月18日 星期三</p>
+      <h1 class="greeting__title">
+        <template v-if="displayName">{{ greetingText }}，{{ displayName }}。</template>
+        <template v-else-if="loading">
+          {{ greetingText }}，<span class="greeting__skeleton" aria-hidden="true"></span>
+        </template>
+        <template v-else>{{ greetingText }}。</template>
+      </h1>
+      <p class="greeting__date">{{ todayLabel }}</p>
     </section>
 
-    <!-- Identity + Total Hours -->
-    <section
-      id="profile"
-      class="identity-row"
-      data-section="identity"
-      :class="{ visible: sectionsVisible.identity }"
-    >
-      <!-- Personal Identity Card -->
-      <article class="identity-card">
-        <div class="identity-card__header">
-          <div class="identity-card__avatar">
-            <span class="identity-card__avatar-text">林</span>
-          </div>
-          <div class="identity-card__info">
-            <h2 class="identity-card__name">林知远</h2>
-            <p class="identity-card__number">学号 20240117</p>
-          </div>
-        </div>
-        <div class="identity-card__meta">
-          <div class="identity-card__meta-item">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-              <path d="M9 15C12.3137 15 15 12.3137 15 9C15 5.68629 12.3137 3 9 3C5.68629 3 3 5.68629 3 9C3 12.3137 5.68629 15 9 15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-              <path d="M9 6V9L11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span>校图书馆志愿者协会</span>
-          </div>
-          <div class="identity-card__meta-item">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-              <circle cx="9" cy="6" r="2.5" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M4 14C4 11.7909 5.79086 10 8 10H10C12.2091 10 14 11.7909 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-            <span>学生 / 志愿者</span>
-          </div>
-        </div>
-        <button class="identity-card__action glass-button">
-          编辑资料
-        </button>
-      </article>
-
-      <!-- Total Hours Anchor -->
-      <article class="total-hours">
-        <p class="total-hours__label">累计记录</p>
-        <p class="total-hours__value">54.5<span class="total-hours__unit">h</span></p>
-        <p class="total-hours__note">包含三类时长</p>
-      </article>
-    </section>
-
-    <!-- Hours Panel -->
-    <section
-      id="hours"
-      class="hours-panel glass-panel"
-      data-section="hours"
-      :class="{ visible: sectionsVisible.hours }"
-    >
-      <div class="hours-panel__header">
-        <h2 class="hours-panel__title">义工时长</h2>
-        <div class="hours-panel__actions">
-          <button class="glass-button glass-button--compact">明细</button>
-          <button
-            class="glass-button glass-button--compact hours-refresh-btn"
-            @click="handleHoursRefresh"
-            :disabled="hoursRefreshing"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M14 2V6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            刷新
-          </button>
-        </div>
-      </div>
-
-      <div class="hours-grid">
-        <!-- On-campus hours -->
-        <div class="hour-category">
-          <div class="hour-category__header">
-            <h3 class="hour-category__title">校内时长</h3>
-            <span class="hour-category__progress hour-category__progress--good">116%</span>
-          </div>
-          <div class="hour-category__values">
-            <div class="hour-category__main">
-              <span class="hour-category__actual">28.0</span>
-              <span class="hour-category__unit">h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">标准要求</span>
-              <span class="hour-category__standard">25h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">折算后</span>
-              <span class="hour-category__converted">29.0h <span class="hour-category__bonus">+1</span></span>
-            </div>
-          </div>
-          <div class="hour-category__bar">
-            <div class="hour-category__fill" style="--progress: 116%"></div>
-          </div>
-        </div>
-
-        <!-- Off-campus hours -->
-        <div class="hour-category">
-          <div class="hour-category__header">
-            <h3 class="hour-category__title">校外时长</h3>
-            <span class="hour-category__progress hour-category__progress--good">120%</span>
-          </div>
-          <div class="hour-category__values">
-            <div class="hour-category__main">
-              <span class="hour-category__actual">17.0</span>
-              <span class="hour-category__unit">h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">标准要求</span>
-              <span class="hour-category__standard">15h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">折算后</span>
-              <span class="hour-category__converted">18.0h <span class="hour-category__bonus">+1</span></span>
-            </div>
-          </div>
-          <div class="hour-category__bar">
-            <div class="hour-category__fill" style="--progress: 120%"></div>
-          </div>
-        </div>
-
-        <!-- Social practice hours -->
-        <div class="hour-category">
-          <div class="hour-category__header">
-            <h3 class="hour-category__title">社会实践</h3>
-            <span class="hour-category__progress hour-category__progress--warn">53%</span>
-          </div>
-          <div class="hour-category__values">
-            <div class="hour-category__main">
-              <span class="hour-category__actual">9.5</span>
-              <span class="hour-category__unit">h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">标准要求</span>
-              <span class="hour-category__standard">18h</span>
-            </div>
-            <div class="hour-category__detail">
-              <span class="hour-category__label">折算后</span>
-              <span class="hour-category__converted">9.5h</span>
-            </div>
-          </div>
-          <div class="hour-category__bar">
-            <div class="hour-category__fill" style="--progress: 53%"></div>
-          </div>
-        </div>
-      </div>
-
-      <p class="hours-panel__note">
-        超出标准的校外时长可折算为校内时长（每2小时折算1小时），超出标准的校内时长可折算为校外时长（每3小时折算1小时）
+    <!-- Signed out -->
+    <section v-if="unauthenticated" class="state-panel glass-panel" role="alert">
+      <h2 class="state-panel__title">需要登录</h2>
+      <p class="state-panel__text">
+        登录后即可查看你的义工时长、待审核活动与最近记录。
       </p>
+      <RouterLink class="glass-button state-panel__action" to="/login?redirect=/">
+        去登录
+      </RouterLink>
     </section>
 
-    <!-- Work Lists -->
-    <section
-      id="activities"
-      class="work-lists"
-      data-section="work"
-      :class="{ visible: sectionsVisible.work }"
-    >
-      <!-- Pending activities -->
-      <article class="work-list glass-panel">
-        <h2 class="work-list__title">待审核活动</h2>
-        <div class="work-list__items">
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">社区环保宣传</p>
-              <p class="work-item__meta">社区服务中心 · 11月24日</p>
-            </div>
-            <span class="work-item__status work-item__status--pending">待审核</span>
-          </a>
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">敬老院陪伴服务</p>
-              <p class="work-item__meta">阳光敬老院 · 11月25日</p>
-            </div>
-            <span class="work-item__status work-item__status--pending">待审核</span>
-          </a>
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">校园开放日引导</p>
-              <p class="work-item__meta">学生发展中心 · 11月28日</p>
-            </div>
-            <span class="work-item__status work-item__status--pending">待审核</span>
-          </a>
-        </div>
-      </article>
+    <!-- First fetch -->
+    <div v-else-if="loading" class="skeleton-layout" role="status" aria-live="polite">
+      <span class="sr-only">正在加载首页数据…</span>
 
-      <!-- Recent records -->
-      <article class="work-list glass-panel">
-        <h2 class="work-list__title">最近记录</h2>
-        <div class="work-list__items">
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">市图书馆导览服务</p>
-              <p class="work-item__meta">11月10日 · 2.0h</p>
+      <section class="identity-row visible" aria-hidden="true">
+        <article class="identity-card">
+          <div class="identity-card__header">
+            <div class="skeleton-block skeleton-avatar"></div>
+            <div class="identity-card__info">
+              <div class="skeleton-block skeleton-line skeleton-line--title"></div>
+              <div class="skeleton-block skeleton-line skeleton-line--caption"></div>
             </div>
-            <span class="work-item__status work-item__status--confirm">待确认</span>
-          </a>
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">校园图书整理</p>
-              <p class="work-item__meta">11月03日 · 3.0h</p>
-            </div>
-            <span class="work-item__status work-item__status--done">已确认</span>
-          </a>
-          <a href="#" class="work-item">
-            <div class="work-item__content">
-              <p class="work-item__name">社区义务家教</p>
-              <p class="work-item__meta">10月26日 · 2.5h</p>
-            </div>
-            <span class="work-item__status work-item__status--done">已确认</span>
-          </a>
+          </div>
+          <div class="identity-card__meta">
+            <div class="skeleton-block skeleton-line skeleton-line--wide"></div>
+            <div class="skeleton-block skeleton-line skeleton-line--medium"></div>
+          </div>
+          <div class="skeleton-block skeleton-button"></div>
+        </article>
+
+        <article class="total-hours">
+          <div class="skeleton-stack skeleton-stack--center">
+            <div class="skeleton-block skeleton-line skeleton-line--caption"></div>
+            <div class="skeleton-block skeleton-line--stat"></div>
+            <div class="skeleton-block skeleton-line skeleton-line--caption"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="hours-panel glass-panel visible" aria-hidden="true">
+        <div class="hours-panel__header">
+          <div class="skeleton-block skeleton-line--heading"></div>
+          <div class="hours-panel__actions">
+            <div class="skeleton-block skeleton-button skeleton-button--compact"></div>
+            <div class="skeleton-block skeleton-button skeleton-button--compact"></div>
+          </div>
         </div>
-      </article>
+        <div class="hours-grid">
+          <div v-for="n in 3" :key="n" class="hour-category">
+            <div class="hour-category__header">
+              <div class="skeleton-block skeleton-line--category"></div>
+              <div class="skeleton-block skeleton-badge"></div>
+            </div>
+            <div class="skeleton-stack">
+              <div class="skeleton-block skeleton-line--stat"></div>
+              <div class="skeleton-block skeleton-line skeleton-line--wide"></div>
+              <div class="skeleton-block skeleton-line skeleton-line--medium"></div>
+            </div>
+            <div class="skeleton-block skeleton-bar"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="work-lists visible" aria-hidden="true">
+        <article v-for="n in 2" :key="n" class="work-list glass-panel">
+          <div class="skeleton-block skeleton-line--heading skeleton-heading-gap"></div>
+          <div v-for="row in 3" :key="row" class="skeleton-row">
+            <div class="skeleton-row__content">
+              <div class="skeleton-block skeleton-line skeleton-row__name"></div>
+              <div class="skeleton-block skeleton-line skeleton-row__meta"></div>
+            </div>
+            <div class="skeleton-block skeleton-badge"></div>
+          </div>
+        </article>
+      </section>
+    </div>
+
+    <!-- Load failure -->
+    <section v-else-if="error" class="state-panel glass-panel" role="alert">
+      <h2 class="state-panel__title">加载失败</h2>
+      <p class="state-panel__text">{{ error }}</p>
+      <button class="glass-button state-panel__action" type="button" @click="handleRetry">
+        重试
+      </button>
     </section>
+
+    <template v-else>
+      <!-- Identity + Total Hours -->
+      <section
+        id="profile"
+        class="identity-row"
+        data-section="identity"
+        :class="{ visible: sectionsVisible.identity }"
+      >
+        <!-- Personal Identity Card -->
+        <article class="identity-card">
+          <div class="identity-card__header">
+            <div class="identity-card__avatar">
+              <span class="identity-card__avatar-text">{{ avatarInitial }}</span>
+            </div>
+            <div class="identity-card__info">
+              <h2 class="identity-card__name">{{ displayName || '未命名用户' }}</h2>
+              <p class="identity-card__number">学号 {{ studentId }}</p>
+            </div>
+          </div>
+          <div class="identity-card__meta">
+            <div class="identity-card__meta-item">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                <path d="M4 15V5.5C4 4.67157 4.67157 4 5.5 4H10C10.8284 4 11.5 4.67157 11.5 5.5V15" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                <path d="M11.5 8H13.5C14.3284 8 15 8.67157 15 9.5V15" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                <path d="M2.5 15H15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M6.5 7H9M6.5 10H9M6.5 13H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span>{{ classLabel }}</span>
+            </div>
+            <div class="identity-card__meta-item">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                <circle cx="9" cy="6" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M4 14C4 11.7909 5.79086 10 8 10H10C12.2091 10 14 11.7909 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span>{{ rolesLabel }}</span>
+            </div>
+          </div>
+          <RouterLink class="identity-card__action glass-button" to="/me">
+            编辑资料
+          </RouterLink>
+        </article>
+
+        <!-- Total Hours Anchor -->
+        <article class="total-hours">
+          <p class="total-hours__label">累计记录</p>
+          <p ref="totalValueRef" class="total-hours__value">
+            {{ totalHoursLabel }}<span class="total-hours__unit">h</span>
+          </p>
+          <p class="total-hours__note">包含三类时长</p>
+        </article>
+      </section>
+
+      <!-- Hours Panel -->
+      <section
+        id="hours"
+        ref="hoursPanelRef"
+        class="hours-panel glass-panel"
+        data-section="hours"
+        :class="{ visible: sectionsVisible.hours }"
+      >
+        <div class="hours-panel__header">
+          <h2 class="hours-panel__title">义工时长</h2>
+          <div class="hours-panel__actions">
+            <button class="glass-button glass-button--compact" type="button">明细</button>
+            <button
+              class="glass-button glass-button--compact hours-refresh-btn"
+              type="button"
+              :disabled="hoursRefreshing"
+              :aria-busy="hoursRefreshing"
+              @click="handleHoursRefresh"
+            >
+              <svg
+                ref="refreshIconRef"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M14 2V6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <div class="hours-grid">
+          <div v-for="category in hourCategories" :key="category.key" class="hour-category">
+            <div class="hour-category__header">
+              <h3 class="hour-category__title">{{ category.title }}</h3>
+              <span
+                class="hour-category__progress"
+                :class="
+                  category.percent >= 100
+                    ? 'hour-category__progress--good'
+                    : 'hour-category__progress--warn'
+                "
+              >
+                {{ category.percent }}%
+              </span>
+            </div>
+            <div class="hour-category__values">
+              <div class="hour-category__main">
+                <span class="hour-category__actual">{{ formatHours(category.actual) }}</span>
+                <span class="hour-category__unit">h</span>
+              </div>
+              <div class="hour-category__detail">
+                <span class="hour-category__label">标准要求</span>
+                <span class="hour-category__standard">{{ category.standard }}h</span>
+              </div>
+              <div class="hour-category__detail">
+                <span class="hour-category__label">折算后</span>
+                <span class="hour-category__converted">
+                  {{ formatHours(category.converted) }}h
+                  <span v-if="category.bonus > 0" class="hour-category__bonus">
+                    +{{ formatCompactHours(category.bonus) }}
+                  </span>
+                </span>
+              </div>
+            </div>
+            <div class="hour-category__bar">
+              <div
+                class="hour-category__fill"
+                :style="{ transform: `scaleX(${category.barPercent / 100})` }"
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        <p class="hours-panel__note">
+          超出标准的校外时长可折算为校内时长（每2小时折算1小时），超出标准的校内时长可折算为校外时长（每3小时折算1小时）
+        </p>
+      </section>
+
+      <!-- Work Lists -->
+      <section
+        id="activities"
+        class="work-lists"
+        data-section="work"
+        :class="{ visible: sectionsVisible.work }"
+      >
+        <!-- Pending activities -->
+        <article class="work-list glass-panel">
+          <h2 class="work-list__title">待审核活动</h2>
+          <div v-if="pendingActivities.length" class="work-list__items">
+            <RouterLink
+              v-for="activity in pendingActivities"
+              :key="activity._id"
+              class="work-item"
+              to="/volunteers"
+            >
+              <div class="work-item__content">
+                <p class="work-item__name">{{ activity.name }}</p>
+                <p class="work-item__meta">{{ pendingMeta(activity) }}</p>
+              </div>
+              <span class="work-item__status work-item__status--pending">待审核</span>
+            </RouterLink>
+          </div>
+          <p v-else class="work-empty">暂无待审核活动</p>
+        </article>
+
+        <!-- Recent records -->
+        <article class="work-list glass-panel">
+          <h2 class="work-list__title">最近记录</h2>
+          <div v-if="recentActivities.length" class="work-list__items">
+            <RouterLink
+              v-for="activity in recentActivities"
+              :key="activity._id"
+              class="work-item"
+              to="/volunteers"
+            >
+              <div class="work-item__content">
+                <p class="work-item__name">{{ activity.name }}</p>
+                <p class="work-item__meta">{{ recentMeta(activity) }}</p>
+              </div>
+              <span
+                class="work-item__status"
+                :class="recentStatusClass(activity)"
+              >
+                {{ recentStatusLabel(activity) }}
+              </span>
+            </RouterLink>
+          </div>
+          <p v-else class="work-empty">还没有已确认的记录</p>
+        </article>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -376,7 +809,9 @@ onUnmounted(() => {
   margin-bottom: var(--space-7);
   opacity: 0;
   transform: translateY(12px);
-  transition: all var(--duration-slow) var(--ease-smooth);
+  transition:
+    opacity var(--duration-slow) var(--ease-smooth),
+    transform var(--duration-slow) var(--ease-smooth);
 }
 
 .greeting.visible {
@@ -408,7 +843,9 @@ onUnmounted(() => {
   margin-bottom: var(--space-8);
   opacity: 0;
   transform: translateY(20px);
-  transition: all var(--duration-slow) var(--ease-smooth);
+  transition:
+    opacity var(--duration-slow) var(--ease-smooth),
+    transform var(--duration-slow) var(--ease-smooth);
   transition-delay: 100ms;
 }
 
@@ -677,25 +1114,28 @@ onUnmounted(() => {
   padding: var(--space-3) var(--space-5);
   background: linear-gradient(
     135deg,
-    rgba(0, 113, 227, 0.12) 0%,
-    rgba(0, 113, 227, 0.08) 100%
+    rgba(255, 255, 255, 0.74) 0%,
+    rgba(214, 234, 252, 0.52) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   border-radius: var(--radius-md);
   color: var(--color-brand);
   font-size: var(--font-size-body);
   font-weight: 500;
+  text-decoration: none;
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
   overflow: hidden;
   isolation: isolate;
   min-height: 44px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.3),
-    0 2px 8px rgba(18, 48, 82, 0.06);
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.38),
+    0 3px 10px rgba(18, 48, 82, 0.08);
 }
 
 .glass-button::before {
@@ -716,7 +1156,9 @@ onUnmounted(() => {
   border-radius: var(--radius-md);
   opacity: 0.22;
   transform: translateX(-38%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -742,6 +1184,12 @@ onUnmounted(() => {
   outline-offset: 3px;
 }
 
+.glass-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+}
+
 .glass-button--compact {
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-callout);
@@ -758,7 +1206,9 @@ onUnmounted(() => {
   margin-bottom: var(--space-8);
   opacity: 0;
   transform: translateY(20px);
-  transition: all var(--duration-slow) var(--ease-smooth);
+  transition:
+    opacity var(--duration-slow) var(--ease-smooth),
+    transform var(--duration-slow) var(--ease-smooth);
   transition-delay: 200ms;
 }
 
@@ -927,11 +1377,11 @@ onUnmounted(() => {
 
 .hour-category__fill {
   height: 100%;
-  width: var(--progress);
-  max-width: 100%;
+  width: 100%;
   background: var(--color-brand);
   border-radius: var(--radius-pill);
-  transition: width var(--duration-base) var(--ease-smooth);
+  transform-origin: left center;
+  /* 比例由 :style 以 scaleX 绑定，刷新时用 WAAPI 从 0 生长，不触发布局。 */
 }
 
 .hours-panel__note {
@@ -951,7 +1401,9 @@ onUnmounted(() => {
   margin-bottom: var(--space-10);
   opacity: 0;
   transform: translateY(20px);
-  transition: all var(--duration-slow) var(--ease-smooth);
+  transition:
+    opacity var(--duration-slow) var(--ease-smooth),
+    transform var(--duration-slow) var(--ease-smooth);
   transition-delay: 300ms;
 }
 
@@ -984,7 +1436,9 @@ onUnmounted(() => {
   padding: var(--space-4);
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   text-decoration: none;
-  transition: all var(--duration-fast) var(--ease-smooth);
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-smooth);
   min-height: 68px;
 }
 
@@ -1052,6 +1506,230 @@ onUnmounted(() => {
   color: #34c759;
 }
 
+.work-item__status--refused {
+  background: rgba(255, 59, 48, 0.15);
+  color: #ff3b30;
+}
+
+/* 空态也保持玻璃质感，不用占位假数据 */
+.work-empty {
+  margin: 0;
+  padding: var(--space-5);
+  background: rgba(255, 255, 255, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-callout);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+/* Login / error state */
+.state-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6);
+  margin-bottom: var(--space-8);
+  text-align: center;
+  animation: state-enter var(--duration-slow) var(--ease-smooth) both;
+}
+
+.state-panel__title {
+  font-size: var(--font-size-headline);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.state-panel__text {
+  max-width: 44ch;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.state-panel__action {
+  min-width: 132px;
+  margin-top: var(--space-2);
+}
+
+@keyframes state-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Skeleton loading */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.greeting__skeleton,
+.skeleton-block {
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.42) 18%,
+    rgba(255, 255, 255, 0.92) 42%,
+    rgba(255, 255, 255, 0.42) 66%
+  );
+  background-size: 220% 100%;
+  border-radius: var(--radius-xs);
+  animation: skeleton-sweep 1.5s var(--ease-smooth) infinite;
+}
+
+.greeting__skeleton {
+  display: inline-block;
+  vertical-align: middle;
+  width: clamp(96px, 12vw, 168px);
+  height: 0.56em;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -70% 0;
+  }
+}
+
+.skeleton-line {
+  height: 14px;
+}
+
+.skeleton-line--title {
+  width: 42%;
+  height: 26px;
+  margin-bottom: var(--space-2);
+}
+
+.skeleton-line--caption {
+  width: 28%;
+  height: 12px;
+}
+
+.skeleton-line--wide {
+  width: 62%;
+}
+
+.skeleton-line--medium {
+  width: 44%;
+}
+
+.skeleton-line--heading {
+  width: 120px;
+  height: 22px;
+}
+
+.skeleton-line--category {
+  width: 88px;
+  height: 19px;
+}
+
+.skeleton-line--stat {
+  width: 96px;
+  height: 48px;
+}
+
+.skeleton-avatar {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.skeleton-button {
+  width: 128px;
+  height: 44px;
+  border-radius: var(--radius-md);
+}
+
+.skeleton-button--compact {
+  width: 84px;
+  height: 36px;
+}
+
+.skeleton-badge {
+  width: 58px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton-bar {
+  height: 6px;
+  margin-top: var(--space-4);
+  border-radius: var(--radius-pill);
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skeleton-stack--center {
+  align-items: center;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 68px;
+  padding: var(--space-4);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.skeleton-row:last-child {
+  border-bottom: none;
+}
+
+.skeleton-row__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skeleton-row__name {
+  width: 56%;
+}
+
+.skeleton-row__meta {
+  width: 38%;
+  height: 12px;
+}
+
+.skeleton-heading-gap {
+  margin-bottom: var(--space-5);
+}
+
+/* Mobile: the parent panel already blurs, so the inner category cards can use a
+   smaller radius without losing the glass read. */
+@media (max-width: 767px) {
+  .hour-category {
+    -webkit-backdrop-filter: blur(8px) saturate(155%);
+    backdrop-filter: blur(8px) saturate(155%);
+  }
+}
+
 /* Tablet */
 @media (min-width: 768px) {
   .identity-row {
@@ -1106,6 +1784,12 @@ onUnmounted(() => {
 
   .glass-button::after {
     display: none;
+  }
+
+  .skeleton-block,
+  .greeting__skeleton,
+  .state-panel {
+    animation: none;
   }
 }
 </style>

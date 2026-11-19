@@ -107,7 +107,13 @@ function token(): string {
   return localStorage.getItem('token') ?? ''
 }
 
+// Decoding the JWT is pure and repeated by every request/auth check. Cache the
+// last payload so navigation does not re-base64-decode the same token.
+let cachedToken = ''
+let cachedPayload: Record<string, unknown> | null = null
+
 function decodeTokenPayload(value: string): Record<string, unknown> | null {
+  if (value === cachedToken) return cachedPayload
   try {
     const encoded = value.split('.')[1]
     if (!encoded) return null
@@ -118,8 +124,12 @@ function decodeTokenPayload(value: string): Record<string, unknown> | null {
         .map((char) => '%' + char.charCodeAt(0).toString(16).padStart(2, '0'))
         .join('')
     )
-    return JSON.parse(json) as Record<string, unknown>
+    cachedToken = value
+    cachedPayload = JSON.parse(json) as Record<string, unknown>
+    return cachedPayload
   } catch {
+    cachedToken = value
+    cachedPayload = null
     return null
   }
 }
@@ -142,6 +152,8 @@ export function currentUserId(): string {
 
 export function clearSession(): void {
   localStorage.removeItem('token')
+  cachedToken = ''
+  cachedPayload = null
 }
 
 function unwrap<T>(payload: unknown): T {
@@ -223,14 +235,17 @@ export async function fetchProfile(): Promise<CanaryUser> {
   return request<CanaryUser>(`/v1/users/${id}`)
 }
 
-export async function fetchGroupName(groupId: string): Promise<string> {
-  if (!groupId) return ''
-  try {
-    const group = await request<CanaryGroup>(`/groups/${groupId}`)
-    return group?.name ?? ''
-  } catch {
-    return ''
-  }
+const groupNameCache = new Map<string, Promise<string>>()
+
+export function fetchGroupName(groupId: string): Promise<string> {
+  if (!groupId) return Promise.resolve('')
+  const cached = groupNameCache.get(groupId)
+  if (cached) return cached
+  const pending = request<CanaryGroup>(`/groups/${groupId}`)
+    .then((group) => group?.name ?? '')
+    .catch(() => '')
+  groupNameCache.set(groupId, pending)
+  return pending
 }
 
 export async function fetchNotices(): Promise<CanaryNoticeList> {

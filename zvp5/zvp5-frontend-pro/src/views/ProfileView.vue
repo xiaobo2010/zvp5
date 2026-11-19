@@ -181,14 +181,14 @@ onUnmounted(() => {
     </header>
 
     <!-- Loading state -->
-    <section v-if="loading" class="glass-card state-card" role="status" aria-live="polite">
+    <section v-if="loading" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="status" aria-live="polite">
       <span class="state-spinner" aria-hidden="true"></span>
       <p class="state-title">正在加载个人资料</p>
       <p class="state-description">正在从 canary 同步账号信息…</p>
     </section>
 
     <!-- Unauthenticated state -->
-    <section v-else-if="unauthenticated" class="glass-card state-card" role="alert">
+    <section v-else-if="unauthenticated" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <h2 class="state-title">需要登录</h2>
       <p class="state-description">登录后即可查看个人资料、班级与站内通知。</p>
       <RouterLink class="liquid-btn liquid-btn--primary" to="/login?redirect=/me">
@@ -197,7 +197,7 @@ onUnmounted(() => {
     </section>
 
     <!-- API error state -->
-    <section v-else-if="error" class="glass-card state-card" role="alert">
+    <section v-else-if="error" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <h2 class="state-title">个人资料加载失败</h2>
       <p class="state-description">{{ error }}</p>
       <button
@@ -212,7 +212,7 @@ onUnmounted(() => {
 
     <template v-else-if="profile">
       <!-- Profile hero card with frosted glass -->
-      <section class="glass-card profile-hero-card">
+      <section class="glass-card profile-hero-card surface-enter" :style="{ '--i': 0 }">
         <div class="profile-hero">
           <div class="profile-avatar">{{ initials }}</div>
           <div class="profile-identity">
@@ -244,7 +244,7 @@ onUnmounted(() => {
       </section>
 
       <!-- Notices section with frosted glass -->
-      <section class="glass-card notices-card">
+      <section class="glass-card notices-card surface-enter" :style="{ '--i': 1 }">
         <div class="notices-head">
           <h2 class="section-title">站内通知</h2>
           <button
@@ -320,7 +320,7 @@ onUnmounted(() => {
       </section>
 
       <!-- Account actions with frosted glass -->
-      <section class="glass-card actions-card">
+      <section class="glass-card actions-card surface-enter" :style="{ '--i': 2 }">
         <button class="liquid-btn liquid-btn--primary liquid-btn--full" type="button" @click="handleChangePassword">
           修改密码
         </button>
@@ -368,16 +368,19 @@ onUnmounted(() => {
   padding: 0;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.48) 0%,
-    rgba(255, 255, 255, 0.28) 100%
+    rgba(255, 255, 255, 0.74) 0%,
+    rgba(232, 242, 252, 0.54) 100%
   );
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 50%;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth),
+    color var(--duration-fast) var(--ease-smooth);
   overflow: hidden;
   isolation: isolate;
   box-shadow:
@@ -413,7 +416,9 @@ onUnmounted(() => {
   border-radius: 50%;
   opacity: 0;
   transform: translateX(-100%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -653,14 +658,16 @@ onUnmounted(() => {
   padding: var(--space-4);
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.34) 0%,
-    rgba(255, 255, 255, 0.18) 100%
+    rgba(255, 255, 255, 0.66) 0%,
+    rgba(232, 242, 252, 0.46) 100%
   );
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-  backdrop-filter: blur(8px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.46);
+  -webkit-backdrop-filter: blur(10px) saturate(170%);
+  backdrop-filter: blur(10px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 6px rgba(18, 48, 82, 0.04);
   text-align: left;
   cursor: pointer;
   display: grid;
@@ -668,11 +675,14 @@ onUnmounted(() => {
   grid-template-rows: auto auto;
   gap: var(--space-2) var(--space-3);
   align-items: center;
-  transition: background var(--duration-fast) var(--ease-smooth);
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth);
 }
 
 .notice-head:hover {
-  background: rgba(0, 113, 227, 0.05);
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(255, 255, 255, 0.95);
 }
 
 .notice-head:focus-visible {
@@ -801,7 +811,9 @@ onUnmounted(() => {
   font-weight: 600;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
   isolation: isolate;
   overflow: hidden;
   border: 1px solid;
@@ -829,7 +841,9 @@ onUnmounted(() => {
   border-radius: var(--radius-pill);
   opacity: 0;
   transform: translateX(-100%);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
@@ -862,12 +876,15 @@ onUnmounted(() => {
 }
 
 .liquid-btn--secondary {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.28) 100%);
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border-color: rgba(255, 255, 255, 0.72);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(232, 242, 252, 0.56) 100%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.88);
   color: var(--color-text-primary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 2px 6px rgba(18, 48, 82, 0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 3px 10px rgba(18, 48, 82, 0.08);
 }
 
 .liquid-btn--secondary:hover {

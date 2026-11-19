@@ -11,7 +11,10 @@
   --color-text-tertiary: #86868b;
   --color-text-inverse: #f5f5f7;
 
-  --color-bg-canvas: #f5f5f7;
+  --color-bg-canvas: #eef4fa;
+  --color-bg-canvas-sky: #e8eff7;
+  --color-bg-canvas-cream: #f3ede3;
+  --color-bg-canvas-mint: #e6f2ec;
   --color-bg-elevated: #ffffff;
   --color-bg-sunken: #fafafa;
 
