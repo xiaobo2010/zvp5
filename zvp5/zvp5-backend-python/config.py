@@ -44,10 +44,12 @@ AI_CALL_LOGS_RETENTION_DAYS = 90
 
 # 按角色的月额度；未列出的角色回退 AI_DEFAULT_*。个人 key 仍不占额度。
 # 键只有 ``af``：OCR 与对话在用户侧共用一个 AF 池（V051 起 ``chat``/``ocr``
-# 两种用户级 kind 已收敛），取值沿用改造前各自的 chat 口径。
+# 两种用户级 kind 已收敛）。department（学生会）的口径按 OCR 折算：
+# AI_OCR_AF_COST = 100，等效每人每月 100 次识别 = 100 × 100 = 10_000 AF；
+# 对话消耗同一池子，占用了对话额度就少吃 OCR 的份。
 AI_ROLE_QUOTA = {
     "admin": {"af": 1_000_000},
-    "department": {"af": 200_000},
+    "department": {"af": 10_000},
 }
 
 # agent（智能体）执行的硬上限，防「死循环烧钱」（Denial of Wallet）。

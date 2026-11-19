@@ -84,7 +84,7 @@ def test_role_defaults_come_from_the_priority_table():
     # admin 在角色策略表里是 None（无限），额度层继续用既有管理员口径。
     assert quota_service.default_limit_for(["admin"], "af") == 1_000_000
     # department 由 V043 的 DEFAULTS 给出。
-    assert quota_service.default_limit_for(["department"], "af") == 200_000
+    assert quota_service.default_limit_for(["department"], "af") == 10_000
     assert (
         quota_service.default_limit_for(["admin", "department"], "af") == 1_000_000
     )
@@ -185,7 +185,7 @@ def test_settings_only_govern_roles_the_policy_table_leaves_alone(monkeypatch, r
     assert "broken" not in table  # bool 与字符串都被丢弃
     assert quota_service.default_limit_for(["admin"], "af") == 42
     # 角色策略表有意见的角色不再被这张 JSON 覆盖。
-    assert quota_service.default_limit_for(["department"], "af") == 200_000
+    assert quota_service.default_limit_for(["department"], "af") == 10_000
 
 
 def test_broken_settings_fall_back_to_the_code_table(monkeypatch, repo):

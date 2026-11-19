@@ -279,14 +279,14 @@ def test_features_are_a_union_across_roles() -> None:
 
 
 def test_monthly_limit_takes_the_first_hit_role() -> None:
-    assert policy.monthly_limit(["department"], "af") == 200_000
+    assert policy.monthly_limit(["department"], "af") == 10_000
     assert policy.monthly_limit(["student"], "af") == 0
     # secretary 的 af 取改造前 chat 的口径（0）：AF 池同时管对话与 OCR，
     # 原来单列的 ocr 额度已无处可加。
     assert policy.monthly_limit(["secretary"], "af") == 0
     assert policy.monthly_limit(["student"], "schedule") == 0
     # 多角色取第一个命中（department 优先于 student），不叠加、不取最大值。
-    assert policy.monthly_limit(["student", "department"], "af") == 200_000
+    assert policy.monthly_limit(["student", "department"], "af") == 10_000
     assert policy.monthly_limit(None, "af") is None
     # 历史 kind 不再有角色额度（V051 归并），交回调用方。
     assert policy.monthly_limit(["department"], "chat") is None
@@ -304,7 +304,7 @@ def test_snapshot_falls_back_to_defaults_when_the_table_is_empty(repo) -> None:
 
     department = view["roles"][0]
     assert department["features"]["ai.chat"] is True
-    assert department["quotas"] == {"af": 200_000, "schedule": 1}
+    assert department["quotas"] == {"af": 10_000, "schedule": 1}
     assert view["roles"][2]["features"]["ai.chat"] is False
     # 空表 = 从没配过：没有「最后修改人」可报。
     assert department["updated_at"] is None
@@ -330,7 +330,7 @@ def test_repo_failure_falls_back_to_defaults_instead_of_raising(repo) -> None:
     asyncio.run(policy.refresh())
 
     assert policy.feature_enabled(["department"], "ai.chat") is True
-    assert policy.monthly_limit(["department"], "af") == 200_000
+    assert policy.monthly_limit(["department"], "af") == 10_000
 
 
 # --------------------------------------------------------------------------- #
