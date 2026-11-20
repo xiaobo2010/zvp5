@@ -185,14 +185,19 @@ jobs:
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend
-    # token 存在 canary environment 里，该 environment 只接受 v5-canary / v5-canary2
-    # 两个分支的 job，且**每次部署都要仓库所有者手动批准**。
-    # 为什么需要那道批准：有写权限的人可以直接 push 到 v5-canary（本分支没有
+    # token 存在 canary* environment 里，两个 environment 都只接受 v5-canary /
+    # v5-canary2 分支的 job：
+    #   - canary      = 带 required_reviewers，部署前必须仓库所有者手动放行；
+    #   - canary-auto = 不放行闸，只给 allowlist 里那个账号自己推的提交用。
+    # 选择依据是 **github.actor（推送者身份）**，不是提交里的 author 字段：author 是
+    # 提交内容的一部分，任何人都能写别人的邮箱；actor 由 GitHub 认证，骗不了。
+    # 为什么保留那道批准：有写权限的人可以直接 push 到 v5-canary（本分支没有
     # PR 门禁，为了不挡协作者写代码），也就能临时塞一个引用本 environment 的
     # workflow 去 echo token。分支策略挡不住「本分支推的东西」，只有人工放行能挡。
     # 门禁 job（backend / frontend-e2e / workflow-security / dependency-security）
     # 在批准之前就跑完，所以协作者仍能立刻看到代码质量结果，只有发布这一步等批。
-    environment: canary
+    environment:
+      name: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/v5-canary' && github.actor == 'neiworldfirst1314-cell') && 'canary-auto' || 'canary' }}
     env:
       WRANGLER_VERSION: "4.162.0"
       CANARY_URL: https://canary.xiaobopisces.top
