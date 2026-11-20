@@ -572,39 +572,96 @@ onUnmounted(() => {
 
 .submit-button {
   position: relative;
+  isolation: isolate;
+  overflow: hidden;
   width: 100%;
   padding: var(--space-4) var(--space-7);
   font-size: var(--font-size-body);
-  font-weight: 600;
+  font-weight: 650;
   color: #ffffff;
-  background: var(--color-brand);
-  border: none;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 113, 227, 0.78) 0%,
+    rgba(64, 156, 255, 0.58) 52%,
+    rgba(0, 113, 227, 0.68) 100%
+  );
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: var(--radius-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 8px 22px rgba(0, 113, 227, 0.2);
   cursor: pointer;
-  transition: all 0.2s ease-out;
   outline: none;
   margin-top: var(--space-3);
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth),
+    filter var(--duration-fast) var(--ease-smooth);
+}
+
+.submit-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--glass-highlight);
+  border-radius: inherit;
+  opacity: 0.34;
+  pointer-events: none;
+}
+
+.submit-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--glass-sheen);
+  border-radius: inherit;
+  opacity: 0;
+  transform: translateX(-120%);
+  pointer-events: none;
+  transition:
+    opacity var(--duration-base) var(--ease-smooth),
+    transform var(--duration-base) var(--ease-smooth);
 }
 
 .submit-button:hover:not(:disabled) {
-  background: #0077ed;
-  box-shadow: 0 8px 24px rgba(0, 113, 227, 0.3);
+  filter: brightness(1.06) saturate(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 12px 28px rgba(0, 113, 227, 0.26);
   transform: translateY(-1px);
 }
 
+.submit-button:hover:not(:disabled)::after {
+  opacity: 0.62;
+  transform: translateX(120%);
+}
+
 .submit-button:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2);
+  transform: translateY(0) scale(0.99);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 4px 12px rgba(0, 113, 227, 0.18);
 }
 
 .submit-button:focus-visible {
-  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.4);
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 3px rgba(0, 113, 227, 0.18);
 }
 
 .submit-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+  filter: none;
 }
 
 .submit-button.loading {
@@ -613,6 +670,8 @@ onUnmounted(() => {
 
 .button-label,
 .button-spinner {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -670,6 +729,11 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .spinner-icon {
     animation-duration: 1.6s;
+  }
+
+  .submit-button,
+  .submit-button::after {
+    transition: none;
   }
 }
 

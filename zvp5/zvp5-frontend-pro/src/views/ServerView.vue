@@ -1450,9 +1450,11 @@ onBeforeUnmount(() => {
                     >
                       {{ digit }}
                     </div>
-                    <div
-                      v-if="totpData"
-                      class="totp-countdown"
+                  </div>
+
+                  <div
+                    v-if="totpData"
+                    class="totp-countdown"
                       role="progressbar"
                       aria-label="动态码剩余时间"
                       :aria-valuenow="Math.round(totpProgress)"
@@ -1491,7 +1493,6 @@ onBeforeUnmount(() => {
                         <span class="totp-countdown__unit">s</span>
                       </div>
                     </div>
-                  </div>
 
                   <div class="totp-actions">
                     <button
@@ -2763,7 +2764,7 @@ onBeforeUnmount(() => {
 
 .totp-stage {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-5);
   flex-wrap: wrap;
   margin-top: var(--space-5);
@@ -2811,14 +2812,14 @@ onBeforeUnmount(() => {
 }
 
 .totp-countdown {
-  position: absolute;
-  top: -12px;
-  right: -12px;
+  position: relative;
+  flex: 0 0 80px;
   width: 80px;
   height: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
 }
 
 .totp-countdown__svg {
@@ -2877,7 +2878,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
-  align-self: flex-start;
+  align-self: center;
 }
 
 .totp-info {
