@@ -418,25 +418,29 @@ jobs:
           : "${FRONTEND_SSH_HOST:?FRONTEND_SSH_HOST is required}"
           : "${FRONTEND_SSH_PORT:?FRONTEND_SSH_PORT is required}"
           : "${FRONTEND_SSH_USER:?FRONTEND_SSH_USER is required}"
+          # prefix 选 SSH 凭据，bundle 选上传的包名；两者独立——后端机（zvp. HTML 机）
+          # 只授权 backend 密钥，但 frontend 包也要传给它。
           upload() {
-            local prefix="$1" host="$2" port="$3" user="$4"
+            local prefix="$1" host="$2" port="$3" user="$4" bundle="${5:-$1}"
             ssh -i "$HOME/.ssh/zvp5-$prefix" -p "$port" \
               -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o GlobalKnownHostsFile=/dev/null \
               -o BatchMode=yes -o ConnectTimeout=15 \
               -o UserKnownHostsFile="$HOME/.ssh/zvp5-$prefix.known_hosts" \
-              "$user@$host" "mkdir -p incoming && rm -f incoming/$prefix-$GITHUB_SHA.tar.gz incoming/$prefix-$GITHUB_SHA.tar.gz.sha256"
+              "$user@$host" "mkdir -p incoming && rm -f incoming/$bundle-$GITHUB_SHA.tar.gz incoming/$bundle-$GITHUB_SHA.tar.gz.sha256"
             scp -q -i "$HOME/.ssh/zvp5-$prefix" -P "$port" \
               -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o GlobalKnownHostsFile=/dev/null \
               -o BatchMode=yes -o ConnectTimeout=15 \
               -o UserKnownHostsFile="$HOME/.ssh/zvp5-$prefix.known_hosts" \
-              "$RUNNER_TEMP/zvp5-deploy/$prefix-$GITHUB_SHA.tar.gz" \
-              "$RUNNER_TEMP/zvp5-deploy/$prefix-$GITHUB_SHA.tar.gz.sha256" \
+              "$RUNNER_TEMP/zvp5-deploy/$bundle-$GITHUB_SHA.tar.gz" \
+              "$RUNNER_TEMP/zvp5-deploy/$bundle-$GITHUB_SHA.tar.gz.sha256" \
               "$user@$host:incoming/"
           }
           upload backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER"
           upload frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER"
+          # zvp. 的 HTML 由后端机本地 frontend-dist 提供，同样要吃 frontend 包。
+          upload backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" frontend
 
       - name: Deploy backend then frontend with automatic rollback
         shell: bash
@@ -445,6 +449,7 @@ jobs:
           : "${PROD_FRONTEND_HEALTH_URL:?PROD_FRONTEND_HEALTH_URL is required}"
           backend_attempted=0
           frontend_attempted=0
+          frontend_html_attempted=0
 
           remote() {
             local prefix="$1" host="$2" port="$3" user="$4" command="$5"
@@ -473,6 +478,10 @@ jobs:
             local rollback_failed=0
             trap - EXIT
             if [[ $status -ne 0 ]]; then
+              if [[ $frontend_html_attempted -eq 1 ]]; then
+                remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
+                  "sudo -n /usr/local/sbin/zvp5-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
+              fi
               if [[ $frontend_attempted -eq 1 ]]; then
                 remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
                   "sudo -n /usr/local/sbin/zvp5-deploy rollback frontend $GITHUB_SHA $DEPLOYMENT_ID" || rollback_failed=1
@@ -515,7 +524,23 @@ jobs:
           frontend_attempted=1
           remote frontend "$FRONTEND_SSH_HOST" "$FRONTEND_SSH_PORT" "$FRONTEND_SSH_USER" \
             "sudo -n /usr/local/sbin/zvp5-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
+
+          # zvp. 的 HTML 从后端机本地 frontend-dist 提供（静态资源 origin 在前端机），
+          # 两边必须同版本，否则 index 引用的 hash 资源 404 → 白屏（2026-11-20 生产踩过）。
+          frontend_html_attempted=1
+          remote backend "$BACKEND_SSH_HOST" "$BACKEND_SSH_PORT" "$BACKEND_SSH_USER" \
+            "sudo -n /usr/local/sbin/zvp5-deploy deploy frontend $GITHUB_SHA $DEPLOYMENT_ID"
           check_url "$PROD_FRONTEND_HEALTH_URL"
+          # 入口页 200 不等于可用：还要真正拉回 index 里引用的一条入口资源，
+          # 防「HTML 与资源 origin 版本错位」这类健康盲区。
+          entry_asset="$(curl -fsS --retry 3 --retry-delay 2 \
+            -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' \
+            "$PROD_FRONTEND_HEALTH_URL" | grep -oE 'https://[^" ]+assets/index-[^" ]+\.js' | head -1 || true)"
+          [[ -n "$entry_asset" ]] || {
+            echo "no entry asset URL found in $PROD_FRONTEND_HEALTH_URL" >&2
+            exit 1
+          }
+          check_url "$entry_asset"
           check_url "$API_HEALTH_URL"
           check_url "$RACE_API_HEALTH_URL"
 

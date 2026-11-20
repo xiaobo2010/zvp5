@@ -132,6 +132,13 @@ The wrapper builds a replacement virtualenv outside the backend tree.
 ## Safety behavior
 
 - Backend deploys run first; the frontend is not touched if backend health fails.
+- The frontend bundle is deployed to BOTH machines: the frontend host serves
+  `/assets` (the high-bandwidth static origin), while the backend host serves
+  `index.html` for the public site. The two copies must match, otherwise the
+  entry page references asset hashes that 404 on the static origin and the site
+  renders blank (2026-11-20 production incident). The post-deploy health check
+  therefore fetches an entry asset URL extracted from the served `index.html`,
+  not just the page root.
 - Both components are backed up under
   `/www/zvms4/backups/github-actions/` before activation. Backup names include
   the release SHA and deployment ID; the wrapper keeps the four newest backups
