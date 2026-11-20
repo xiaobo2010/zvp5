@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
+import AiChatPanel from '@/components/AiChatPanel.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   fetchAiHealth,
@@ -27,6 +28,7 @@ import {
 const router = useRouter()
 
 const tabs: AnimatedTabItem[] = [
+  { value: 'chat', label: '对话', hint: '直接调用网关模型' },
   { value: 'overview', label: '概览', hint: '网关健康与容量' },
   { value: 'keys', label: '密钥', hint: '只读凭据清单（不含密钥）' },
   { value: 'models', label: '模型', hint: '渠道目录与覆盖行' },
@@ -37,7 +39,7 @@ const tabs: AnimatedTabItem[] = [
   { value: 'monitor', label: '监控', hint: '近 7 天调用聚合' }
 ]
 
-const activeTab = ref('overview')
+const activeTab = ref('chat')
 const currentTabLabel = computed(
   () => tabs.find((item) => item.value === activeTab.value)?.label ?? ''
 )
@@ -645,6 +647,10 @@ function statusStatText(status: string): string {
 /* -------------------------------------------------------------------------- */
 
 function ensureTab(tab: string) {
+  if (tab === 'chat') {
+    // Chat panel manages its own loading state
+    return
+  }
   if (tab === 'overview') {
     if (!healthLoaded.value && !healthLoading.value && !healthError.value) void loadHealth()
     return
@@ -681,6 +687,7 @@ function ensureTab(tab: string) {
 }
 
 const panelBusy = computed(() => {
+  if (activeTab.value === 'chat') return false
   if (activeTab.value === 'overview') return healthLoading.value
   if (activeTab.value === 'keys') return keysLoading.value
   if (activeTab.value === 'models') return modelsLoading.value
@@ -732,8 +739,21 @@ watch(activeTab, ensureTab, { immediate: true })
       >
         <Transition name="tab-fade" mode="out-in">
           <div :key="activeTab" class="ai-gateway__panel">
+            <!-- 对话 -->
+            <template v-if="activeTab === 'chat'">
+              <section class="panel">
+                <div class="panel__header">
+                  <div>
+                    <h2 class="panel__title">AI 对话</h2>
+                    <p class="panel__subtitle">直接调用网关模型进行对话测试</p>
+                  </div>
+                </div>
+                <AiChatPanel />
+              </section>
+            </template>
+
             <!-- 概览 -->
-            <template v-if="activeTab === 'overview'">
+            <template v-else-if="activeTab === 'overview'">
               <section class="panel">
                 <div class="panel__header">
                   <div>

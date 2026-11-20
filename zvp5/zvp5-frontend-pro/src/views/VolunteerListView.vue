@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   CanaryApiError,
@@ -65,6 +65,122 @@ const visiblePages = computed(() => {
   return Array.from({ length: 7 }, (_, index) => start + index)
 })
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
+
+// Bottom page selector: one measured glass thumb that springs between pages.
+const pagerTrackRef = ref<HTMLElement | null>(null)
+const pagerThumbRef = ref<HTMLElement | null>(null)
+const pagerThumbState = ref({ left: 0, width: 0, ready: false })
+const pagerDragging = ref(false)
+const pagerDragOffset = ref(0)
+const pagerPages = new Map<number, HTMLElement>()
+let pagerObserver: ResizeObserver | null = null
+let pagerStartX = 0
+let pagerMoved = false
+let pagerSuppressClick = false
+
+function setPagerPageRef(page: number, el: unknown) {
+  if (!(el instanceof HTMLElement)) {
+    pagerPages.delete(page)
+  } else {
+    pagerPages.set(page, el)
+    measurePager()
+  }
+}
+
+function measurePager() {
+  const host = pagerTrackRef.value
+  if (host && !pagerObserver && typeof ResizeObserver !== 'undefined') {
+    pagerObserver = new ResizeObserver(() => measurePager())
+    pagerObserver.observe(host)
+  }
+  const active = pagerPages.get(activePage.value)
+  if (!host || !active) {
+    pagerThumbState.value = { ...pagerThumbState.value, ready: false }
+    return
+  }
+  const hostRect = host.getBoundingClientRect()
+  const activeRect = active.getBoundingClientRect()
+  pagerThumbState.value = {
+    left: activeRect.left - hostRect.left + host.scrollLeft,
+    width: activeRect.width,
+    ready: true
+  }
+}
+
+async function syncPager(animate = true) {
+  await nextTick()
+  measurePager()
+  if (animate && !reduceMotion()) {
+    const el = pagerThumbRef.value
+    el?.animate(
+      [{ scale: '1' }, { scale: '1.1' }, { scale: '1' }],
+      { duration: 420, easing: 'cubic-bezier(0.22, 1.55, 0.36, 1)' }
+    )
+  }
+}
+
+function reduceMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+}
+
+function onPagerPointerDown(event: PointerEvent) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  const host = pagerTrackRef.value
+  if (!host) return
+  pagerStartX = event.clientX
+  pagerMoved = false
+  pagerSuppressClick = false
+  pagerDragging.value = true
+  host.setPointerCapture?.(event.pointerId)
+}
+
+function onPagerPointerMove(event: PointerEvent) {
+  if (!pagerDragging.value) return
+  const delta = event.clientX - pagerStartX
+  if (Math.abs(delta) > 4) pagerMoved = true
+  pagerDragOffset.value = delta
+}
+
+function onPagerPointerUp(event: PointerEvent) {
+  if (!pagerDragging.value) return
+  const host = pagerTrackRef.value
+  if (host) {
+    try {
+      host.releasePointerCapture(event.pointerId)
+    } catch {
+      // already released
+    }
+  }
+  if (pagerMoved) {
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('.pagination-page')
+    const page = Number(target?.dataset.page ?? '')
+    pagerDragging.value = false
+    pagerDragOffset.value = 0
+    if (Number.isInteger(page) && page > 0) {
+      pagerSuppressClick = true
+      handlePageChange(page)
+    }
+    return
+  }
+  pagerDragging.value = false
+  pagerDragOffset.value = 0
+}
+
+function handlePagerClick(page: number) {
+  if (pagerSuppressClick) {
+    pagerSuppressClick = false
+    return
+  }
+  handlePageChange(page)
+}
+
+watch(activePage, () => void syncPager())
+watch(
+  () => visiblePages.value.join(','),
+  () => void syncPager(false)
+)
 
 function readableError(reason: unknown, fallback: string): string {
   return reason instanceof CanaryApiError ? reason.message : fallback
@@ -291,6 +407,19 @@ function closeActivity() {
 
 onMounted(() => {
   void bootstrap()
+  if (pagerTrackRef.value && typeof ResizeObserver !== 'undefined') {
+    pagerObserver = new ResizeObserver(() => measurePager())
+    pagerObserver.observe(pagerTrackRef.value)
+  }
+  window.addEventListener('resize', measurePager)
+  if (document.fonts?.ready) void document.fonts.ready.then(() => syncPager(false))
+  void syncPager(false)
+})
+
+onBeforeUnmount(() => {
+  pagerObserver?.disconnect()
+  pagerObserver = null
+  window.removeEventListener('resize', measurePager)
 })
 </script>
 
@@ -534,15 +663,35 @@ onMounted(() => {
       >
         上一页
       </button>
-      <div :key="activePage" class="pagination-pages">
+      <div
+        ref="pagerTrackRef"
+        class="pagination-pages"
+        :class="{ 'is-dragging': pagerDragging }"
+        @pointerdown="onPagerPointerDown"
+        @pointermove="onPagerPointerMove"
+        @pointerup="onPagerPointerUp"
+        @pointercancel="onPagerPointerUp"
+      >
+        <span
+          ref="pagerThumbRef"
+          class="pagination-thumb"
+          :class="{ 'is-ready': pagerThumbState.ready }"
+          :style="{
+            transform: `translate3d(${pagerThumbState.left + pagerDragOffset}px, 0, 0)`,
+            width: `${pagerThumbState.width}px`
+          }"
+          aria-hidden="true"
+        />
         <button
           v-for="page in visiblePages"
           :key="page"
+          :ref="(el) => setPagerPageRef(page, el)"
+          :data-page="page"
           class="pagination-page"
           :class="{ 'is-active': page === activePage }"
           type="button"
           :aria-current="page === activePage ? 'page' : undefined"
-          @click="handlePageChange(page)"
+          @click="handlePagerClick(page)"
         >
           {{ page }}
         </button>
@@ -1201,43 +1350,63 @@ onMounted(() => {
 }
 
 .pagination-pages {
+  position: relative;
   display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px;
+  flex-wrap: nowrap;
   justify-content: center;
-  animation: pagination-pop 320ms var(--ease-spring);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  touch-action: pan-y;
+  isolation: isolate;
 }
 
-@keyframes pagination-pop {
-  from {
-    opacity: 0.55;
-    transform: translateY(4px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+.pagination-thumb {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: calc(100% - 6px);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 8px rgba(18, 48, 82, 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
+    width 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
+    opacity 180ms var(--ease-smooth);
+  z-index: 0;
+}
+
+.pagination-thumb.is-ready {
+  opacity: 1;
+}
+
+.pagination-pages.is-dragging .pagination-thumb {
+  transition:
+    transform 120ms linear,
+    width 180ms var(--ease-out),
+    opacity 180ms var(--ease-smooth);
 }
 
 .pagination-page {
+  position: relative;
+  z-index: 1;
   width: 36px;
   height: 36px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.68) 0%,
-    rgba(232, 242, 252, 0.48) 100%
-  );
-  -webkit-backdrop-filter: blur(9px) saturate(170%);
-  backdrop-filter: blur(9px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  border-radius: var(--radius-sm);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 1px 4px rgba(18, 48, 82, 0.04);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  box-shadow: none;
   font-size: var(--font-size-callout);
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -1254,13 +1423,10 @@ onMounted(() => {
 }
 
 .pagination-page.is-active {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 113, 227, 0.2) 0%,
-    rgba(0, 113, 227, 0.1) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.65);
+  background: transparent;
+  border-color: transparent;
   color: var(--color-brand);
+  font-weight: 700;
 }
 
 .pagination-page:focus-visible {
@@ -1475,10 +1641,26 @@ onMounted(() => {
   .pagination-pages {
     width: 100%;
     order: -1;
+    gap: 4px;
+    padding: 2px;
+  }
+
+  .pagination-page {
+    width: 32px;
+    height: 32px;
+  }
+
+  .pagination-thumb {
+    top: 2px;
+    height: calc(100% - 4px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .pagination-thumb {
+    transition: none;
+  }
+
   .liquid-btn::after {
     display: none;
   }

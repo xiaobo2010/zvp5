@@ -441,6 +441,13 @@ const totpDisplay = computed(() => {
   return otp.length === 6 ? `${otp.slice(0, 3)} ${otp.slice(3)}` : otp
 })
 
+function getTotpDigits(): (string | null)[] {
+  if (!totpData.value) return Array(6).fill(null)
+  if (!totpShow.value || totpExpired.value) return Array(6).fill('•')
+  const otp = totpData.value.otp.padEnd(6, '0')
+  return Array.from(otp.slice(0, 6))
+}
+
 function countdownClass(seconds: number): string {
   if (seconds <= 10) return 'meter__fill--danger'
   if (seconds <= 24) return 'meter__fill--warn'
@@ -1426,9 +1433,58 @@ onBeforeUnmount(() => {
                 </p>
 
                 <div class="totp-stage surface-enter" style="--i: 0">
-                  <div class="totp-code" :class="{ 'is-hidden': !totpShow || totpExpired }">
-                    {{ totpDisplay }}
+                  <div class="totp-display" :class="{ 'totp-expired': totpExpired }">
+                    <div
+                      v-for="(digit, idx) in getTotpDigits()"
+                      :key="idx"
+                      class="totp-digit"
+                      :style="{ '--delay': `${idx * 30}ms` }"
+                    >
+                      {{ digit }}
+                    </div>
+                    <div
+                      v-if="totpData"
+                      class="totp-countdown"
+                      role="progressbar"
+                      aria-label="动态码剩余时间"
+                      :aria-valuenow="Math.round(totpProgress)"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                    >
+                      <svg viewBox="0 0 100 100" class="totp-countdown__svg">
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          opacity="0.1"
+                        />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="3"
+                          stroke-dasharray="282.74"
+                          :stroke-dashoffset="`${282.74 * (1 - totpProgress / 100)}`"
+                          class="totp-countdown__ring"
+                          :class="{
+                            'totp-countdown__ring--critical': totpRemaining <= 10,
+                            'totp-countdown__ring--warning': totpRemaining > 10 && totpRemaining <= 24
+                          }"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                      <div class="totp-countdown__text">
+                        <span class="totp-countdown__value">{{ totpRemaining }}</span>
+                        <span class="totp-countdown__unit">s</span>
+                      </div>
+                    </div>
                   </div>
+
                   <div class="totp-actions">
                     <button
                       type="button"
@@ -1436,7 +1492,7 @@ onBeforeUnmount(() => {
                       :disabled="totpExpired || !totpData"
                       @click="toggleTotpShow"
                     >
-                      {{ totpShow ? '隐藏动态码' : '显示动态码' }}
+                      {{ totpShow ? '隐藏' : '显示' }}
                     </button>
                     <button
                       type="button"
@@ -1444,40 +1500,20 @@ onBeforeUnmount(() => {
                       :disabled="totpLoading"
                       @click="loadTotp"
                     >
-                      {{ totpLoading ? '刷新中…' : '刷新动态码' }}
+                      {{ totpLoading ? '刷新中…' : '刷新' }}
                     </button>
                   </div>
                 </div>
 
-                <div class="totp-meter">
-                  <div
-                    class="meter"
-                    role="progressbar"
-                    aria-label="动态码剩余时间"
-                    :aria-valuenow="Math.round(totpProgress)"
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                  >
-                    <span
-                      class="meter__fill"
-                      :class="countdownClass(totpRemaining)"
-                      :style="{ width: `${totpProgress}%` }"
-                    ></span>
-                  </div>
-                  <p class="field__hint">
-                    {{ totpStatusText }} · 每 60 秒更新一次
-                  </p>
+                <div class="totp-info">
+                  <p class="totp-info__item">仅本人可见</p>
+                  <p class="totp-info__item">用于高危操作确认</p>
+                  <p class="totp-info__item">查看会写入审计日志</p>
                 </div>
 
                 <p v-if="totpExpired" class="inline-note inline-note--warn" role="status">
-                  动态码已过期，请刷新后再查看。隐藏动态码不会重新请求接口。
+                  动态码已过期，请刷新后再查看。
                 </p>
-
-                <ul class="note-list">
-                  <li>动态码只允许查看本人当前登录码，非本人请求会返回 403。</li>
-                  <li>查看操作会写入审计日志；不要在公共屏幕上长期显示。</li>
-                  <li>动态码由后端按 60 秒窗口生成，倒计时仅用于本地展示。</li>
-                </ul>
               </template>
             </section>
           </template>
@@ -2719,46 +2755,139 @@ onBeforeUnmount(() => {
 
 .totp-stage {
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
+  align-items: flex-start;
+  gap: var(--space-5);
   flex-wrap: wrap;
-  margin-top: var(--space-4);
+  margin-top: var(--space-5);
 }
 
-.totp-code {
-  min-width: 9.5ch;
-  padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-lg);
+.totp-display {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  width: 320px;
+  max-width: 100%;
+}
+
+.totp-digit {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius-lg) * 0.8);
   background: rgba(255, 255, 255, 0.56);
+  backdrop-filter: blur(var(--glass-blur));
   border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 32px rgba(0, 0, 0, 0.1);
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-  font-size: clamp(30px, 6vw, 46px);
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
+  font-size: clamp(20px, 5vw, 32px);
+  font-weight: 700;
   color: var(--color-text-primary);
   user-select: none;
+  animation: surface-enter 0.5s ease-out both;
+  animation-delay: var(--delay, 0ms);
 }
 
-.totp-code.is-hidden {
+@media (prefers-reduced-motion: reduce) {
+  .totp-digit {
+    animation: none;
+  }
+}
+
+.totp-display.totp-expired .totp-digit {
+  opacity: 0.4;
   color: var(--color-text-tertiary);
-  letter-spacing: 0.12em;
+}
+
+.totp-countdown {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.totp-countdown__svg {
+  position: absolute;
+  inset: 0;
+  color: var(--tone-blue);
+  transform: rotate(-90deg);
+}
+
+.totp-countdown__ring {
+  transition: stroke 0.3s ease, stroke-dashoffset 0.25s linear;
+}
+
+.totp-countdown__ring--critical {
+  color: var(--tone-rose);
+}
+
+.totp-countdown__ring--warning {
+  color: var(--tone-amber);
+}
+
+.totp-countdown__text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.totp-countdown__value {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.totp-countdown__unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .totp-actions {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
+  align-self: flex-start;
 }
 
-.totp-meter {
-  max-width: 460px;
-  margin-top: var(--space-4);
+.totp-info {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: rgba(0, 113, 227, 0.06);
+  border-left: 3px solid var(--tone-blue);
+}
+
+.totp-info__item {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  margin: 0;
 }
 
 /* -------------------------------------------------------------------------- */

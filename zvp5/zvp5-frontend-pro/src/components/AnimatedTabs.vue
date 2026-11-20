@@ -18,9 +18,18 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const track = ref<HTMLElement | null>(null)
+const indicator = ref<HTMLElement | null>(null)
 const tabElements = new Map<string, HTMLElement>()
-const indicator = ref({ left: 0, width: 0, ready: false })
+const indicatorState = ref({ left: 0, width: 0, ready: false })
+const isDragging = ref(false)
+const dragOffset = ref(0)
+
 let observer: ResizeObserver | null = null
+let dragStartX = 0
+let dragStartLeft = 0
+let dragStartWidth = 0
+let dragMoved = false
+let suppressClick = false
 
 function setTabRef(value: string, element: Element | null) {
   if (element instanceof HTMLElement) tabElements.set(value, element)
@@ -31,18 +40,29 @@ function measure() {
   const active = tabElements.get(props.modelValue)
   const host = track.value
   if (!active || !host) {
-    indicator.value.ready = false
+    indicatorState.value.ready = false
     return
   }
-  indicator.value = {
-    left: active.offsetLeft,
-    width: active.offsetWidth,
+
+  // Use getBoundingClientRect for robust measurement
+  const activeRect = active.getBoundingClientRect()
+  const hostRect = host.getBoundingClientRect()
+  // The track itself scrolls: add scrollLeft so the thumb lives in content
+  // coordinates instead of being offset twice when the strip is scrolled.
+  const relativeLeft = activeRect.left - hostRect.left + host.scrollLeft
+
+  indicatorState.value = {
+    left: relativeLeft,
+    width: activeRect.width,
     ready: true
   }
 }
 
 function select(value: string) {
-  if (value !== props.modelValue) emit('update:modelValue', value)
+  if (value !== props.modelValue) {
+    dragOffset.value = 0
+    emit('update:modelValue', value)
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -56,6 +76,63 @@ function onKeydown(event: KeyboardEvent) {
       : (index - 1 + props.items.length) % props.items.length
   const item = props.items[next]
   if (item) select(item.value)
+}
+
+function onPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return
+  const element = event.currentTarget as HTMLElement
+  if (!element) return
+  dragStartX = event.clientX
+  dragStartLeft = indicatorState.value.left
+  dragStartWidth = indicatorState.value.width
+  dragMoved = false
+  suppressClick = false
+  isDragging.value = true
+  element.setPointerCapture?.(event.pointerId)
+}
+
+function onPointerMove(event: PointerEvent) {
+  if (!isDragging.value) return
+  const delta = event.clientX - dragStartX
+  if (Math.abs(delta) > 4) dragMoved = true
+  // Apply damping factor of 0.85
+  dragOffset.value = delta * 0.85
+}
+
+function onPointerUp(event: PointerEvent) {
+  if (!isDragging.value) return
+  const element = event.currentTarget as HTMLElement
+  if (element) {
+    try {
+      element.releasePointerCapture(event.pointerId)
+    } catch {
+      // Silently ignore if pointer was already released
+    }
+  }
+
+  if (dragMoved) {
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('.animated-tabs__tab')
+    const value = target?.dataset.value
+    if (value) {
+      select(value)
+      // The browser retargets click to the original tab after pointer capture;
+      // suppress that click so a drag does not jump back to the old tab.
+      suppressClick = true
+    }
+  }
+
+  isDragging.value = false
+  dragOffset.value = 0
+}
+
+function onTabClick(value: string) {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  select(value)
 }
 
 watch(
@@ -79,6 +156,10 @@ onMounted(() => {
     observer = new ResizeObserver(() => measure())
     observer.observe(track.value)
   }
+  // Wait for fonts to load for accurate measurement
+  if (document.fonts && typeof document.fonts.ready !== 'undefined') {
+    void document.fonts.ready.then(() => measure())
+  }
   window.addEventListener('resize', measure)
 })
 
@@ -93,16 +174,22 @@ onBeforeUnmount(() => {
   <nav
     ref="track"
     class="animated-tabs"
+    :class="{ 'is-dragging': isDragging }"
     role="tablist"
     :aria-label="ariaLabel"
     @keydown="onKeydown"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+    @pointerleave="onPointerUp"
   >
     <span
       class="animated-tabs__indicator"
-      :class="{ 'is-ready': indicator.ready }"
+      :class="{ 'is-ready': indicatorState.ready, 'is-dragging': isDragging }"
       :style="{
-        width: `${indicator.width}px`,
-        transform: `translate3d(${indicator.left}px, 0, 0)`
+        width: `${indicatorState.width}px`,
+        transform: `translate3d(${indicatorState.left + dragOffset}px, 0, 0)`
       }"
       aria-hidden="true"
     />
@@ -110,6 +197,7 @@ onBeforeUnmount(() => {
       v-for="item in items"
       :key="item.value"
       :ref="(element) => setTabRef(item.value, element as Element | null)"
+      :data-value="item.value"
       type="button"
       role="tab"
       class="animated-tabs__tab"
@@ -117,7 +205,7 @@ onBeforeUnmount(() => {
       :aria-selected="item.value === modelValue"
       :tabindex="item.value === modelValue ? 0 : -1"
       :title="item.hint"
-      @click="select(item.value)"
+      @click="onTabClick(item.value)"
     >
       <span class="animated-tabs__label">{{ item.label }}</span>
     </button>
@@ -162,18 +250,27 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-pill);
   background: linear-gradient(
     135deg,
-    rgba(0, 113, 227, 0.19) 0%,
-    rgba(64, 156, 255, 0.12) 100%
+    rgba(255, 255, 255, 0.42) 0%,
+    rgba(255, 255, 255, 0.24) 100%
   );
-  border: 1px solid rgba(0, 113, 227, 0.16);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.68);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.58),
-    0 3px 12px rgba(14, 165, 233, 0.22);
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 2px 8px rgba(14, 165, 233, 0.12);
   opacity: 0;
   pointer-events: none;
   transition:
-    transform 440ms var(--ease-spring),
-    width 440ms var(--ease-spring),
+    transform 420ms cubic-bezier(0.34, 1.46, 0.64, 1),
+    width 420ms cubic-bezier(0.34, 1.46, 0.64, 1),
+    opacity 180ms var(--ease-smooth);
+}
+
+.animated-tabs__indicator.is-dragging {
+  transition:
+    transform 220ms var(--ease-out),
+    width 220ms var(--ease-out),
     opacity 180ms var(--ease-smooth);
 }
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
+const router = useRouter()
 
 // Primary nav link
 const primaryLink = { label: '首页', path: '/' }
@@ -24,6 +25,20 @@ const adminItems = [
 
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
+const pressingItem = ref<string | null>(null)
+
+// Thumb state tracking per nav section
+const navThumbState = ref({ left: 0, top: 0, width: 0, height: 0, ready: false })
+const adminThumbState = ref({ left: 0, top: 0, width: 0, height: 0, ready: false })
+
+// Refs for nav sections
+const navRef = ref<HTMLElement | null>(null)
+const adminRef = ref<HTMLElement | null>(null)
+
+let navObserver: ResizeObserver | null = null
+let adminObserver: ResizeObserver | null = null
+const navLinkRefs = new Map<string, HTMLElement>()
+const adminLinkRefs = new Map<string, HTMLElement>()
 
 function isNavActive(path: string): boolean {
   if (path === '/volunteers/create') return activePath.value.startsWith('/volunteers/create')
@@ -172,8 +187,12 @@ watch(drawerOpen, (isOpen) => {
   setScrollLock(isOpen)
 
   if (isOpen) {
-    nextTick(() => {
+    nextTick(async () => {
       updateFocusTrap()
+      // Wait for fonts to load for accurate measurements
+      await (document as any).fonts?.ready
+      measureNav()
+      measureAdmin()
       // Focus first focusable element in drawer
       const firstFocusable = focusableElements[0]
       if (firstFocusable) {
@@ -190,8 +209,100 @@ watch(drawerOpen, (isOpen) => {
   }
 })
 
+watch(activePath, async () => {
+  // Remeasure thumb positions when active path changes
+  await nextTick()
+  await (document as any).fonts?.ready
+  measureNav()
+  measureAdmin()
+})
+
 // Keep the drawer open when a destination is chosen. It closes only from the
 // explicit close button, Escape, or the overlay.
+
+async function setNavRef(path: string, el: unknown) {
+  if (!(el instanceof HTMLElement)) {
+    navLinkRefs.delete(path)
+  } else {
+    navLinkRefs.set(path, el)
+    measureNav()
+  }
+}
+
+async function setAdminRef(path: string, el: unknown) {
+  if (!(el instanceof HTMLElement)) {
+    adminLinkRefs.delete(path)
+  } else {
+    adminLinkRefs.set(path, el)
+    measureAdmin()
+  }
+}
+
+function measureNav() {
+  if (!navRef.value) return
+
+  // Find the currently active link in nav section
+  const activeLink = Array.from(navLinkRefs.values()).find((el) => {
+    const path = Array.from(navLinkRefs.entries()).find(([, v]) => v === el)?.[0]
+    return path && isNavActive(path)
+  })
+
+  if (activeLink) {
+    const rect = activeLink.getBoundingClientRect()
+    const navRect = navRef.value.getBoundingClientRect()
+    navThumbState.value = {
+      left: rect.left - navRect.left,
+      top: rect.top - navRect.top,
+      width: rect.width,
+      height: rect.height,
+      ready: true
+    }
+  } else {
+    navThumbState.value = { ...navThumbState.value, ready: false }
+  }
+}
+
+function measureAdmin() {
+  if (!adminRef.value) return
+
+  // Find the currently active link in admin section
+  const activeLink = Array.from(adminLinkRefs.values()).find((el) => {
+    const path = Array.from(adminLinkRefs.entries()).find(([, v]) => v === el)?.[0]
+    return path && isNavActive(path)
+  })
+
+  if (activeLink) {
+    const rect = activeLink.getBoundingClientRect()
+    const adminRect = adminRef.value.getBoundingClientRect()
+    adminThumbState.value = {
+      left: rect.left - adminRect.left,
+      top: rect.top - adminRect.top,
+      width: rect.width,
+      height: rect.height,
+      ready: true
+    }
+  } else {
+    adminThumbState.value = { ...adminThumbState.value, ready: false }
+  }
+}
+
+async function handleNavClick(path: string) {
+  pressingItem.value = path
+  // Delay navigation to allow spring animation to start
+  await new Promise((resolve) => setTimeout(resolve, 220))
+  router.push(path)
+  // Keep drawer open after navigation
+  pressingItem.value = null
+}
+
+async function handleAdminClick(path: string) {
+  pressingItem.value = path
+  // Delay navigation to allow spring animation to start
+  await new Promise((resolve) => setTimeout(resolve, 220))
+  router.push(path)
+  // Keep drawer open after navigation
+  pressingItem.value = null
+}
 
 </script>
 
@@ -247,12 +358,23 @@ watch(drawerOpen, (isOpen) => {
       </button>
     </div>
 
-    <nav class="site-nav__drawer-nav">
+    <nav class="site-nav__drawer-nav" ref="navRef">
+      <span
+        class="site-nav__drawer-thumb"
+        :style="{
+          transform: `translate3d(${navThumbState.left}px, ${navThumbState.top}px, 0)`,
+          width: `${navThumbState.width}px`,
+          height: `${navThumbState.height}px`,
+          opacity: navThumbState.ready ? 1 : 0
+        }"
+      />
       <router-link
         :to="primaryLink.path"
         class="site-nav__drawer-link"
-        :class="{ 'is-active': primaryLink.path === activePath }"
+        :class="{ 'is-active': primaryLink.path === activePath, 'is-pressing': pressingItem === primaryLink.path }"
         :aria-current="primaryLink.path === activePath ? 'page' : undefined"
+        :ref="(el) => setNavRef(primaryLink.path, el)"
+        @click.prevent="handleNavClick(primaryLink.path)"
       >
         <span class="site-nav__drawer-link-text">{{ primaryLink.label }}</span>
       </router-link>
@@ -262,8 +384,10 @@ watch(drawerOpen, (isOpen) => {
         :key="item.path"
         :to="item.path"
         class="site-nav__drawer-link"
-        :class="{ 'is-active': isNavActive(item.path) }"
+        :class="{ 'is-active': isNavActive(item.path), 'is-pressing': pressingItem === item.path }"
         :aria-current="isNavActive(item.path) ? 'page' : undefined"
+        :ref="(el) => setNavRef(item.path, el)"
+        @click.prevent="handleNavClick(item.path)"
       >
         <span class="site-nav__drawer-link-text">{{ item.label }}</span>
       </router-link>
@@ -285,16 +409,29 @@ watch(drawerOpen, (isOpen) => {
 
     <div class="site-nav__drawer-section">
       <div class="site-nav__drawer-section-title">管理</div>
-      <router-link
-        v-for="item in adminItems"
-        :key="item.path"
-        :to="item.path"
-        class="site-nav__drawer-link"
-        :class="{ 'is-active': isNavActive(item.path) }"
-        :aria-current="isNavActive(item.path) ? 'page' : undefined"
-      >
-        <span class="site-nav__drawer-link-text">{{ item.label }}</span>
-      </router-link>
+      <div class="site-nav__drawer-admin-wrapper" ref="adminRef">
+        <span
+          class="site-nav__drawer-thumb"
+          :style="{
+            transform: `translate3d(${adminThumbState.left}px, ${adminThumbState.top}px, 0)`,
+            width: `${adminThumbState.width}px`,
+            height: `${adminThumbState.height}px`,
+            opacity: adminThumbState.ready ? 1 : 0
+          }"
+        />
+        <router-link
+          v-for="item in adminItems"
+          :key="item.path"
+          :to="item.path"
+          class="site-nav__drawer-link"
+          :class="{ 'is-active': isNavActive(item.path), 'is-pressing': pressingItem === item.path }"
+          :aria-current="isNavActive(item.path) ? 'page' : undefined"
+          :ref="(el) => setAdminRef(item.path, el)"
+          @click.prevent="handleAdminClick(item.path)"
+        >
+          <span class="site-nav__drawer-link-text">{{ item.label }}</span>
+        </router-link>
+      </div>
     </div>
   </div>
 
@@ -522,8 +659,42 @@ watch(drawerOpen, (isOpen) => {
   outline-offset: -2px;
 }
 
+/* Drawer thumb */
+.site-nav__drawer-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(232, 242, 252, 0.35) 100%
+  );
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  transition:
+    transform cubic-bezier(0.34, 1.46, 0.64, 1) 420ms,
+    width cubic-bezier(0.34, 1.46, 0.64, 1) 420ms;
+  pointer-events: none;
+}
+
+.site-nav__drawer-thumb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--glass-sheen);
+  border-radius: inherit;
+  opacity: 0.22;
+  transform: translateX(-42%);
+  pointer-events: none;
+}
+
 /* Drawer navigation */
 .site-nav__drawer-nav {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -536,6 +707,7 @@ watch(drawerOpen, (isOpen) => {
   font-size: var(--font-size-body);
   font-weight: 500;
   position: relative;
+  z-index: 1;
   border-radius: var(--radius-md);
   background: linear-gradient(
     135deg,
@@ -615,11 +787,7 @@ watch(drawerOpen, (isOpen) => {
 }
 
 .site-nav__drawer-link.is-active {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 113, 227, 0.2) 0%,
-    rgba(255, 255, 255, 0.66) 100%
-  );
+  background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.92);
   color: var(--color-brand);
   font-weight: 600;
@@ -627,28 +795,22 @@ watch(drawerOpen, (isOpen) => {
     inset 0 1px 0 rgba(255, 255, 255, 0.98),
     inset 0 -1px 0 rgba(0, 0, 0, 0.05),
     0 4px 14px rgba(0, 113, 227, 0.12);
+  z-index: 1;
+  position: relative;
 }
 
 .site-nav__drawer-link.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
-  background: var(--color-brand);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-  opacity: 1;
-  transition:
-    height var(--duration-base) var(--ease-spring),
-    opacity var(--duration-base) var(--ease-smooth);
-  z-index: 2;
+  display: none;
 }
 
 .site-nav__drawer-link:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: -2px;
+}
+
+.site-nav__drawer-link.is-pressing {
+  transform: scale(0.96);
+  transition: transform 180ms cubic-bezier(0.34, 1.46, 0.64, 1);
 }
 
 /* Drawer sections */
@@ -659,6 +821,13 @@ watch(drawerOpen, (isOpen) => {
 }
 
 .site-nav__drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.site-nav__drawer-admin-wrapper {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
