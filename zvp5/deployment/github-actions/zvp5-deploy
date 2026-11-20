@@ -329,7 +329,15 @@ backup_backend() {
   local backup="$BACKUP_ROOT/backend-$revision-$deployment_id.tar.gz"
   [[ -d "$BACKEND_DIR" ]] || die "backend directory not found: $BACKEND_DIR"
   ensure_dir "$BACKUP_ROOT" 0750
-  tar -C "$BACKEND_DIR" "${backend_excludes[@]}" -czf "$backup" .
+  # GNU tar 打包运行中的部署目录时，若目录 mtime 在读取间隙变化（服务在
+  # 导出/清理临时文件），会报 "file changed as we read it" 并以退出码 1
+  # 结束。这只是警告：备份产物依然可用于回滚。只容忍 1，IO/介质错误（2+）
+  # 仍然算部署失败。2026-11-20 alpha.2 曾因此被 set -e 误判失败，触发了一次
+  # 本可避免的部署回滚。
+  local rc=0
+  tar -C "$BACKEND_DIR" "${backend_excludes[@]}" -czf "$backup" . || rc=$?
+  (( rc <= 1 )) || die "backend backup tar exited $rc"
+  (( rc == 0 )) || log "WARN: backend backup tar saw the directory change while reading (exit 1); backup kept"
   log "Backend backup: $backup"
 }
 
