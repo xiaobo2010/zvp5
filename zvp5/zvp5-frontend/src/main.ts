@@ -47,6 +47,9 @@ import persistedstate from 'pinia-plugin-persistedstate'
 // 表格展开行进出场动画（捕获期监听，对所有 el-table 生效）
 import { installTableExpandMotion } from './plugins/tableExpandMotion'
 
+// 低 GPU 档探测：mount 之前给 <html> 打 data-low-gpu，样式层同步降载
+import { applyPerfAttributes } from './utils/devicePerf'
+
 const app = createApp(App)
 
 app.use(createPinia().use(persistedstate))
@@ -60,6 +63,10 @@ app.use(i18n as unknown as Plugin)
 app.use(ElLoading)
 
 installTableExpandMotion()
+
+// 必须在 mount 之前：perf-tablet.css 的降载规则依赖 html[data-low-gpu]，
+// 若首帧之后再打属性，低端设备会先按满特效渲染一帧再切换，等于白烧一次合成。
+applyPerfAttributes()
 
 app.mount('#app')
 

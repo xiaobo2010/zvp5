@@ -14,8 +14,13 @@
 html[data-scrolling] .yg-phi::before,
 html[data-scrolling] .yg-phi-velocity,
 html[data-scrolling] .yg-phi-judgment,
+html[data-scrolling] .yg-phi-judgment::before,
 html[data-scrolling] .yg-phi .phi-time__panel::after,
-html[data-scrolling] .yg-phi .el-segmented__item-selected::after {
+html[data-scrolling] .yg-phi .el-segmented__item-selected::after,
+html[data-scrolling] .yg-page-hex .z-hex-grid__layer,
+html[data-scrolling] .yg-page-hex .z-hex-grid__glow-band,
+html[data-scrolling] .phi-time__ticks::before,
+html[data-scrolling] .phi-time__gap-num {
   animation-play-state: paused;
 }
 
@@ -38,4 +43,102 @@ html[data-login-reveal] .yg-phi .el-segmented__item-selected::after,
 html[data-login-reveal] .phi-time__ticks::before,
 html[data-login-reveal] .phi-time__ticks::after {
   animation-play-state: paused;
+}
+
+/* ==========================================================================
+   页面不可见（性能）
+   utils/devicePerf.ts 的 installPageVisibilityFlag 在 document.hidden 期间
+   给 <html> 打 data-page-hidden，回到可见时移除。
+   后台标签页本来就不出帧，但 Android Chrome/WebView 切回前台时会先把累积的
+   动画状态跑一帧；全量冻结（含 ::before/::after 伪元素）可省掉这次合成尖峰。
+   只暂停、不改任何属性值，切回前台时动画从原相位继续，观感无变化。
+   ========================================================================== */
+html[data-page-hidden] *,
+html[data-page-hidden] *::before,
+html[data-page-hidden] *::after {
+  /* 唯一一处 !important：SFC 的 scoped 规则（`.x[data-v-*]`）用 animation 简写
+     重置了 play-state，通用选择器在特异性上压不过它。这里只改播放状态、且仅在
+     标签页不可见时生效，用户看不到任何视觉差异。 */
+  animation-play-state: paused !important;
+}
+
+/* ==========================================================================
+   低 GPU 档（html[data-low-gpu]，由 utils/devicePerf.ts 在 mount 前判定）
+   目标：三星 Galaxy Tab S6 Lite 一类 Mali GPU + 4 GB 内存 + 60Hz 的 Android
+   平板。这里只做「减负载」，不改颜色、尺寸与布局；桌面与新款平板不会命中
+   该属性，视觉与改动前完全一致。
+   取舍原则：
+     * 常驻的全屏合成层（蜂窝漂移、扫光、登录首屏动效）直接停掉——它们没有
+       交互信息，停掉只是少了动感，不会让页面看起来“坏了”；
+     * 竖屏玻璃药丸在滚动期间降低模糊半径（背后是滚动内容，每帧重采样）；
+       横屏玻璃栏背后是静态 shell，保持原样不动。
+   ========================================================================== */
+
+/* 竖屏药丸：滚动中把 backdrop-filter 采样成本压下来（横屏玻璃栏不在此列）。
+   注意 v2 皮肤的模糊挂在 `::before` 玻璃层上，元素本身是 none，必须打到伪元素。 */
+html[data-low-gpu][data-scrolling] .yg-glass-nav--portrait::before {
+  -webkit-backdrop-filter: blur(8px) saturate(160%);
+  backdrop-filter: blur(8px) saturate(160%);
+}
+
+/* 全局蜂窝底纹：扫光层整层隐藏；漂移停掉，避免 4 GB 设备长期保留一张
+   超出视口 160px 的合成层。底纹本身（.z-hex-grid__layer）仍在，静态观感保留。
+   管理台/服务器/AI 页的本地 ZHexGrid 与页面底纹同一套类名，一并覆盖。 */
+html[data-low-gpu] .z-hex-grid__glow-layer {
+  display: none;
+}
+
+/* 组件内是 scoped 选择器（.z-hex-grid--drift .z-hex-grid__layer[data-v-*]），
+   这里用同等级或更高的组合选择器压过它，避免 SFC 样式后注入时把 animation 改回来。 */
+html[data-low-gpu] .z-hex-grid.z-hex-grid--drift .z-hex-grid__layer,
+html[data-low-gpu] .z-hex-grid.z-hex-grid--flicker .z-hex-grid__svg {
+  animation: none;
+}
+
+html[data-low-gpu] .z-hex-grid .z-hex-grid__layer,
+html[data-low-gpu] .z-hex-grid .z-hex-grid__svg,
+html[data-low-gpu] .z-hex-grid .z-hex-grid__glow-band {
+  will-change: auto;
+}
+
+html[data-low-gpu] .yg-page-hex .z-hex-grid__svg {
+  will-change: auto;
+}
+
+/* 登录页首屏：静态底图保留，运动层（瞄准框/扫掠/光斑/碎片/扫描线）全部停掉。
+   首帧最容易掉帧，这里不能给低端设备留持续动画。 */
+html[data-low-gpu] .z-login-backdrop__motion > * {
+  animation: none;
+}
+
+/* 登录揭示过场：整块过场仍按原时序播放，只停掉两条常驻循环
+   （准星环慢转、警示带爬动）——它们会与幕布合成抢带宽，且停在任意相位都成立。 */
+html[data-low-gpu] .login-reveal .login-reveal__reticle,
+html[data-low-gpu] .login-reveal .login-reveal__hazard::before {
+  animation: none;
+  will-change: auto;
+}
+
+/* 时长面板：进度条扫光与故障抖动都是逐帧重绘（background-position / text-shadow），
+   低端设备改为静态；边缘光标脉冲只动 opacity/transform，保留。 */
+html[data-low-gpu] .phi-time__ticks::before,
+html[data-low-gpu] .phi-time__panel .phi-time__gap-num {
+  animation: none;
+}
+
+/* 服务器管理台：危险单元呼吸用 drop-shadow（逐帧重绘），骨架/忙碌扫光用
+   background-position（逐帧重绘），低端设备一律静态；顶部加载条只动 transform，保留。 */
+html[data-low-gpu] .phi-srv-hex--danger,
+html[data-low-gpu] .phi-srv-skel__line,
+html[data-low-gpu] .phi-srv-busy::after {
+  animation: none;
+}
+
+/* Phi 开关拨钮：常驻 glow 动画停掉，并撤掉 will-change，避免保留合成层 */
+html[data-low-gpu] .yg-phi .el-switch__action {
+  will-change: auto;
+}
+
+html[data-low-gpu] .yg-phi .el-switch__action::after {
+  animation: none;
 }

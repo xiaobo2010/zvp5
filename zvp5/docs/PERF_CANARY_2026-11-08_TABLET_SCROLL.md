@@ -93,3 +93,26 @@
   重点页面为活动列表（el-table 长滚动）与首页（装饰动画最密）。
 - 若真机仍有断感，下一梯队候选：`phi-judgment-pulse` 移出暂停名单
   观察对比；el-table 行内重阴影降载（需对照设计确认）。
+
+## 六、低 GPU 档（2026-11-20）
+
+目标不变（P615C/P620 可用）。这轮不改静态设计，只把「每帧都在画」的装饰改成
+静态、按需或组合层动画。
+
+- `utils/devicePerf.ts`：启动时判定一次——UA 命中 `SM-P620 / SM-P615C / SM-P615 /
+  SM-P200 / SM-P355C`，或 Android 且 `deviceMemory <= 4` / `hardwareConcurrency <= 4`；
+  `?perf=low|high` 可现场覆盖。命中后给 `<html>` 打 `data-low-gpu`（mount 之前，
+  避免先满特效渲染一帧）。标签页不可见时打 `data-page-hidden` 冻结全部动画。
+- 低 GPU 档冻结：phi 透视网格（含 mask 扫光）、速度线、判定线脉冲、卡片流光边、
+  分段器/开关掠光、标题/徽章 glitch、蜂窝漂移与扫光、登录揭示的准星/警示带、
+  时长面板扫光、服务器危险单元呼吸。
+- 所有设备通用：
+  - 判定线脉冲从 `box-shadow` 改为 `::before` 的 opacity/scale（不再整条重绘）；
+  - 屏外卡片由 `IntersectionObserver` 打 `data-phi-edge-idle`，暂停其流光边；
+  - 滚动中额外暂停蜂窝扫光与时长面板动画；
+  - 竖屏玻璃药丸滚动期间 blur 18px → 8px（v2 皮肤的模糊挂在 `::before`，
+    选择器必须打到伪元素，否则规则落空）。
+- 验证：`devicePerf` 14 + `phiEdgePhase` 7 + `scrollActivity` 4 用例全绿；
+  `vue-tsc` 0 error；eslint 0 error；按本机 4 GB 约束**未跑全量套件与构建**，
+  构建交给 CI。
+- 真机待验：P620 上登录首屏、首页与活动列表滚动。
