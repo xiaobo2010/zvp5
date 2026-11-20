@@ -76,6 +76,16 @@ const sectionsVisible = ref<Record<string, boolean>>({
   work: false
 })
 
+const currentTime = ref('00:00')
+let clockInterval: ReturnType<typeof setInterval> | null = null
+
+const updateClock = () => {
+  const now = new Date()
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  currentTime.value = `${hours}:${minutes}`
+}
+
 let observer: IntersectionObserver | null = null
 let greetingTimeout: ReturnType<typeof setTimeout> | null = null
 let refreshAnimations: Animation[] = []
@@ -491,6 +501,10 @@ onMounted(() => {
     greetingTimeout = null
   }, 100)
 
+  // The greeting clock is independent from authentication.
+  updateClock()
+  clockInterval = setInterval(updateClock, 1000)
+
   if (!initiallySignedIn) return
 
   void loadPage()
@@ -507,6 +521,10 @@ onUnmounted(() => {
     clearTimeout(greetingTimeout)
     greetingTimeout = null
   }
+  if (clockInterval) {
+    clearInterval(clockInterval)
+    clockInterval = null
+  }
   cancelRefreshAnimations()
 })
 </script>
@@ -522,7 +540,16 @@ onUnmounted(() => {
         </template>
         <template v-else>{{ greetingText }}。</template>
       </h1>
-      <p class="greeting__date">{{ todayLabel }}</p>
+      <div class="greeting__panel">
+        <div class="greeting__clock-orb">
+          <div class="greeting__clock-light"></div>
+          <time class="greeting__clock" :datetime="`${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`">{{ currentTime }}</time>
+        </div>
+        <div class="greeting__info">
+          <p class="greeting__date">{{ todayLabel }}</p>
+          <p class="greeting__now-label">现在</p>
+        </div>
+      </div>
     </section>
 
     <!-- Signed out -->
@@ -714,7 +741,7 @@ onUnmounted(() => {
         </div>
 
         <div class="hours-grid">
-          <div v-for="category in hourCategories" :key="category.key" class="hour-category">
+          <div v-for="(category, index) in hourCategories" :key="category.key" :class="['hour-category', `hour-category--type-${index}`]">
             <div class="hour-category__header">
               <h3 class="hour-category__title">{{ category.title }}</h3>
               <span
@@ -825,10 +852,18 @@ onUnmounted(() => {
   padding: var(--space-8) clamp(20px, 4vw, 40px) var(--space-10);
   max-width: 1200px;
   margin: 0 auto;
+  background:
+    radial-gradient(ellipse 46% 30% at 8% 0%, rgba(0, 122, 255, 0.11), transparent 70%),
+    radial-gradient(ellipse 36% 26% at 94% 3%, rgba(255, 149, 0, 0.1), transparent 72%),
+    radial-gradient(ellipse 44% 32% at 52% 100%, rgba(20, 184, 166, 0.08), transparent 72%),
+    linear-gradient(145deg, rgba(245, 251, 255, 0.72), rgba(255, 252, 248, 0.52));
 }
 
 /* Greeting */
 .greeting {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   margin-bottom: var(--space-7);
   opacity: 0;
   transform: translateY(12px);
@@ -848,14 +883,141 @@ onUnmounted(() => {
   line-height: var(--line-height-tight);
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
-  margin: 0 0 var(--space-2) 0;
+  margin: 0 0 var(--space-4) 0;
   text-wrap: balance;
 }
 
+/* Apple-style "now" panel */
+.greeting__panel {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 18px 10px 10px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.74) 0%,
+    rgba(229, 243, 255, 0.54) 58%,
+    rgba(255, 245, 235, 0.5) 100%
+  );
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 8px 24px rgba(18, 48, 82, 0.08);
+  overflow: hidden;
+}
+
+.greeting__panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 14% 30%, rgba(0, 122, 255, 0.15), transparent 34%),
+    radial-gradient(circle at 90% 62%, rgba(255, 149, 0, 0.12), transparent 38%);
+  pointer-events: none;
+}
+
+.greeting__clock-orb {
+  position: relative;
+  z-index: 2;
+  width: 66px;
+  height: 66px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(213, 236, 255, 0.56));
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  backdrop-filter: blur(10px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.9),
+    0 6px 18px rgba(0, 122, 255, 0.14);
+}
+
+.greeting__clock-light {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 210deg,
+    rgba(0, 122, 255, 0.32),
+    rgba(20, 184, 166, 0.24),
+    rgba(255, 149, 0, 0.26),
+    rgba(0, 122, 255, 0.32)
+  );
+  filter: blur(7px);
+  opacity: 0.6;
+  animation: clockPulse 3.2s ease-in-out infinite;
+}
+
+@keyframes clockPulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.05);
+  }
+}
+
+.greeting__clock {
+  position: relative;
+  z-index: 1;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.greeting__info {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding-right: var(--space-2);
+}
+
 .greeting__date {
-  font-size: var(--font-size-body-large);
+  font-size: var(--font-size-callout);
+  font-weight: 560;
   color: var(--color-text-secondary);
   margin: 0;
+  line-height: 1.3;
+}
+
+.greeting__now-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 122, 255, 0.09);
+  color: var(--tone-blue);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.greeting__now-label::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
 }
 
 /* Identity Row */
@@ -998,7 +1160,10 @@ onUnmounted(() => {
 /* Total Hours - Frosted Glass */
 .total-hours {
   position: relative;
-  background: var(--glass-bg);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(0, 122, 255, 0.14), transparent 42%),
+    radial-gradient(circle at 92% 88%, rgba(255, 149, 0, 0.1), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(235, 247, 255, 0.5) 100%);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
@@ -1008,7 +1173,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  box-shadow: var(--glass-shadow);
+  box-shadow:
+    var(--glass-shadow),
+    0 0 24px rgba(59, 130, 246, 0.1);
   isolation: isolate;
   overflow: hidden;
 }
@@ -1353,6 +1520,34 @@ onUnmounted(() => {
 .hour-category > * {
   position: relative;
   z-index: 1;
+}
+
+/* Type-specific color accents */
+.hour-category--type-0 {
+  --hour-accent: 0, 122, 255;
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.11) 0%, rgba(255, 255, 255, 0.42) 72%);
+  border-color: rgba(0, 122, 255, 0.2);
+}
+
+.hour-category--type-1 {
+  --hour-accent: 13, 148, 136;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.11) 0%, rgba(255, 255, 255, 0.42) 72%);
+  border-color: rgba(20, 184, 166, 0.2);
+}
+
+.hour-category--type-2 {
+  --hour-accent: 245, 158, 11;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(255, 255, 255, 0.42) 72%);
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
+.hour-category--type-0,
+.hour-category--type-1,
+.hour-category--type-2 {
+  box-shadow:
+    inset 3px 0 0 rgba(var(--hour-accent), 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 3px 12px rgba(18, 48, 82, 0.06);
 }
 
 .hour-category__header {
@@ -1907,6 +2102,11 @@ onUnmounted(() => {
   .greeting__skeleton,
   .state-panel {
     animation: none;
+  }
+
+  .greeting__clock-light {
+    animation: none;
+    opacity: 0;
   }
 }
 </style>

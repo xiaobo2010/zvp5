@@ -317,7 +317,7 @@ onUnmounted(() => {
               </svg>
             </button>
             <div v-if="openNoticeId === notice.id" class="notice-body">
-              <p>{{ notice.content }}</p>
+              <div class="notice-markdown" v-html="renderMarkdown(notice.content)"></div>
             </div>
           </li>
         </ul>
@@ -738,8 +738,85 @@ onUnmounted(() => {
   color: var(--color-text-secondary);
 }
 
-.notice-body p {
-  margin: 0;
+.notice-markdown {
+  overflow-wrap: anywhere;
+}
+
+.notice-markdown :deep(p) {
+  margin: 0 0 var(--space-3);
+}
+
+.notice-markdown :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.notice-markdown :deep(h1),
+.notice-markdown :deep(h2),
+.notice-markdown :deep(h3),
+.notice-markdown :deep(h4) {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-snug);
+}
+
+.notice-markdown :deep(h1) { font-size: var(--font-size-headline); }
+.notice-markdown :deep(h2) { font-size: var(--font-size-body-large); }
+.notice-markdown :deep(h3),
+.notice-markdown :deep(h4) { font-size: var(--font-size-body); }
+
+.notice-markdown :deep(ul),
+.notice-markdown :deep(ol) {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.4em;
+}
+
+.notice-markdown :deep(li) {
+  margin: 0.2em 0;
+}
+
+.notice-markdown :deep(blockquote) {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(255, 255, 255, 0.34);
+  border-left: 2px solid var(--color-brand);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.notice-markdown :deep(code) {
+  padding: 2px 5px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 5px;
+  font-size: 0.92em;
+}
+
+.notice-markdown :deep(pre) {
+  margin: var(--space-3) 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  background: rgba(18, 32, 48, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: var(--radius-md);
+}
+
+.notice-markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.notice-markdown :deep(a) {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.notice-markdown :deep(hr) {
+  margin: var(--space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.notice-markdown :deep(strong) {
+  color: var(--color-text-primary);
 }
 
 .empty-state {

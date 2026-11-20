@@ -343,11 +343,12 @@ export async function fetchActivities(
 
   return request<CanaryActivityPage>(
     `/v1/activities${query({
+      mode: 'campus',
       page,
-      size,
-      query: search,
-      type: '',
-      status: ''
+      perpage: size,
+      search,
+      sort: '_id',
+      asc: false
     })}`
   )
 }

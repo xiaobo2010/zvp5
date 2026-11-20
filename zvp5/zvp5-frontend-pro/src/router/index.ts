@@ -31,7 +31,19 @@ const router = createRouter({
       path: '/volunteers/create',
       name: 'volunteer-create',
       component: () => import('@/views/AddVolunteerView.vue'),
-      meta: { title: '添加义工' }
+      meta: { title: '义工登记' }
+    },
+    {
+      path: '/volunteers/create/new',
+      name: 'volunteer-create-new',
+      component: () => import('@/views/ActivityCreateView.vue'),
+      meta: { title: '创建义工' }
+    },
+    {
+      path: '/volunteers/create/:mode(add|modify)',
+      name: 'volunteer-register',
+      component: () => import('@/views/ActivityRegisterView.vue'),
+      meta: { title: '义工登记' }
     },
     {
       path: '/server',

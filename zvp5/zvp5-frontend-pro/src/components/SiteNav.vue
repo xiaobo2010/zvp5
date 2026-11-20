@@ -25,6 +25,11 @@ const adminItems = [
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
 
+function isNavActive(path: string): boolean {
+  if (path === '/volunteers/create') return activePath.value.startsWith('/volunteers/create')
+  return activePath.value === path
+}
+
 // Drag-to-pull state for the collapsed edge handle.
 const dragOffset = ref(0)
 const dragging = ref(false)
@@ -257,8 +262,8 @@ watch(drawerOpen, (isOpen) => {
         :key="item.path"
         :to="item.path"
         class="site-nav__drawer-link"
-        :class="{ 'is-active': item.path === activePath }"
-        :aria-current="item.path === activePath ? 'page' : undefined"
+        :class="{ 'is-active': isNavActive(item.path) }"
+        :aria-current="isNavActive(item.path) ? 'page' : undefined"
       >
         <span class="site-nav__drawer-link-text">{{ item.label }}</span>
       </router-link>
@@ -285,8 +290,8 @@ watch(drawerOpen, (isOpen) => {
         :key="item.path"
         :to="item.path"
         class="site-nav__drawer-link"
-        :class="{ 'is-active': item.path === activePath }"
-        :aria-current="item.path === activePath ? 'page' : undefined"
+        :class="{ 'is-active': isNavActive(item.path) }"
+        :aria-current="isNavActive(item.path) ? 'page' : undefined"
       >
         <span class="site-nav__drawer-link-text">{{ item.label }}</span>
       </router-link>
