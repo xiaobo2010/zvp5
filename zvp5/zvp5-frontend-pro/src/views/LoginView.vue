@@ -49,8 +49,9 @@ async function handleSubmit() {
   try {
     await login(studentId.value.trim(), password.value)
 
-    let redirect = route.query.redirect as string | undefined
-    if (redirect && redirect.startsWith('/')) {
+    const rawRedirect = route.query.redirect
+    const redirect = typeof rawRedirect === 'string' ? rawRedirect : ''
+    if (redirect.startsWith('/')) {
       router.push(redirect)
     } else {
       router.push('/me')
