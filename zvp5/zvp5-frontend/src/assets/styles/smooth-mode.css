@@ -1,0 +1,79 @@
+/* ==========================================================================
+   渲染模式 · 流畅（个人主页 → 快捷操作 → 渲染模式）
+   --------------------------------------------------------------------------
+   精细（默认）不加载任何覆盖，完全等于原版视觉。
+   流畅档只做用户明确要求的减法：
+     1. 关闭卡片边框流光；
+     2. 关闭背部六边形底纹；
+     3. 不再渲染卡片/页头里的 HUD 线条（网格、斜纹、刻度、分隔线、扫描线）。
+   保留：切角轮廓、卡片底面、文字、主色块与所有交互反馈。
+
+   开关落点：src/utils/renderMode.ts 在 mount 前给 <html> 写 data-render-mode。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. 背部六边形
+   全局页面底纹（App.vue 的 .yg-page-hex）与各页本地 ZHexGrid 同一套类名。
+   整层隐藏比「停动画」更彻底：连静态纹理的合成层也不再保留。
+   -------------------------------------------------------------------------- */
+html[data-render-mode='smooth'] .yg-page-hex,
+html[data-render-mode='smooth'] .z-hex-grid {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   2. 卡片边框流光
+   只关 phi 主题给大框加的巡边 ::after；卡片自身的切角边框/底面不在此列。
+   -------------------------------------------------------------------------- */
+html[data-render-mode='smooth'] .yg-phi .el-card::after,
+html[data-render-mode='smooth'] .yg-phi .yg-card::after,
+html[data-render-mode='smooth'] .yg-phi .phi-time__panel::after {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   3. 卡片/页头里的线条
+   3.1 把 phx 线色令牌置空：网格底、斜纹、分格线、行分隔线、表头下边线
+       都从这套令牌派生，一次收口；切角边框和实色底面不受影响。
+   -------------------------------------------------------------------------- */
+html[data-render-mode='smooth'] .phx-user,
+html[data-render-mode='smooth'] .phx-activity,
+html[data-render-mode='smooth'] .profile-page {
+  --phx-line: transparent;
+  --phx-line-soft: transparent;
+}
+
+/* 3.2 页头：去掉 24px 网格 + 右上斜切角线，只留原来的底色渐变 */
+html[data-render-mode='smooth'] .phx-head {
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--phx-accent) 9%, var(--phx-surface)),
+    var(--phx-surface) 58%
+  );
+}
+
+/* 3.3 页头右下角的斜纹块 */
+html[data-render-mode='smooth'] .phx-head::after {
+  display: none;
+}
+
+/* 3.4 描述格左上角的青色刻度（直接用 --phx-accent，不经过线色令牌） */
+html[data-render-mode='smooth'] .phx-panel .yg-descriptions__item::before,
+html[data-render-mode='smooth'] .phx-user .yg-descriptions__item::before,
+html[data-render-mode='smooth'] .phx-activity .yg-descriptions__item::before {
+  display: none;
+}
+
+/* 3.5 全局卡片的左侧强调线 */
+html[data-render-mode='smooth'] .yg-phi .yg-card::before {
+  display: none;
+}
+
+/* 3.6 首页 hero：左侧强调线 + 4px 扫描线底纹 */
+html[data-render-mode='smooth'] .yg-phi .yg-phi-hero::before {
+  display: none;
+}
+
+html[data-render-mode='smooth'] .yg-phi .yg-phi-hero {
+  background: linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel) 62%);
+}

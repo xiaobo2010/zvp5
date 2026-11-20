@@ -116,3 +116,15 @@
   `vue-tsc` 0 error；eslint 0 error；按本机 4 GB 约束**未跑全量套件与构建**，
   构建交给 CI。
 - 真机待验：P620 上登录首屏、首页与活动列表滚动。
+
+## 七、个人主页渲染模式（2026-11-20）
+
+- 个人资料页「快捷操作」新增**渲染模式**：精细（默认，原版）/ 流畅。
+  偏好存在 `localStorage['zvms.renderMode']`，属设备级偏好；mount 前写
+  `<html data-render-mode>`，避免先按精细档画一帧。
+- 流畅档只做用户指定的减法：关闭卡片边框流光、背部六边形底纹
+  （`.yg-page-hex` / `.z-hex-grid`）、卡片与页头里的 HUD 线条
+  （线色令牌置空 + 网格/斜纹/扫描线/刻度隐藏）。切角轮廓、卡片底面、
+  文字与交互反馈保留；精细档零覆盖。
+- 样式入口 `src/assets/styles/smooth-mode.css`，开关逻辑
+  `src/utils/renderMode.ts`；验证：`renderMode` 8 用例 + vue-tsc/eslint。

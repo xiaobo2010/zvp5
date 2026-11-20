@@ -9,6 +9,7 @@ import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
 import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
+import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { Bell, Refresh, SwitchButton, Warning } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -33,6 +34,7 @@ import {
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import { formatDateTime } from '@/utils/dateTime'
+import { normalizeRenderMode, readRenderMode, setRenderMode } from '@/utils/renderMode'
 import {
   emptyNotificationState,
   isNotificationUnread,
@@ -48,6 +50,18 @@ const header = useHeaderStore()
 const router = useRouter()
 const { t, locale } = useI18n()
 const dark = useDark()
+
+/* 渲染模式：精细 = 原版；流畅 = 关边框流光/六边形/卡片线条。
+   偏好存在 localStorage，切换后立即生效（写 <html data-render-mode>）。 */
+const renderMode = ref<string>(readRenderMode())
+const renderModeOptions = computed(() => [
+  { label: t('profile.actions.renderSmooth'), value: 'smooth' },
+  { label: t('profile.actions.renderFine'), value: 'fine' }
+])
+
+function changeRenderMode() {
+  renderMode.value = setRenderMode(normalizeRenderMode(renderMode.value))
+}
 
 header.setHeader(t('nav.profile'))
 
@@ -680,6 +694,19 @@ onMounted(async () => {
                 class="profile-switch-control"
                 :tabindex="-1"
                 aria-hidden="true"
+              />
+            </div>
+          </li>
+          <li class="profile-action-item">
+            <div class="profile-action profile-action--segmented">
+              <span class="profile-action-label">{{ t('profile.actions.renderMode') }}</span>
+              <ElSegmented
+                v-model="renderMode"
+                :options="renderModeOptions"
+                class="profile-segmented"
+                size="small"
+                :aria-label="t('profile.actions.renderMode')"
+                @change="changeRenderMode"
               />
             </div>
           </li>
@@ -1462,8 +1489,8 @@ html[data-theme='light'] .profile-device-dialog-input {
   transition: color 180ms var(--phx-ease);
 }
 
-/* 右侧斜角箭头（开关与退出不显示） */
-.profile-action:not(.profile-action--switch, .profile-action--danger)::after {
+/* 右侧斜角箭头（开关、渲染模式与退出不显示） */
+.profile-action:not(.profile-action--switch, .profile-action--segmented, .profile-action--danger)::after {
   content: '';
   flex: 0 0 auto;
   width: 8px;
@@ -1501,7 +1528,7 @@ html[data-theme='light'] .profile-device-dialog-input {
   transform: translateX(3px);
 }
 
-.profile-action:not(.profile-action--switch, .profile-action--danger):hover::after {
+.profile-action:not(.profile-action--switch, .profile-action--segmented, .profile-action--danger):hover::after {
   color: var(--phx-accent);
   transform: translateX(3px) rotate(45deg);
 }
@@ -1552,6 +1579,51 @@ html[data-theme='light'] .profile-device-dialog-input {
 .profile-action--switch:active :deep(.el-switch__action) {
   transform: scale(0.8);
   transition-duration: 120ms;
+}
+
+/* 渲染模式：整行只承载标签 + 两档切换，点击热区在分段控件上 */
+.profile-action--segmented {
+  justify-content: flex-start;
+  cursor: default;
+}
+
+.profile-action--segmented:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+.profile-action--segmented:active {
+  background: transparent;
+}
+
+.profile-action--segmented:hover .profile-action-label {
+  transform: none;
+}
+
+.profile-segmented {
+  --el-segmented-color: var(--phx-muted);
+  --el-segmented-bg-color: transparent;
+  --el-segmented-item-selected-color: var(--phx-accent);
+  --el-segmented-item-selected-bg-color: color-mix(in srgb, var(--phx-accent) 14%, transparent);
+  --el-segmented-item-hover-color: var(--phx-ink);
+  --el-segmented-item-hover-bg-color: color-mix(in srgb, var(--phx-accent) 9%, transparent);
+  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--phx-accent) 16%, transparent);
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--phx-line-soft);
+}
+
+.profile-segmented :deep(.el-segmented__item),
+.profile-segmented :deep(.el-segmented__item-selected) {
+  border-radius: 0;
+}
+
+.profile-segmented :deep(.el-segmented__item-selected) {
+  background: linear-gradient(var(--phx-accent), var(--phx-accent)) left bottom / 100% 2px no-repeat;
+  box-shadow: none;
 }
 
 /* 退出登录：单独成块的高危按钮，红色斜纹 + 双切角 */
@@ -1807,7 +1879,7 @@ html[data-theme='light'] .profile-device-dialog-input {
     transform: none;
   }
 
-  .profile-action:not(.profile-action--switch, .profile-action--danger):hover::after {
+  .profile-action:not(.profile-action--switch, .profile-action--segmented, .profile-action--danger):hover::after {
     transform: rotate(45deg);
   }
 }

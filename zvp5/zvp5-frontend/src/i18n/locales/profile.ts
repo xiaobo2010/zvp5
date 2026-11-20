@@ -20,6 +20,9 @@ export const zhCN = {
     title: '快捷操作',
     changePassword: '修改密码',
     darkMode: '深色模式',
+    renderMode: '渲染模式',
+    renderSmooth: '流畅',
+    renderFine: '精细',
     about: '关于',
     logout: '退出登录'
   },
