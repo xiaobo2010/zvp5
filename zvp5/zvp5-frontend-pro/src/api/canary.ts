@@ -270,9 +270,27 @@ export interface CreateActivityInput {
 }
 
 export async function createActivity(input: CreateActivityInput): Promise<string> {
+  // `/api/v1/activities` 同时挂着 v2 与 v3 路由，v2 的 POST 先注册；
+  // 因此这里按 v2 的完整 Activity 契约提交，避免最小 v3 请求体被 v2 校验拒绝。
+  const now = new Date().toISOString()
+  const user = currentUserId()
   const result = await request<{ id?: string }>('/v1/activities', {
     method: 'POST',
-    body: JSON.stringify(input)
+    body: JSON.stringify({
+      _id: '000000000000000000000000',
+      type: input.type,
+      name: input.name,
+      description: input.description,
+      date: now,
+      createdAt: now,
+      updatedAt: now,
+      appointee: user,
+      approver: 'authority',
+      creator: user,
+      status: 'pending',
+      place: '',
+      origin: 'other'
+    })
   })
   if (!result?.id) throw new CanaryApiError('活动创建成功但未返回 ID。', 500)
   return result.id
