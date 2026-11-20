@@ -241,7 +241,7 @@ export function fetchGroupName(groupId: string): Promise<string> {
   if (!groupId) return Promise.resolve('')
   const cached = groupNameCache.get(groupId)
   if (cached) return cached
-  const pending = request<CanaryGroup>(`/groups/${groupId}`)
+  const pending = request<CanaryGroup>(`/v1/groups/${groupId}`)
     .then((group) => group?.name ?? '')
     .catch(() => '')
   groupNameCache.set(groupId, pending)
@@ -394,7 +394,7 @@ async function encryptCredential(publicKey: string, password: string): Promise<s
 export async function login(id: string, password: string): Promise<CanaryLoginResult> {
   const publicKey = await request<string>('/cert?type=public&method=RSA')
   const credential = await encryptCredential(publicKey, password)
-  const result = await request<CanaryLoginResult>('/users/auth', {
+  const result = await request<CanaryLoginResult>('/v1/users/auth', {
     method: 'POST',
     body: JSON.stringify({
       id,
