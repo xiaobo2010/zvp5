@@ -11,6 +11,7 @@ import {
   isLoggedIn
 } from '@/api/canary'
 import type { CanaryNotice, CanaryUser } from '@/api/canary'
+import { renderMarkdown } from '@/utils/markdown'
 
 const router = useRouter()
 
