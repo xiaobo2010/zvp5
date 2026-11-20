@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { currentRoles } from '@/api/permissions'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,13 +16,31 @@ const drawerItems = [
   { label: '关于', path: '/about' }
 ]
 
-// Admin menu items
-const adminItems = [
+// Admin menu items. `currentRoles()` is read through a route tick so the drawer
+// updates immediately after login without a full reload.
+const allAdminItems = [
   { label: '添加义工', path: '/volunteers/create' },
   { label: '服务器管理', path: '/server' },
   { label: '平台管理', path: '/manage' },
   { label: 'AI 网关', path: '/ai' }
 ]
+const roleTick = ref(0)
+watch(
+  () => route.fullPath,
+  () => {
+    roleTick.value += 1
+  }
+)
+const roles = computed(() => {
+  roleTick.value
+  return currentRoles()
+})
+const adminItems = computed(() =>
+  allAdminItems.filter((item) => {
+    if (item.path === '/server') return roles.value.includes('admin')
+    return roles.value.includes('admin') || roles.value.includes('department')
+  })
+)
 
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
@@ -220,21 +239,19 @@ watch(activePath, async () => {
 // Keep the drawer open when a destination is chosen. It closes only from the
 // explicit close button, Escape, or the overlay.
 
-async function setNavRef(path: string, el: unknown) {
+function setNavRef(path: string, el: unknown) {
   if (!(el instanceof HTMLElement)) {
     navLinkRefs.delete(path)
   } else {
     navLinkRefs.set(path, el)
-    measureNav()
   }
 }
 
-async function setAdminRef(path: string, el: unknown) {
+function setAdminRef(path: string, el: unknown) {
   if (!(el instanceof HTMLElement)) {
     adminLinkRefs.delete(path)
   } else {
     adminLinkRefs.set(path, el)
-    measureAdmin()
   }
 }
 
@@ -405,9 +422,9 @@ async function handleAdminClick(path: string) {
       </router-link>
     </div>
 
-    <div class="site-nav__drawer-divider" />
+    <div v-if="adminItems.length" class="site-nav__drawer-divider" />
 
-    <div class="site-nav__drawer-section">
+    <div v-if="adminItems.length" class="site-nav__drawer-section">
       <div class="site-nav__drawer-section-title">管理</div>
       <div class="site-nav__drawer-admin-wrapper" ref="adminRef">
         <span

@@ -409,11 +409,42 @@ onUnmounted(() => {
 }
 
 .glass-material {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-xl);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-material::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--glass-highlight);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.glass-material::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--glass-sheen);
+  border-radius: inherit;
+  opacity: 0.42;
+  transform: translateX(-38%);
+  pointer-events: none;
+}
+
+.glass-material > * {
+  position: relative;
+  z-index: 1;
 }
 
 .refraction-band {

@@ -888,8 +888,16 @@ watch(
   activeTab,
   (tab) => {
     if (tab === 'totp') {
-      if (!totpData.value && !totpError.value && !totpLoading.value) void loadTotp()
-      else if (totpData.value) startTotpTimer()
+      const expired = !!totpData.value && totpData.value.exp * 1000 <= Date.now()
+      if (!totpData.value) {
+        if (!totpError.value && !totpLoading.value) void loadTotp()
+      } else if (expired) {
+        // Returning to the panel after the window closed: fetch a fresh code
+        // instead of leaving the user stuck on an expired one.
+        if (!totpLoading.value) void loadTotp()
+      } else {
+        startTotpTimer()
+      }
     } else {
       stopTotpTimer()
     }

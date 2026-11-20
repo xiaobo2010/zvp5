@@ -74,41 +74,67 @@ const pagerDragging = ref(false)
 const pagerDragOffset = ref(0)
 const pagerPages = new Map<number, HTMLElement>()
 let pagerObserver: ResizeObserver | null = null
+let pagerObserverHost: HTMLElement | null = null
 let pagerStartX = 0
 let pagerMoved = false
 let pagerSuppressClick = false
 
+// Inline `:ref` callbacks run on every patch. They must stay side-effect free:
+// measuring here would write `pagerThumbState`, schedule another render and
+// re-enter this callback forever (the "click 校园活动 and freeze" bug).
 function setPagerPageRef(page: number, el: unknown) {
-  if (!(el instanceof HTMLElement)) {
-    pagerPages.delete(page)
-  } else {
+  if (el instanceof HTMLElement) {
     pagerPages.set(page, el)
-    measurePager()
+  } else {
+    pagerPages.delete(page)
   }
+}
+
+function ensurePagerObserver() {
+  const host = pagerTrackRef.value
+  if (!host || typeof ResizeObserver === 'undefined') {
+    if (pagerObserver) {
+      pagerObserver.disconnect()
+      pagerObserver = null
+      pagerObserverHost = null
+    }
+    return
+  }
+  if (pagerObserver && pagerObserverHost === host) return
+  pagerObserver?.disconnect()
+  pagerObserver = new ResizeObserver(() => measurePager())
+  pagerObserverHost = host
+  pagerObserver.observe(host)
 }
 
 function measurePager() {
   const host = pagerTrackRef.value
-  if (host && !pagerObserver && typeof ResizeObserver !== 'undefined') {
-    pagerObserver = new ResizeObserver(() => measurePager())
-    pagerObserver.observe(host)
-  }
   const active = pagerPages.get(activePage.value)
   if (!host || !active) {
-    pagerThumbState.value = { ...pagerThumbState.value, ready: false }
+    if (pagerThumbState.value.ready) {
+      pagerThumbState.value = { ...pagerThumbState.value, ready: false }
+    }
     return
   }
   const hostRect = host.getBoundingClientRect()
   const activeRect = active.getBoundingClientRect()
-  pagerThumbState.value = {
-    left: activeRect.left - hostRect.left + host.scrollLeft,
-    width: activeRect.width,
-    ready: true
+  const left = activeRect.left - hostRect.left + host.scrollLeft
+  const width = activeRect.width
+  const previous = pagerThumbState.value
+  // Skip identical writes: a fresh object identity would retrigger rendering.
+  if (
+    previous.ready &&
+    Math.abs(previous.left - left) < 0.5 &&
+    Math.abs(previous.width - width) < 0.5
+  ) {
+    return
   }
+  pagerThumbState.value = { left, width, ready: true }
 }
 
 async function syncPager(animate = true) {
   await nextTick()
+  ensurePagerObserver()
   measurePager()
   if (animate && !reduceMotion()) {
     const el = pagerThumbRef.value
@@ -151,21 +177,19 @@ function onPagerPointerUp(event: PointerEvent) {
       // already released
     }
   }
-  if (pagerMoved) {
-    const target = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>('.pagination-page')
-    const page = Number(target?.dataset.page ?? '')
-    pagerDragging.value = false
-    pagerDragOffset.value = 0
-    if (Number.isInteger(page) && page > 0) {
-      pagerSuppressClick = true
-      handlePageChange(page)
-    }
-    return
-  }
+
+  // Pointer capture can retarget the click to the track, so resolve the page
+  // under the pointer on pointerup whether or not the user dragged.
+  const target = document
+    .elementFromPoint(event.clientX, event.clientY)
+    ?.closest<HTMLElement>('.pagination-page')
+  const page = Number(target?.dataset.page ?? '')
   pagerDragging.value = false
   pagerDragOffset.value = 0
+  if (Number.isInteger(page) && page > 0) {
+    pagerSuppressClick = true
+    handlePageChange(page)
+  }
 }
 
 function handlePagerClick(page: number) {
@@ -177,8 +201,16 @@ function handlePagerClick(page: number) {
 }
 
 watch(activePage, () => void syncPager())
+watch(totalPages, () => void syncPager(false))
 watch(
   () => visiblePages.value.join(','),
+  () => void syncPager(false)
+)
+// The pager is v-if'd on these flags. Re-measure whenever it (re)appears, e.g.
+// after a refresh with an unchanged page count, when the refs are new nodes;
+// when it disappears, syncPager also clears `ready` and the observer.
+watch(
+  () => totalPages.value > 1 && !loading.value && !error.value && !unauthenticated.value && !needsClass.value,
   () => void syncPager(false)
 )
 
@@ -258,21 +290,36 @@ async function loadActivities() {
   listLoading.value = true
   error.value = ''
   try {
-    const result = await fetchActivities(
-      activeTab.value,
-      activePage.value,
-      pageSize,
-      appliedSearch.value,
-      classId.value
-    )
-    if (seq !== requestSeq) return
-    activities.value = (result.activities ?? []).map(mapActivity)
-    totalActivities.value = result.total ?? activities.value.length
+    // A page jump can leave us past the last page (e.g. switching scopes while
+    // on page 3). Correct it with at most one extra request in a bounded loop
+    // instead of recursing, so a stale `total` can never loop forever.
+    let targetPage = activePage.value
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await fetchActivities(
+        activeTab.value,
+        targetPage,
+        pageSize,
+        appliedSearch.value,
+        classId.value
+      )
+      if (seq !== requestSeq) return
+      const rows = result.activities ?? []
+      const total = result.total ?? rows.length
+      const pageCount = Math.ceil(total / pageSize)
+      if (attempt === 0 && pageCount > 0 && targetPage > pageCount) {
+        targetPage = pageCount
+        activePage.value = pageCount
+        continue
+      }
+      activities.value = rows.map(mapActivity)
+      totalActivities.value = total
+      break
+    }
+    // If the total shrank again between the two attempts, clamp silently
+    // instead of issuing another request (never re-fetch in a loop).
     const pageCount = Math.ceil(totalActivities.value / pageSize)
     if (pageCount > 0 && activePage.value > pageCount) {
       activePage.value = pageCount
-      void loadActivities()
-      return
     }
     if (
       selectedActivity.value &&
@@ -407,10 +454,6 @@ function closeActivity() {
 
 onMounted(() => {
   void bootstrap()
-  if (pagerTrackRef.value && typeof ResizeObserver !== 'undefined') {
-    pagerObserver = new ResizeObserver(() => measurePager())
-    pagerObserver.observe(pagerTrackRef.value)
-  }
   window.addEventListener('resize', measurePager)
   if (document.fonts?.ready) void document.fonts.ready.then(() => syncPager(false))
   void syncPager(false)
@@ -419,6 +462,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   pagerObserver?.disconnect()
   pagerObserver = null
+  pagerObserverHost = null
+  pagerPages.clear()
   window.removeEventListener('resize', measurePager)
 })
 </script>

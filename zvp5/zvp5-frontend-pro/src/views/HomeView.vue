@@ -51,6 +51,10 @@ const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四
 const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
+// 后端单页最多 100 条。首页只展示前 3 条，但待审核/最近记录是在前端按状态
+// 过滤的，只取 6 条会把较早的待审核活动漏掉，所以这里取满一页再切片。
+const ACTIVITY_FETCH_LIMIT = 100
+
 const homeRef = ref<HTMLElement | null>(null)
 const hoursPanelRef = ref<HTMLElement | null>(null)
 const totalValueRef = ref<HTMLElement | null>(null)
@@ -321,7 +325,7 @@ async function loadPage() {
     const [profileResult, timeResult, activitiesResult] = await Promise.allSettled([
       fetchProfile(),
       fetchTime(),
-      fetchActivities('mine', 1, 6, '')
+      fetchActivities('mine', 1, ACTIVITY_FETCH_LIMIT, '')
     ])
 
     if (sequence !== loadSequence || disposed) return
@@ -463,7 +467,7 @@ async function handleHoursRefresh() {
   try {
     const [timeResult, activitiesResult] = await Promise.allSettled([
       fetchTime(),
-      fetchActivities('mine', 1, 6, '')
+      fetchActivities('mine', 1, ACTIVITY_FETCH_LIMIT, '')
     ])
 
     if (disposed) return

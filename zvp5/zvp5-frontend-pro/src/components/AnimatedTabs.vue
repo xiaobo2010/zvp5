@@ -26,9 +26,8 @@ const dragOffset = ref(0)
 
 let observer: ResizeObserver | null = null
 let dragStartX = 0
-let dragStartLeft = 0
-let dragStartWidth = 0
-let dragMoved = false
+// Sticky until the next pointerdown/keydown: the browser may dispatch the
+// retargeted click after pointerup, possibly in a later task.
 let suppressClick = false
 
 function setTabRef(value: string, element: Element | null) {
@@ -66,6 +65,12 @@ function select(value: string) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+    // Keyboard activation fires a click without a preceding pointerdown, so a
+    // stale pointer-click suppression must not swallow it.
+    suppressClick = false
+    return
+  }
   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
   const index = props.items.findIndex((item) => item.value === props.modelValue)
   if (index < 0) return
@@ -80,51 +85,91 @@ function onKeydown(event: KeyboardEvent) {
 
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
-  const element = event.currentTarget as HTMLElement
+  const element = event.currentTarget as HTMLElement | null
   if (!element) return
   dragStartX = event.clientX
-  dragStartLeft = indicatorState.value.left
-  dragStartWidth = indicatorState.value.width
-  dragMoved = false
   suppressClick = false
   isDragging.value = true
-  element.setPointerCapture?.(event.pointerId)
+  try {
+    element.setPointerCapture?.(event.pointerId)
+  } catch {
+    // Capture is best-effort; pointerup still works without it.
+  }
 }
 
 function onPointerMove(event: PointerEvent) {
   if (!isDragging.value) return
   const delta = event.clientX - dragStartX
-  if (Math.abs(delta) > 4) dragMoved = true
   // Apply damping factor of 0.85
   dragOffset.value = delta * 0.85
 }
 
-function onPointerUp(event: PointerEvent) {
-  if (!isDragging.value) return
-  const element = event.currentTarget as HTMLElement
-  if (element) {
-    try {
-      element.releasePointerCapture(event.pointerId)
-    } catch {
-      // Silently ignore if pointer was already released
+function releaseCapture(element: HTMLElement | null, pointerId: number) {
+  if (!element) return
+  try {
+    if (typeof element.hasPointerCapture === 'function' && element.hasPointerCapture(pointerId)) {
+      element.releasePointerCapture(pointerId)
+    } else {
+      element.releasePointerCapture?.(pointerId)
     }
+  } catch {
+    // Silently ignore if pointer was already released
   }
+}
 
-  if (dragMoved) {
-    const target = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>('.animated-tabs__tab')
-    const value = target?.dataset.value
-    if (value) {
-      select(value)
-      // The browser retargets click to the original tab after pointer capture;
-      // suppress that click so a drag does not jump back to the old tab.
-      suppressClick = true
-    }
-  }
+/**
+ * Resolve the tab sitting under the given viewport coordinates.
+ *
+ * Pointer capture retargets the native `click` to the capturing `<nav>`, so a
+ * plain tap never reaches the button's `@click`. Selection therefore has to be
+ * resolved from the pointer position instead of relying on the click event.
+ */
+function tabValueAtPoint(x: number, y: number): string {
+  if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return ''
+  const hit = document.elementFromPoint(x, y)
+  const tab = hit instanceof Element ? hit.closest<HTMLElement>('.animated-tabs__tab') : null
+  if (!tab) return ''
+  // Guard against other tab strips rendered on the same page.
+  if (track.value && !track.value.contains(tab)) return ''
+  return tab.dataset.value ?? ''
+}
 
+function resetDrag() {
   isDragging.value = false
   dragOffset.value = 0
+}
+
+function onPointerUp(event: PointerEvent) {
+  if (!isDragging.value) return
+  const element = event.currentTarget as HTMLElement | null
+  releaseCapture(element, event.pointerId)
+
+  // Select the tab under the pointer whether or not the drag moved: a normal
+  // click must always switch tabs even though capture ate the native click.
+  const value = tabValueAtPoint(event.clientX, event.clientY)
+  if (value) {
+    // Suppress the follow-up click: capture can retarget it to <nav> or back to
+    // the previously-active tab, which would undo the selection above.
+    suppressClick = true
+    select(value)
+  }
+
+  resetDrag()
+}
+
+function onPointerCancel(event: PointerEvent) {
+  if (!isDragging.value) return
+  releaseCapture(event.currentTarget as HTMLElement | null, event.pointerId)
+  resetDrag()
+}
+
+function onPointerLeave(event: PointerEvent) {
+  if (!isDragging.value) return
+  const element = event.currentTarget as HTMLElement | null
+  // With capture active the pointer is still logically inside; leave only
+  // matters as a safety net when capture is unavailable.
+  if (element?.hasPointerCapture?.(event.pointerId)) return
+  resetDrag()
 }
 
 function onTabClick(value: string) {
@@ -181,8 +226,8 @@ onBeforeUnmount(() => {
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
-    @pointerleave="onPointerUp"
+    @pointercancel="onPointerCancel"
+    @pointerleave="onPointerLeave"
   >
     <span
       class="animated-tabs__indicator"

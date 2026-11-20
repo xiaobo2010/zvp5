@@ -34,10 +34,11 @@ import {
   type SettingUpdateItem
 } from '@/api/admin-manage'
 import { renderMarkdown } from '@/utils/markdown'
+import { currentRoles } from '@/api/permissions'
 
 const router = useRouter()
 
-const tabs: AnimatedTabItem[] = [
+const allTabs: AnimatedTabItem[] = [
   { value: 'overview', label: '概览', hint: '平台实时计数与近期动态' },
   { value: 'users', label: '用户', hint: '只读用户目录' },
   { value: 'groups', label: '班级', hint: '只读班级与权限组' },
@@ -49,9 +50,16 @@ const tabs: AnimatedTabItem[] = [
   { value: 'attachments', label: '附件', hint: '只读附件清单' }
 ]
 
-const activeTab = ref('overview')
+const isAdminUser = currentRoles().includes('admin')
+const tabs = computed(() =>
+  isAdminUser
+    ? allTabs
+    : allTabs.filter((tab) => ['users', 'groups'].includes(tab.value))
+)
+
+const activeTab = ref(isAdminUser ? 'overview' : 'users')
 const currentTabLabel = computed(
-  () => tabs.find((item) => item.value === activeTab.value)?.label ?? ''
+  () => tabs.value.find((item) => item.value === activeTab.value)?.label ?? ''
 )
 
 function goBack() {

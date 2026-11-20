@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isLoggedIn } from '@/api/canary'
+import { hasAnyRole } from '@/api/permissions'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -13,13 +15,13 @@ const router = createRouter({
       path: '/me',
       name: 'profile',
       component: () => import('@/views/ProfileView.vue'),
-      meta: { title: '个人主页' }
+      meta: { title: '个人主页', requiresAuth: true }
     },
     {
       path: '/volunteers',
       name: 'volunteers',
       component: () => import('@/views/VolunteerListView.vue'),
-      meta: { title: '义工列表' }
+      meta: { title: '义工列表', requiresAuth: true }
     },
     {
       path: '/login',
@@ -31,43 +33,43 @@ const router = createRouter({
       path: '/volunteers/create',
       name: 'volunteer-create',
       component: () => import('@/views/AddVolunteerView.vue'),
-      meta: { title: '义工登记' }
+      meta: { title: '义工登记', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
       path: '/volunteers/create/new',
       name: 'volunteer-create-new',
       component: () => import('@/views/ActivityCreateView.vue'),
-      meta: { title: '创建义工' }
+      meta: { title: '创建义工', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
       path: '/volunteers/create/:mode(add|modify)',
       name: 'volunteer-register',
       component: () => import('@/views/ActivityRegisterView.vue'),
-      meta: { title: '义工登记' }
+      meta: { title: '义工登记', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
       path: '/server',
       name: 'server',
       component: () => import('@/views/ServerView.vue'),
-      meta: { title: '服务器管理' }
+      meta: { title: '服务器管理', requiresAuth: true, roles: ['admin'] }
     },
     {
       path: '/manage',
       name: 'manage',
       component: () => import('@/views/ManageView.vue'),
-      meta: { title: '平台管理' }
+      meta: { title: '平台管理', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
       path: '/ai',
       name: 'ai-gateway',
       component: () => import('@/views/AiGatewayView.vue'),
-      meta: { title: 'AI 网关' }
+      meta: { title: 'AI 网关', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
       path: '/notifications',
       name: 'notifications',
       component: () => import('@/views/NotificationsView.vue'),
-      meta: { title: '通知' }
+      meta: { title: '通知', requiresAuth: true }
     },
     {
       path: '/about',
@@ -87,6 +89,19 @@ const router = createRouter({
     }
   ],
   scrollBehavior: () => ({ top: 0 })
+})
+
+router.beforeEach((to) => {
+  const auth = isLoggedIn()
+  const roles = Array.isArray(to.meta.roles) ? (to.meta.roles as string[]) : []
+  if (to.meta.requiresAuth && !auth) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  if (roles.length > 0) {
+    if (!auth) return { path: '/login', query: { redirect: to.fullPath } }
+    if (!hasAnyRole(...roles)) return { path: '/404', replace: true }
+  }
+  return true
 })
 
 router.afterEach((to) => {

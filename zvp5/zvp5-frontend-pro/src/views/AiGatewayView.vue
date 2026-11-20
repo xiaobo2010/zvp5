@@ -5,6 +5,7 @@ import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import AiChatPanel from '@/components/AiChatPanel.vue'
 import { ApiError, readableError } from '@/api/http'
+import { currentRoles } from '@/api/permissions'
 import {
   fetchAiHealth,
   fetchAiKeys,
@@ -27,7 +28,7 @@ import {
 
 const router = useRouter()
 
-const tabs: AnimatedTabItem[] = [
+const allTabs: AnimatedTabItem[] = [
   { value: 'chat', label: '对话', hint: '直接调用网关模型' },
   { value: 'overview', label: '概览', hint: '网关健康与容量' },
   { value: 'keys', label: '密钥', hint: '只读凭据清单（不含密钥）' },
@@ -39,9 +40,16 @@ const tabs: AnimatedTabItem[] = [
   { value: 'monitor', label: '监控', hint: '近 7 天调用聚合' }
 ]
 
+const isAdminUser = currentRoles().includes('admin')
+const tabs = computed(() =>
+  isAdminUser
+    ? allTabs
+    : allTabs.filter((tab) => ['chat', 'quota'].includes(tab.value))
+)
+
 const activeTab = ref('chat')
 const currentTabLabel = computed(
-  () => tabs.find((item) => item.value === activeTab.value)?.label ?? ''
+  () => tabs.value.find((item) => item.value === activeTab.value)?.label ?? ''
 )
 
 function goBack() {
