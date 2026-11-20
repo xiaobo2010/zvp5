@@ -12,6 +12,10 @@
 2. **写操作只出提案**。模型对写工具的调用不落任何业务数据；执行只发生在用户确认之后。
 3. **确认必须双人**。运维写工具（文件/DB/SSH）在确认时校验**另一位管理员**的 6 位动态码；
    operator 与 approver 不得是同一人（`util.dual_auth.require_dual_auth` 已保证）。
+   **例外（2026-11-20）**：`db_insert` / `db_update` / `db_delete` 作用于义工业务表
+   （`services/agent/policy.py` 的 `VOLUNTEER_TABLES`：活动、成员、时长、指标、组织）
+   时降为本人确认，不再要求动态码；其余表仍按平台数据处理。文件写、`ssh_exec`、
+   `db_ddl` 永不豁免——它们是平台操作。
 4. **批准的就是执行的**。`ARGS_PAYLOAD` 全文 + `ARGS_HASH` 覆盖全文；确认时重算失败 → 409，
    一次都不执行。`ARGS_SUMMARY` 只用于展示，永不参与校验。
 5. **权限每次现查**。工具执行前（读）与提案确认时（写）都要走 `ops_auth.ensure_system_admin`：
@@ -74,8 +78,11 @@
 {"totp_code":"123456"}
 ```
 
-- `totp_code`：工具 `requires_dual_auth=true` 时必填（运维写工具全部为 true；活动域两条写工具保持 false，
-  不改变既有行为）。缺失 → 422 `AI_AGENT_TOTP_REQUIRED`；格式错 → 422；码错/已被用/无第二管理员 → 403/409，
+- `totp_code`：工具 `requires_dual_auth=true` 时必填（运维写工具默认 true；活动域两条写工具保持 false，
+  不改变既有行为）。**义工业务表的 DML 提案为 false**：`db_insert` / `db_update` / `db_delete`
+  的 `table` 命中 `services/agent/policy.py::VOLUNTEER_TABLES` 时，仍需本人确认但不要求动态码；
+  非义工表（`USERS` / `AI_*` / `BAN_*` / `SYSTEM_SETTINGS` 等）与 `db_ddl` 仍为 true。
+  缺失 → 422 `AI_AGENT_TOTP_REQUIRED`；格式错 → 422；码错/已被用/无第二管理员 → 403/409，
   与 `dual_auth` 的既有语义逐字一致（翻译 `DualAuthError`）。
 - **30 分钟授权缓存**：首次校验通过后，同一 `operator` 的同一 `action`（`agent_write`）在
   `DUAL_AUTH_CACHE_TTL_SECONDS`（默认 1800，`0` = 关闭）内**不必再输码**；此时候略 `totp_code` 直接 200。
@@ -115,10 +122,11 @@ class ToolDef:
     prepare: Callable[..., Awaitable["ProposalDraft"]] | None = None  # 仅写：生成预览/摘要
     guard: Callable[[dict], Awaitable[None]] | None = None            # 现查库权限闸（运维工具必填）
     dual_auth_action: str | None = None         # 非空 → 确认时必须 TOTP
+    dual_auth_exempt: Callable[[dict], bool] | None = None  # 命中 → 本条提案免 TOTP
 ```
 
-- 注册校验：`READ` 不得声明 `prepare`/`dual_auth_action`；`WRITE` 必须有 `impl`；
-  运维写工具必须同时有 `prepare` 与 `guard`。
+- 注册校验：`READ` 不得声明 `prepare`/`dual_auth_action`/`dual_auth_exempt`；`WRITE` 必须有 `impl`；
+  运维写工具必须同时有 `prepare` 与 `guard`；`dual_auth_exempt` 只能与 `dual_auth_action` 同时出现。
 - `tool_specs()` 改为**按 name 排序**输出（缓存前缀稳定，不随注册顺序漂移）。
 - 现有 10 个活动域工具签名不变；`prepare=None` 时提案预览回落
   `{"kind":"args","args":{...}}`，`requires_dual_auth=false`。

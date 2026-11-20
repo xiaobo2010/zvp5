@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -740,6 +741,105 @@ async def test_dual_auth_success_records_the_approver(monkeypatch, env, dual_too
     assert row["status"] == "confirmed"
     assert row["approver_oid"] == fake.approver
     assert row["confirmed_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# 义工业务表 DML 的豁免
+# ---------------------------------------------------------------------------
+
+
+def _db_update_tool(monkeypatch):
+    """把真实 ``db_update`` 换成只在内存里执行的副本（保留注册表里的豁免谓词）。"""
+    real = TOOLS["db_update"]
+    executed: list[dict] = []
+
+    async def impl(_user, table, key, values):
+        executed.append({"table": table, "key": key, "values": values})
+        return {"kind": "row_update", "table": table}
+
+    async def prepare(_user, table, key, values):
+        return proposal.ProposalDraft(
+            summary=f"更新 {table} 1 行",
+            preview={"kind": "row_update", "table": table, "key": key, "values": values},
+        )
+
+    async def guard(_user):
+        return None
+
+    tool = replace(real, impl=impl, prepare=prepare, guard=guard)
+    monkeypatch.setitem(TOOLS, "db_update", tool)
+    return tool, executed
+
+
+async def _propose_db_update(tool, table: str) -> dict:
+    return await proposal.propose(
+        user=ADMIN,
+        tool=tool,
+        arguments={
+            "table": table,
+            "key": {"OID": "64b7f0c2e1a3b4c5d6e7fc01"},
+            "values": {"NAME": "x"},
+        },
+        request_id="req-volunteer-db",
+        round_no=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_volunteer_table_dml_skips_dual_auth(monkeypatch, env) -> None:
+    tool, executed = _db_update_tool(monkeypatch)
+    fake = FakeDualAuth()
+    monkeypatch.setattr(dual_auth, "require_dual_auth", fake)
+
+    created = await _propose_db_update(tool, "ACTIVITIES")
+
+    assert created["requires_dual_auth"] is False
+    result = await proposal.confirm(oid=created["oid"], user=ADMIN)
+
+    assert result["status"] == "confirmed"
+    assert result["approver_oid"] is None
+    assert executed == [
+        {"table": "ACTIVITIES", "key": {"OID": "64b7f0c2e1a3b4c5d6e7fc01"}, "values": {"NAME": "x"}}
+    ]
+    # 豁免路径根本不碰动态码校验。
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["activities", ' "Activities" ', "GROUPS"])
+async def test_volunteer_table_name_is_normalized(monkeypatch, env, table) -> None:
+    tool, _executed = _db_update_tool(monkeypatch)
+    created = await _propose_db_update(tool, table)
+    assert created["requires_dual_auth"] is False
+
+
+@pytest.mark.asyncio
+async def test_platform_table_dml_still_requires_dual_auth(monkeypatch, env) -> None:
+    tool, executed = _db_update_tool(monkeypatch)
+    fake = FakeDualAuth()
+    monkeypatch.setattr(dual_auth, "require_dual_auth", fake)
+
+    created = await _propose_db_update(tool, "USERS")
+
+    assert created["requires_dual_auth"] is True
+    with pytest.raises(AgentError) as excinfo:
+        await proposal.confirm(oid=created["oid"], user=ADMIN)
+
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.code == "AI_AGENT_TOTP_REQUIRED"
+    assert executed == []
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_list_fails_closed_when_arguments_are_corrupt(monkeypatch, env) -> None:
+    tool, _executed = _db_update_tool(monkeypatch)
+    await _propose_db_update(tool, "ACTIVITIES")
+    env[0].rows[0]["args_payload"] = "{not-json"
+
+    items = await proposal.list_mine(user=ADMIN, status="proposed", limit=20)
+
+    assert items[0]["requires_dual_auth"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,11 @@ class ToolDef:
     ``dual_auth_action``
         非空 → 确认这条提案时必须由**另一位**管理员提供 6 位动态码，
         ``action`` 原样传给 ``util.dual_auth.require_dual_auth``。
+    ``dual_auth_exempt``
+        仅对声明了 ``dual_auth_action`` 的写工具生效：``exempt(arguments)`` 为真
+        时这条提案**不要求**动态码（仍要本人确认、仍过 guard）。它解决的是
+        「工具同名、风险不同」的场景——``db_update`` 改义工业务表与改平台账号表
+        不该共用一个授权强度。谓词抛异常按「不免除」处理（fail closed）。
     ``direct``
         ``True`` → 这个写工具**直接执行**：过完 ``permission`` / ``guard`` /
         参数收敛后立即调用 ``impl``，不建提案、不要 TOTP。仅限
@@ -105,7 +110,24 @@ class ToolDef:
     prepare: Callable[..., Awaitable["ProposalDraft"]] | None = None
     guard: Callable[[dict], Awaitable[None]] | None = None
     dual_auth_action: str | None = None
+    dual_auth_exempt: Callable[[dict], bool] | None = None
     direct: bool = False
+
+    def requires_dual_auth(self, arguments: dict) -> bool:
+        """这条**具体**提案是否需要另一位管理员的动态码。
+
+        工具没有 ``dual_auth_action`` → 不需要；声明了豁免谓词且命中 → 不需要。
+        谓词是普通函数，参数来自解析后的提案 JSON——脏数据/字段缺失不应该把
+        确认流程变成 500，因此任何异常都回落成「需要」（fail closed）。
+        """
+        if not self.dual_auth_action:
+            return False
+        if self.dual_auth_exempt is None:
+            return True
+        try:
+            return not bool(self.dual_auth_exempt(arguments))
+        except Exception:  # noqa: BLE001 - 豁免判定失败按仍需要双人码处理
+            return True
 
 
 def _always(user: dict) -> bool:
@@ -171,11 +193,21 @@ def _register(tool: ToolDef) -> ToolDef:
             raise ValueError(
                 f"tool {tool.name}: read tools cannot declare dual_auth_action"
             )
+        if tool.dual_auth_exempt is not None:
+            raise ValueError(
+                f"tool {tool.name}: read tools cannot declare dual_auth_exempt"
+            )
         if tool.direct:
             raise ValueError(f"tool {tool.name}: only write tools can be direct")
     else:
         if tool.impl is None:
             raise ValueError(f"tool {tool.name}: write tools must declare impl")
+        if tool.dual_auth_exempt is not None and tool.dual_auth_action is None:
+            # 豁免是双人授权的一个分支，不是「不需要授权」：没有 action 的
+            # 写工具本来就不校验 TOTP，再声明豁免只会误导后来者。
+            raise ValueError(
+                f"tool {tool.name}: dual_auth_exempt needs dual_auth_action"
+            )
         if tool.direct:
             # 「直接执行」是绕过人工确认的能力，三条同时成立才允许：
             # 名字在模块级清单里、有现查库的 guard（否则只靠 token 里的 per

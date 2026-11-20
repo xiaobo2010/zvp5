@@ -142,6 +142,20 @@ def test_write_tools_are_previewed_proposals_with_dual_auth() -> None:
         assert tool.guard is ops_auth.ensure_system_admin, name
 
 
+def test_volunteer_table_dml_exempts_dual_auth_only_for_business_tables() -> None:
+    """DML 的授权强度按目标表分层：义工表免码，平台表与 DDL 仍要双人。"""
+    for name in ("db_insert", "db_update", "db_delete"):
+        tool = _tool(name)
+        assert tool.requires_dual_auth({"table": "ACTIVITIES"}) is False, name
+        assert tool.requires_dual_auth({"table": " activities "}) is False, name
+        assert tool.requires_dual_auth({"table": "USERS"}) is True, name
+        assert tool.requires_dual_auth({}) is True, name
+
+    assert _tool("db_ddl").requires_dual_auth({"sql": "DROP TABLE X"}) is True
+    assert _tool("fs_write").requires_dual_auth({"path": "/etc/x"}) is True
+    assert _tool("ssh_exec").requires_dual_auth({"command": "id"}) is True
+
+
 def test_platform_write_tools_are_direct_but_guarded() -> None:
     """直接执行的写工具：有 guard、无提案预览、无 TOTP，且都在允许清单里。"""
     for name in PLATFORM_WRITE:

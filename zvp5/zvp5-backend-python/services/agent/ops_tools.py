@@ -7,7 +7,9 @@
    工具层只做「形状翻译 + 参数收敛」。
 2. **写操作只出提案**。每个写工具都带 ``prepare``（人读摘要 + 结构化预览）与
    ``dual_auth_action="agent_write"``（确认时必须另一位管理员的 6 位动态码），
-   ``impl`` 只会在用户确认之后被调用。
+   ``impl`` 只会在用户确认之后被调用。``db_insert`` / ``db_update`` /
+   ``db_delete`` 额外声明 ``dual_auth_exempt=policy.volunteer_table_exempt``：
+   义工业务表（活动/成员/时长/指标）的 DML 免动态码，平台表仍然双人。
 3. **权限现查**。``permission=_admin_only`` 只是快速否决；真正的闸是
    ``guard=ops_auth.ensure_system_admin``（每次查库、封禁与权限重算）。
 
@@ -30,7 +32,7 @@ from db.oracle.session import session_scope
 from services import db_content, file_ops, ssh_bridge
 from util.dual_auth import audit_system_op
 
-from . import ops_auth, ssh_exec, tool_impl
+from . import ops_auth, policy, ssh_exec, tool_impl
 from .proposal import ProposalDraft
 from .tool_impl import AgentError
 from .tools import READ, WRITE, ToolDef, _register
@@ -926,7 +928,7 @@ _register(
 _register(
     ToolDef(
         name="db_insert",
-        description="向表中插入一行（列名→值）。写操作：需另一位管理员确认。",
+        description="向表中插入一行（列名→值）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
         kind=WRITE,
         params=_params(
             {
@@ -940,13 +942,14 @@ _register(
         prepare=_prepare_db_insert,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
+        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 
 _register(
     ToolDef(
         name="db_update",
-        description="按主键更新一行（key=主键列，values=要改的列）。写操作：需另一位管理员确认。",
+        description="按主键更新一行（key=主键列，values=要改的列）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
         kind=WRITE,
         params=_params(
             {
@@ -961,13 +964,14 @@ _register(
         prepare=_prepare_db_update,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
+        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 
 _register(
     ToolDef(
         name="db_delete",
-        description="按主键删除一行（key=主键列）。写操作：需另一位管理员确认。",
+        description="按主键删除一行（key=主键列）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
         kind=WRITE,
         params=_params(
             {
@@ -981,6 +985,7 @@ _register(
         prepare=_prepare_db_delete,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
+        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 
