@@ -34,6 +34,7 @@ import {
 import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
 import { loginRoleKey } from '@/utils/loginRole'
 import { installScrollActivityFlag, uninstallScrollActivityFlag } from '@/utils/scrollActivity'
+import { installPageVisibilityFlag } from '@/utils/devicePerf'
 import { warmupFontsWhenIdle } from '@/utils/routePrefetch'
 import { prefetchLoginHome, resetLoginHomePrefetch } from '@/utils/homePrefetch'
 import dayjs from '@/plugins/dayjs'
@@ -565,10 +566,16 @@ watch(offlineReady, () => {
   localStorage.setItem('cached', 'true')
 })
 
+// 页面可见性标志的清理句柄（App 根组件生命周期内只有一份）
+let removePageVisibilityFlag: (() => void) | null = null
+
 onMounted(async () => {
   // 平板滚动流畅性：滚动进行中给 <html> 打 data-scrolling，
   // perf-tablet.css 据此暂停纯装饰动画（详见 utils/scrollActivity.ts）。
   installScrollActivityFlag()
+  // 页面不可见时给 <html> 打 data-page-hidden，perf-tablet.css 冻结全部动画：
+  // 后台标签页本就不出帧，提前暂停可省掉切回前台时补跑动画的那几帧合成。
+  removePageVisibilityFlag = installPageVisibilityFlag()
   // phi 显示字体（Bebas/Rajdhani，font-display: swap）空闲预热：
   // 提前于登录揭示动画与首页大标题首次绘制，消掉 FOUT 文本跳动。
   warmupFontsWhenIdle(['400 1em Bebas', '500 1em Rajdhani', '700 1em Rajdhani'])
@@ -586,6 +593,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   uninstallScrollActivityFlag()
+  removePageVisibilityFlag?.()
+  removePageVisibilityFlag = null
 })
 </script>
 
