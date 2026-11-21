@@ -1,0 +1,292 @@
+const zhCN = {
+  common: {
+    appName: 'ZVP5',
+    appTagline: '义工平台',
+    loading: '加载中',
+    retry: '重新加载',
+    empty: '暂无内容',
+    search: '搜索',
+    all: '全部',
+    back: '返回',
+    close: '关闭',
+    cancel: '取消',
+    confirm: '确认',
+    save: '保存',
+    logout: '退出登录',
+    theme: '外观',
+    language: '语言',
+    light: '浅色',
+    dark: '深色',
+    system: '跟随系统',
+    error: '出了点问题',
+    soon: '建设中',
+    hours: '小时'
+  },
+  nav: {
+    home: '首页',
+    activities: '活动',
+    notifications: '通知',
+    profile: '我的',
+    manage: '管理',
+    server: '运维',
+    ai: 'ZVAgent'
+  },
+  login: {
+    eyebrow: 'ZHENHAI VOLUNTEER',
+    formEyebrow: 'ACCOUNT',
+    formTitle: '登录 ZVP5',
+    title: '把每一次付出，\n认真地记下来。',
+    subtitle: '活动、时长与成长记录，都在一个安静、清楚的地方。',
+    idLabel: '学号',
+    idPlaceholder: '请输入学号',
+    passwordLabel: '密码',
+    passwordPlaceholder: '请输入密码',
+    submit: '登录',
+    submitting: '正在登录',
+    totpHint: '也可以直接输入 6 位动态码',
+    weakPassword: '当前密码强度不足，请尽快在个人中心修改。',
+    deviceTitle: '需要主设备验证',
+    deviceDesc: '这个账号已绑定其他设备。请输入临时密码完成本次登录。',
+    challengeLabel: '设备挑战码',
+    tempPasswordLabel: '临时密码',
+    tempSubmit: '验证并登录',
+    backToPassword: '返回密码登录',
+    invalid: '学号或密码不正确',
+    banned: '该账号已被封禁，请联系管理员',
+    maintenance: '系统正在维护，请稍后再试',
+    unsupported: '当前浏览器不支持安全登录所需的能力'
+  },
+  home: {
+    morning: '早上好',
+    afternoon: '下午好',
+    evening: '晚上好',
+    intro: '今天也一起，把善意变成具体的事。',
+    totalTime: '累计志愿时长',
+    target: '目标',
+    onCampus: '校内',
+    offCampus: '校外',
+    socialPractice: '社会实践',
+    percentile: '年级位置',
+    recent: '最近的活动',
+    viewAll: '查看全部',
+    upcoming: '待处理',
+    noRecent: '还没有活动记录',
+    quickActivities: '浏览活动',
+    quickProfile: '个人中心',
+    quickNotifications: '查看通知'
+  },
+  activities: {
+    title: '活动',
+    subtitle: '找到值得投入的时间。',
+    searchPlaceholder: '搜索活动名称、地点或负责人',
+    empty: '没有找到匹配的活动',
+    members: '参与人数',
+    place: '地点',
+    date: '日期',
+    organizer: '负责人',
+    detail: '活动详情',
+    backToList: '返回活动列表',
+    memberList: '义工名单',
+    noMembers: '还没有登记义工',
+    status: {
+      pending: '待审核',
+      effective: '已生效',
+      refused: '未通过'
+    },
+    type: {
+      'on-campus': '校内',
+      'off-campus': '校外',
+      'social-practice': '社会实践',
+      hybrid: '综合'
+    }
+  },
+  notifications: {
+    title: '通知',
+    subtitle: '来自平台的最新消息。',
+    empty: '暂时没有通知',
+    unread: '未读',
+    markRead: '标为已读'
+  },
+  profile: {
+    title: '个人中心',
+    account: '账号',
+    classLabel: '班级',
+    roles: '身份',
+    appearance: '外观',
+    language: '语言',
+    security: '账号安全',
+    signOut: '退出登录',
+    version: '版本'
+  },
+  role: {
+    student: '学生',
+    secretary: '团支书',
+    department: '学生会',
+    admin: '管理员',
+    system: '系统',
+    auditor: '审计'
+  },
+  maintenance: {
+    title: '系统维护中',
+    desc: '我们正在进行必要的维护。数据是安全的，稍后回来即可。',
+    retry: '检查状态'
+  },
+  placeholder: {
+    title: '这个模块正在重建',
+    desc: '我们正在按计划重做这一部分，完成后会在这里出现。'
+  },
+  notFound: {
+    title: '页面不存在',
+    desc: '你访问的地址可能已经移动或被删除。',
+    back: '回到首页'
+  }
+}
+
+const enUS = {
+  common: {
+    appName: 'ZVP5',
+    appTagline: 'Volunteer Platform',
+    loading: 'Loading',
+    retry: 'Retry',
+    empty: 'Nothing here yet',
+    search: 'Search',
+    all: 'All',
+    back: 'Back',
+    close: 'Close',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
+    save: 'Save',
+    logout: 'Sign out',
+    theme: 'Appearance',
+    language: 'Language',
+    light: 'Light',
+    dark: 'Dark',
+    system: 'System',
+    error: 'Something went wrong',
+    soon: 'In progress',
+    hours: 'hrs'
+  },
+  nav: {
+    home: 'Home',
+    activities: 'Activities',
+    notifications: 'Inbox',
+    profile: 'Profile',
+    manage: 'Manage',
+    server: 'Operations',
+    ai: 'ZVAgent'
+  },
+  login: {
+    eyebrow: 'ZHENHAI VOLUNTEER',
+    formEyebrow: 'ACCOUNT',
+    formTitle: 'Sign in to ZVP5',
+    title: 'Every hour given,\nquietly recorded.',
+    subtitle: 'Activities, hours and growth — in one calm, clear place.',
+    idLabel: 'Student ID',
+    idPlaceholder: 'Enter your student ID',
+    passwordLabel: 'Password',
+    passwordPlaceholder: 'Enter your password',
+    submit: 'Sign in',
+    submitting: 'Signing in',
+    totpHint: 'You can also enter a 6-digit code',
+    weakPassword: 'Your password is weak. Please change it in your profile soon.',
+    deviceTitle: 'Primary device required',
+    deviceDesc: 'This account is bound to another device. Enter a temporary password to continue.',
+    challengeLabel: 'Device challenge',
+    tempPasswordLabel: 'Temporary password',
+    tempSubmit: 'Verify and sign in',
+    backToPassword: 'Back to password',
+    invalid: 'Incorrect student ID or password',
+    banned: 'This account is suspended. Contact an administrator.',
+    maintenance: 'The service is under maintenance. Try again later.',
+    unsupported: 'This browser does not support secure sign-in.'
+  },
+  home: {
+    morning: 'Good morning',
+    afternoon: 'Good afternoon',
+    evening: 'Good evening',
+    intro: 'Turn good intentions into something concrete today.',
+    totalTime: 'Total volunteer hours',
+    target: 'Goal',
+    onCampus: 'On campus',
+    offCampus: 'Off campus',
+    socialPractice: 'Social practice',
+    percentile: 'Grade standing',
+    recent: 'Recent activities',
+    viewAll: 'View all',
+    upcoming: 'To review',
+    noRecent: 'No activity records yet',
+    quickActivities: 'Browse activities',
+    quickProfile: 'Profile',
+    quickNotifications: 'Inbox'
+  },
+  activities: {
+    title: 'Activities',
+    subtitle: 'Find time worth giving.',
+    searchPlaceholder: 'Search by name, place or organizer',
+    empty: 'No activities match your filters',
+    members: 'Participants',
+    place: 'Place',
+    date: 'Date',
+    organizer: 'Organizer',
+    detail: 'Activity detail',
+    backToList: 'Back to activities',
+    memberList: 'Volunteers',
+    noMembers: 'No volunteers registered yet',
+    status: {
+      pending: 'Pending',
+      effective: 'Approved',
+      refused: 'Declined'
+    },
+    type: {
+      'on-campus': 'On campus',
+      'off-campus': 'Off campus',
+      'social-practice': 'Social practice',
+      hybrid: 'Combined'
+    }
+  },
+  notifications: {
+    title: 'Inbox',
+    subtitle: 'The latest from the platform.',
+    empty: 'No notifications yet',
+    unread: 'Unread',
+    markRead: 'Mark as read'
+  },
+  profile: {
+    title: 'Profile',
+    account: 'Account',
+    classLabel: 'Class',
+    roles: 'Roles',
+    appearance: 'Appearance',
+    language: 'Language',
+    security: 'Security',
+    signOut: 'Sign out',
+    version: 'Version'
+  },
+  role: {
+    student: 'Student',
+    secretary: 'Class secretary',
+    department: 'Student union',
+    admin: 'Administrator',
+    system: 'System',
+    auditor: 'Auditor'
+  },
+  maintenance: {
+    title: 'Scheduled maintenance',
+    desc: 'We are doing necessary maintenance. Your data is safe — please come back shortly.',
+    retry: 'Check status'
+  },
+  placeholder: {
+    title: 'This module is being rebuilt',
+    desc: 'We are rebuilding this area as planned. It will appear here when ready.'
+  },
+  notFound: {
+    title: 'Page not found',
+    desc: 'The address may have moved or been removed.',
+    back: 'Back home'
+  }
+}
+
+export const messages = {
+  'zh-CN': zhCN,
+  'en-US': enUS
+}
