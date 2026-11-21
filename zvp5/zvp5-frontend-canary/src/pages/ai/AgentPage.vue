@@ -42,6 +42,7 @@ import ZBadge from '@/shared/ui/ZBadge.vue'
 import ZButton from '@/shared/ui/ZButton.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZField from '@/shared/ui/ZField.vue'
+import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZMarkdown from '@/shared/ui/ZMarkdown.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZProgress from '@/shared/ui/ZProgress.vue'
@@ -55,6 +56,22 @@ const router = useRouter()
 const ui = useUiStore()
 
 const initialSection = typeof route.params.section === 'string' ? route.params.section : ''
+const MAX_INPUT = 20000
+
+async function copyMessage(message: AiMessage): Promise<void> {
+  if (!message.content) return
+  try {
+    await navigator.clipboard.writeText(message.content)
+    copiedOid.value = message.oid
+    if (copyTimer !== null) window.clearTimeout(copyTimer)
+    copyTimer = window.setTimeout(() => {
+      if (copiedOid.value === message.oid) copiedOid.value = ''
+      copyTimer = null
+    }, 1600)
+  } catch {
+    ui.notify(t('common.error'), 'danger')
+  }
+}
 
 /* ------------------------------ 会话列表 ------------------------------ */
 
@@ -393,6 +410,8 @@ async function selectConversation(oid: string): Promise<void> {
     return
   }
 
+  // 切换会话时重新对齐服务端的活动 run，避免离开页面期间开始的任务丢掉进度。
+  await loadActiveRuns()
   const active = activeRuns.value.find((item) => item.conversation_oid === oid)
   if (active) void startRun(active.oid)
 }
@@ -410,6 +429,8 @@ async function createNew(): Promise<void> {
     tab.value = 'active'
     conversations.value = [created, ...conversations.value.filter((item) => item.oid !== created.oid)]
     await selectConversation(created.oid)
+    await nextTick()
+    composerEl.value?.focus()
   } catch (cause) {
     ui.notify(errorText(cause), 'danger')
   } finally {
@@ -637,6 +658,9 @@ async function finalizeRun(runId: string, oid: string, generation: number): Prom
 
 const draft = ref('')
 const sending = ref(false)
+const composerEl = ref<HTMLTextAreaElement | null>(null)
+const copiedOid = ref('')
+let copyTimer: number | null = null
 
 async function send(): Promise<void> {
   if (!conversation.value || runActive.value || sending.value) return
@@ -908,6 +932,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   beginGeneration()
+  if (copyTimer !== null) window.clearTimeout(copyTimer)
 })
 </script>
 
@@ -954,6 +979,7 @@ onBeforeUnmount(() => {
               type="button"
               class="session"
               :class="{ 'is-active': item.oid === selectedOid }"
+              :aria-current="item.oid === selectedOid ? 'true' : undefined"
               @click="selectConversation(item.oid)"
             >
               <span class="session-title">{{ item.title || t('ai.untitled') }}</span>
@@ -1015,7 +1041,15 @@ onBeforeUnmount(() => {
             </div>
           </header>
 
-          <div ref="timelineEl" class="timeline" @scroll="onTimelineScroll">
+          <div
+            ref="timelineEl"
+            class="timeline"
+            role="log"
+            aria-live="off"
+            :aria-label="t('ai.timeline')"
+            :aria-busy="messagesLoading"
+            @scroll="onTimelineScroll"
+          >
             <div v-if="messagesLoading" class="timeline-loading">
               <div v-for="index in 3" :key="index" class="timeline-loading-row">
                 <ZSkeleton width="38%" height="0.9rem" />
@@ -1052,19 +1086,27 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="message.role === 'assistant'">
+                  <div class="author">
+                    <span class="author-mark" aria-hidden="true">Z</span>
+                    <span>ZVAgent</span>
+                  </div>
                   <div class="msg-body">
                     <ZMarkdown :source="message.content" />
                     <details v-if="message.reasoning" class="reasoning">
                       <summary>{{ t('ai.reasoning') }}</summary>
                       <p>{{ message.reasoning }}</p>
                     </details>
-                    <div v-if="message.round_no !== null || message.usage" class="msg-foot">
+                    <div class="msg-foot">
                       <span v-if="message.round_no !== null">
                         {{ t('ai.round', { n: message.round_no }) }}
                       </span>
                       <span v-if="message.usage?.total_tokens" class="num">
                         {{ t('ai.tokenCount', { n: formatTokens(message.usage.total_tokens) }) }}
                       </span>
+                      <button type="button" class="copy" @click="copyMessage(message)">
+                        <ZIcon name="copy" :size="13" />
+                        <span>{{ copiedOid === message.oid ? t('ai.copied') : t('ai.copy') }}</span>
+                      </button>
                     </div>
                   </div>
                 </template>
@@ -1084,7 +1126,7 @@ onBeforeUnmount(() => {
             </template>
 
             <div v-if="runActive || liveText" class="live">
-              <div class="live-head">
+              <div class="live-head" role="status" aria-live="polite">
                 <span class="pulse" aria-hidden="true" />
                 <span>{{ runStatusLabel }}</span>
                 <span v-if="run?.rounds" class="num">
@@ -1102,6 +1144,13 @@ onBeforeUnmount(() => {
                 </ZButton>
               </div>
 
+              <p v-if="runActive && !liveText && !liveToolList.length" class="thinking">
+                <span class="thinking-dots" aria-hidden="true">
+                  <i /><i /><i />
+                </span>
+                <span>{{ t('ai.thinking') }}</span>
+              </p>
+
               <ul v-if="liveToolList.length" class="live-tools">
                 <li
                   v-for="tool in liveToolList"
@@ -1109,16 +1158,32 @@ onBeforeUnmount(() => {
                   :class="`tool-${tool.status}`"
                 >
                   <span class="tool-dot" aria-hidden="true" />
-                  <span class="tool-name">{{ tool.tool_name || t('ai.toolFallback') }}</span>
-                  <ZBadge v-if="tool.tool_kind === 'write'" tone="accent">
-                    {{ t('ai.toolKindWrite') }}
-                  </ZBadge>
-                  <span class="tool-status">{{ toolStatusLabel(tool.status) }}</span>
+                  <div class="tool-main">
+                    <p class="tool-line">
+                      <span class="tool-name">{{ tool.tool_name || t('ai.toolFallback') }}</span>
+                      <ZBadge v-if="tool.tool_kind === 'write'" tone="accent">
+                        {{ t('ai.toolKindWrite') }}
+                      </ZBadge>
+                      <span class="tool-status">{{ toolStatusLabel(tool.status) }}</span>
+                    </p>
+                    <p v-if="tool.args_summary" class="tool-detail">
+                      <span class="tool-detail-label">{{ t('ai.toolArgs') }}</span>
+                      {{ tool.args_summary }}
+                    </p>
+                    <p v-if="tool.result_summary" class="tool-detail">
+                      <span class="tool-detail-label">{{ t('ai.toolResult') }}</span>
+                      {{ tool.result_summary }}
+                    </p>
+                  </div>
                 </li>
               </ul>
 
               <div v-if="liveText" class="live-answer">
                 <ZMarkdown :source="liveText" />
+                <p v-if="runActive" class="writing" aria-hidden="true">
+                  <span class="caret" />
+                  {{ t('ai.generating') }}
+                </p>
               </div>
             </div>
           </div>
@@ -1147,9 +1212,12 @@ onBeforeUnmount(() => {
 
           <form class="composer" @submit.prevent="send">
             <textarea
+              ref="composerEl"
               v-model="draft"
               class="input"
               rows="3"
+              :maxlength="MAX_INPUT"
+              :aria-label="t('ai.inputLabel')"
               :placeholder="runActive ? t('ai.inputPlaceholderRunning') : t('ai.inputPlaceholder')"
               :disabled="runActive || sending"
               @keydown.enter.exact.prevent="send"
@@ -1391,21 +1459,48 @@ onBeforeUnmount(() => {
 }
 
 .session {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.18rem;
   width: 100%;
-  padding: 0.58rem 0.68rem;
+  padding: 0.58rem 0.68rem 0.58rem 0.92rem;
   border-radius: var(--radius-sm);
   color: var(--ink-soft);
   text-align: left;
   transition:
     background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.session:hover {
-  background: var(--surface-sunken);
+.session::before {
+  position: absolute;
+  top: 50%;
+  left: 0.32rem;
+  width: 2px;
+  height: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  content: '';
+  transform: translateY(-50%);
+  transition: height var(--dur-fast) var(--ease-out);
+}
+
+.session.is-active::before {
+  height: 58%;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session:hover {
+    background: var(--surface-sunken);
+    transform: translateX(2px);
+  }
+}
+
+.session:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .session.is-active {
@@ -1534,6 +1629,29 @@ onBeforeUnmount(() => {
   color: var(--ink-faint);
 }
 
+.author {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding-left: 0.1rem;
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+}
+
+.author-mark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
 .msg-body {
   max-width: min(92%, 54rem);
   padding: 0.85rem 1rem;
@@ -1561,10 +1679,36 @@ onBeforeUnmount(() => {
 
 .msg-foot {
   display: flex;
+  align-items: center;
   gap: 0.6rem;
+  flex-wrap: wrap;
   margin-top: 0.5rem;
   font-size: var(--text-2xs);
   color: var(--ink-faint);
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.26rem;
+  margin-left: auto;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-2xs);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.copy:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink-soft);
+}
+
+.copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .tool-msg {
@@ -1617,6 +1761,18 @@ onBeforeUnmount(() => {
   border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--accent-soft) 26%, var(--surface));
+  animation: rise var(--dur-base) var(--ease-out) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .live-head {
@@ -1626,6 +1782,10 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   font-size: var(--text-sm);
   color: var(--ink-soft);
+}
+
+.grow {
+  flex: 1;
 }
 
 .pulse {
@@ -1648,16 +1808,7 @@ onBeforeUnmount(() => {
   }
 }
 
-.live-tools {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.live-tools li {
+.thinking {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1665,15 +1816,96 @@ onBeforeUnmount(() => {
   color: var(--ink-muted);
 }
 
+.thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.thinking-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.35;
+  animation: thinking 1.2s var(--ease-in-out) infinite;
+}
+
+.thinking-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.thinking-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes thinking {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.live-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-tools li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.tool-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.tool-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tool-detail {
+  font-size: var(--text-2xs);
+  line-height: 1.55;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.tool-detail-label {
+  margin-right: 0.22rem;
+  color: var(--ink-faint);
+}
+
 .tool-dot {
+  flex: none;
   width: 7px;
   height: 7px;
+  margin-top: 0.42rem;
   border-radius: 50%;
   background: var(--ink-faint);
 }
 
 .tool-pending .tool-dot {
   background: var(--accent);
+  animation: pulse 1.4s var(--ease-in-out) infinite;
 }
 
 .tool-success .tool-dot {
@@ -1693,6 +1925,34 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
+}
+
+.writing {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+  font-size: var(--text-2xs);
+  color: var(--ink-faint);
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 .proposals {
@@ -1804,6 +2064,31 @@ onBeforeUnmount(() => {
   font-size: var(--text-sm);
   line-height: 1.7;
   color: var(--ink-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live {
+    animation: none;
+  }
+
+  .pulse,
+  .thinking-dots i,
+  .caret,
+  .tool-pending .tool-dot {
+    animation: none;
+  }
+
+  .pulse {
+    opacity: 0.92;
+  }
+
+  .caret {
+    opacity: 0.75;
+  }
+
+  .session:hover {
+    transform: none;
+  }
 }
 
 @media (max-width: 980px) {
