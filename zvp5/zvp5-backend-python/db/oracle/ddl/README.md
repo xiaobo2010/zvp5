@@ -45,7 +45,7 @@ carries one). Fresh instances get it from `V001`; existing instances are
 extended by `V005`.
 
 `FILES` / `FILE_OCR` / `FILE_EVENTS` back the Files/attachments API
-(`docs/FILES_API_DESIGN.md` §3): attachment metadata plus normalised bytes in a
+(`zvp5/docs/FILES_API_DESIGN.md` §3): attachment metadata plus normalised bytes in a
 `BLOB` (continuing the `IMPORTS.CONTENT` precedent), per-file OCR results, and an
 append-only audit trail. `FILES.STATUS` is the single source of truth for the
 serve gate; `OWNER_OID` carries no foreign key (same relaxation as `V006`).
@@ -64,7 +64,7 @@ instances get the table from `V001`; existing instances are extended by `V010`.
 
 Design conventions (JSON→CLOB+`IS JSON`, ObjectId→`VARCHAR2(24)` lowercase hex,
 naive `TIMESTAMP`, deferred `GROUP_INDICATORS` FK) are documented in the header
-of `V001__initial_schema.sql` and in `docs/ADB_SCHEMA_SPEC.md` §1–§4.
+of `V001__initial_schema.sql` and in `zvp5/docs/ADB_SCHEMA_SPEC.md` §1–§4.
 
 `BAN_RULES` / `BAN_RECORDS` back 规则封禁（同学号多设备登录 …）while
 `USERS.BANNED` stays the **only** login gate: the four new `USERS` columns
@@ -83,7 +83,7 @@ INSERT`, so re-running never overwrites admin edits. `ix_app_logs_user_ts`
 from `V001` (same seed); existing instances are extended by `V013`.
 
 `AI_CONVERSATIONS` / `AI_MESSAGES` / `AI_RUNS` back the 持久会话 + 后台任务化智能体
-(`docs/AI_CONVERSATION_DESIGN.md` §2). `AI_CONVERSATIONS` holds one row per session
+(`zvp5/docs/AI_CONVERSATION_DESIGN.md` §2). `AI_CONVERSATIONS` holds one row per session
 (`summary` + `summary_upto_seq` are the compaction watermark; `tokens_*` /
 `context_tokens` / `message_count` are accumulators defaulting to `0`),
 `AI_MESSAGES` holds one row per message (`seq` is per-conversation and unique —

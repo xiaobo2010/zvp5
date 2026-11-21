@@ -16,9 +16,9 @@
    ``permission``），运维工具还要过 ``guard``（现查库）。模型自称「用户已批准」
    不算凭据，数据库里的提案才算。
 6. **双人授权**：``ToolDef.dual_auth_action`` 非空的提案，确认时必须带**另一位**
-   管理员的 6 位动态码（``util.dual_auth.require_dual_auth``）。审批人落
-   ``APPROVER_OID``，执行时间落 ``CONFIRMED_AT``——「谁批的、什么时候执行的」
-   是这张表要回答的问题。
+   管理员的 6 位动态码（``util.dual_auth.require_dual_auth``）；``dual_auth_exempt``
+   命中时（目前只有义工业务表的 DML）降为本人确认。审批人落 ``APPROVER_OID``，
+   执行时间落 ``CONFIRMED_AT``——「谁批的、什么时候执行的」是这张表要回答的问题。
 
 状态机（V034）：``proposed → executing → confirmed | failed``；驳回
 ``proposed → rejected``；过期 ``proposed → expired``。**全部走 CAS**，终态绝不会
@@ -225,7 +225,7 @@ async def propose(
         "args_summary": args_summary,
         "preview": preview,
         "expires_at": _expires_at(created_at).isoformat(sep=" ", timespec="seconds"),
-        "requires_dual_auth": bool(tool.dual_auth_action),
+        "requires_dual_auth": tool.requires_dual_auth(arguments),
     }
 
 
@@ -340,16 +340,18 @@ _DUAL_AUTH_CODES = {
 
 
 async def _require_dual_auth(
-    tool: ToolDef, user: dict, totp_code: str | None
+    tool: ToolDef, user: dict, totp_code: str | None, arguments: dict
 ) -> tuple[str | None, bool]:
     """运维写工具的 TOTP 闸；返回 ``(审批人 oid, 是否命中 30 分钟缓存)``。
 
-    活动域工具没有 ``dual_auth_action`` → ``(None, False)``。
+    活动域工具没有 ``dual_auth_action``、义工业务表 DML 命中
+    ``ToolDef.requires_dual_auth`` 的豁免谓词 → ``(None, False)``，不碰
+    ``util.dual_auth``。
     窗口内的提案**不再要求**动态码（见 ``util.dual_auth.require_dual_auth_cached``）：
     同一 operator 的同一 action 刚被另一位管理员批准过，重复输码只是摩擦。
     """
     action = tool.dual_auth_action
-    if not action:
+    if not action or not tool.requires_dual_auth(arguments):
         return None, False
     code = totp_code.strip() if isinstance(totp_code, str) else ""
     if not code and await dual_auth.cached_approval(user, action=action) is None:
@@ -432,7 +434,9 @@ async def confirm(
 
     # 双人授权在**抢状态之前**：错码不该把提案烧成 executing/failed，用户换一个
     # 正确的码还能继续确认（dual_auth 自带防重放与失败限流）。
-    approver_oid, dual_auth_cached = await _require_dual_auth(tool, user, totp_code)
+    approver_oid, dual_auth_cached = await _require_dual_auth(
+        tool, user, totp_code, kwargs
+    )
 
     repo = backends.get_ai_agent_events_repo()
     claimed = await repo.update_status(
@@ -506,9 +510,43 @@ async def reject(*, oid: str, user: dict) -> dict:
     return {"status": STATUS_REJECTED}
 
 
-def _requires_dual_auth(tool_name: object) -> bool:
-    tool = get_tool(tool_name)
-    return bool(tool is not None and tool.dual_auth_action)
+def _proposal_arguments(row: dict) -> dict | None:
+    """把落库的 ``ARGS_PAYLOAD`` 解析成 dict；拿不到就返回 ``None``。
+
+    列表页只需要 ``table`` 这类顶层字段来决定授权强度，不校验 hash（确认路径
+    才需要）；解析失败按「拿不到」处理，调用方回落成仍然需要双人码。
+
+    run 详情走 ``list_display_for_request`` 的轻量投影（刻意不拉 CLOB），此时
+    ``args_payload`` 整列缺席；用 ``preview.table`` 兜底只影响**展示**——
+    确认路径始终用 hash 校验过的完整参数重算，不会因为预览而放宽。
+    """
+    raw = row.get("args_payload")
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    if raw is None or raw == "":
+        preview = _preview_of(row)
+        table = preview.get("table") if isinstance(preview, dict) else None
+        return {"table": table} if isinstance(table, str) else None
+    return None
+
+
+def _requires_dual_auth(row: dict) -> bool:
+    """这条**已落库**提案是否需要另一位管理员的动态码。
+
+    工具级没有 ``dual_auth_action`` → 不需要；解析不出参数 → 需要（fail closed），
+    旧提案（V034 之前没有 ``ARGS_PAYLOAD``）因此继续按严格口径展示。
+    """
+    tool = get_tool(row.get("tool_name"))
+    if tool is None or not tool.dual_auth_action:
+        return False
+    arguments = _proposal_arguments(row)
+    if arguments is None:
+        return True
+    return tool.requires_dual_auth(arguments)
 
 
 def _preview_of(row: dict) -> dict | None:
@@ -522,13 +560,17 @@ def _preview_of(row: dict) -> dict | None:
     return None
 
 
-def _list_item(row: dict, *, cached_dual_auth: bool = False) -> dict:
+def _list_item(
+    row: dict, *, cached_dual_auth: bool = False, requires_dual_auth: bool | None = None
+) -> dict:
     created_at = row.get("created_at")
     expires_at = (
         _expires_at(created_at).isoformat(sep=" ", timespec="seconds")
         if isinstance(created_at, datetime)
         else None
     )
+    if requires_dual_auth is None:
+        requires_dual_auth = _requires_dual_auth(row)
     return {
         "oid": str(row.get("_id") or row.get("oid") or ""),
         "tool_name": row.get("tool_name"),
@@ -537,7 +579,7 @@ def _list_item(row: dict, *, cached_dual_auth: bool = False) -> dict:
         "preview": _preview_of(row),
         "status": row.get("status"),
         "expires_at": expires_at,
-        "requires_dual_auth": _requires_dual_auth(row.get("tool_name")),
+        "requires_dual_auth": requires_dual_auth,
         "dual_auth_cached": cached_dual_auth,
         "created_at": (
             created_at.isoformat(sep=" ", timespec="seconds")
@@ -561,7 +603,11 @@ async def _dual_auth_flags(user: dict, rows: list[dict]) -> dict[str, bool]:
     ``agent_write``）。按 action 去重后一页最多几次 GET，等价于 MGET 的往返数，
     又不必在服务层复刻 ``dual_auth`` 的键名布局（那样会导致两处键格式漂移）。
     """
-    actions = {action for row in rows if (action := _row_action(row)) is not None}
+    actions = {
+        action
+        for row in rows
+        if _requires_dual_auth(row) and (action := _row_action(row)) is not None
+    }
     if not actions:
         return {}
     return {
@@ -649,8 +695,13 @@ async def list_mine(
     out: list[dict] = []
     for row in keep:
         action = _row_action(row)
+        requires = _requires_dual_auth(row)
         out.append(
-            _list_item(row, cached_dual_auth=bool(action and flags.get(action)))
+            _list_item(
+                row,
+                cached_dual_auth=bool(requires and action and flags.get(action)),
+                requires_dual_auth=requires,
+            )
         )
         if len(out) >= limit:
             break

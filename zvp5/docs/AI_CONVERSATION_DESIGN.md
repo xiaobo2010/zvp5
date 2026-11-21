@@ -4,7 +4,7 @@
 > **v3 修订（2026-10-29）**：模型锁定 / 会话级思考强度 / 归档恢复 / `chat` 会话模式下线 / run 增量消息 `since_msg_seq` / 只读场景 `scene`。见 §12。
 > v2 修订：并入 oracle 评审的 P0×3 / P1×4 / P2×4（并发唯一性、watchdog 语义、删除门禁、
 > 压缩在飞重建、压缩计费豁免、消息原子配对、幂等边界）。
-> 关联：`docs/AI_GATEWAY_API.md`、`docs/AI_AGENT_OPS_DESIGN.md`。
+> 关联：`zvp5/docs/AI_GATEWAY_API.md`、`zvp5/docs/AI_AGENT_OPS_DESIGN.md`。
 
 ---
 
@@ -243,7 +243,7 @@ COMMIT
 | `AI_RUN_NOT_CANCELLABLE` | 409 | 已是终态 |
 | `AI_CONTEXT_UNAVAILABLE` | 503 | 压缩所需上游不可用（已降级为截断时**不**抛此码） |
 
-全部进 `docs/AI_GATEWAY_API.md` §11 与前端 `src/api/ai/errors.ts`。
+全部进 `zvp5/docs/AI_GATEWAY_API.md` §11 与前端 `src/api/ai/errors.ts`。
 
 ---
 
@@ -431,7 +431,7 @@ executor 内不碰会话表；`on_round` 由 `run_queue` 提供。
 | B 会话与任务 | `services/ai/conversations.py`、`services/agent/run_queue.py`、`routers/ai_conversations_router.py`、`main.py`、`services/agent/executor.py`、`tests/test_ai_conversations.py`、`tests/test_ai_run_queue.py` | CRUD/SSE/任务/心跳/恢复/取消/删除门禁 | `pytest tests/test_ai_conversations.py tests/test_ai_run_queue.py tests/test_agent_executor.py` |
 | C 上下文压缩 | `services/agent/context.py`、`tests/test_agent_context.py`（**不碰** `services/ai/config.py`：阈值用 `getattr(settings, ...)` 读取，默认值写在 context.py） | 组装/摘要/在飞重建/降级 | `pytest tests/test_agent_context.py tests/test_agent_executor.py` |
 | D 前端 | `types/ai.d.ts`、`src/api/ai/conversations.ts`、`src/stores/aiConversations.ts`、`src/components/ai/**`（含 `ZAiKeysAdmin.vue` 的「公开渠道」徽标）、`src/views/ai/AIHome.vue`、`src/api/ai/errors.ts`、`src/i18n/locales/ai.ts`、新增 spec | 侧栏/消息/上下文/重连；旧端点调用全部切走 | `vue-tsc`、`eslint`、`vitest` |
-| E 渠道 | `misc/seed_channel.py`、`services/ai/config.py`（仅 `AI_STREAM_USAGE_HOSTS` 默认值 + `AI_SILICONFLOW_FREE_MODELS` 读取）、`settings.example.py`、`docs/AI_GATEWAY_API.md` | SiliconFlow 渠道脚本与配置 | 脚本 `--dry-run` + 单测（不连网） |
+| E 渠道 | `misc/seed_channel.py`、`services/ai/config.py`（仅 `AI_STREAM_USAGE_HOSTS` 默认值 + `AI_SILICONFLOW_FREE_MODELS` 读取）、`settings.example.py`、`zvp5/docs/AI_GATEWAY_API.md` | SiliconFlow 渠道脚本与配置 | 脚本 `--dry-run` + 单测（不连网） |
 
 依赖：A → B → C；D 按 §3 契约并行；E 独立。
 

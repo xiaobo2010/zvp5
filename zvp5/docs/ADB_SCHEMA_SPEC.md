@@ -40,6 +40,7 @@
 | SEX | sex | VARCHAR2(16) | NULL | 代码防御式读取 |
 | ELIGIBILITY | eligibility | JSON | NULL | 代码引用 |
 | PAST | past | JSON | NULL | 代码引用 |
+| THEME | — | VARCHAR2(32) | NOT NULL DEFAULT 'canary' | 主题偏好（注册表见 `services/theme_registry.py`），未知值回落 canary |
 
 索引：PK(OID)、UQ(BUSINESS_ID)、IX(CLASS_OID)。
 

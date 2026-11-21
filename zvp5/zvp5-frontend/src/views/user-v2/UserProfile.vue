@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
@@ -10,6 +10,8 @@ import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
+import { ElSelect } from 'element-plus/es/components/select/index.mjs'
+import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { Bell, Refresh, SwitchButton, Warning } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -17,6 +19,7 @@ import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 import { listActive, type NotificationRecord } from '@/api/notifications'
+import api from '@/api'
 import {
   clearMyPrimaryDevice,
   readMyDevice,
@@ -50,6 +53,60 @@ const header = useHeaderStore()
 const router = useRouter()
 const { t, locale } = useI18n()
 const dark = useDark()
+
+/* 主题变体：账号偏好，切换立即生效且同步到后端。 */
+const themeVariant = ref<string>(user.theme)
+const themeOptions = ref<Array<{ label: string; value: string }>>([])
+const themeOptionsLoading = ref(false)
+
+/** 注册表接口不可用时的兜底：只用于让选择器仍有可选项，不参与合法性判定。 */
+const FALLBACK_THEME_OPTIONS = [
+  { label: 'Canary', value: 'canary' },
+  { label: 'Canary 2', value: 'canary2' },
+  { label: 'Canary Pro', value: 'canary-pro' }
+]
+
+async function loadThemeOptions() {
+  themeOptionsLoading.value = true
+  try {
+    const data = await api.theme.listThemes()
+    themeOptions.value = data.items
+      .filter((item) => item.status !== 'deprecated')
+      .map((item) => ({ label: item.label, value: item.id }))
+  } catch {
+    themeOptions.value = FALLBACK_THEME_OPTIONS
+  } finally {
+    // 空列表（老后端/异常数据）同样要有可选项，否则下拉框是空白。
+    if (!themeOptions.value.length) {
+      themeOptions.value = FALLBACK_THEME_OPTIONS
+    }
+    themeOptionsLoading.value = false
+  }
+}
+
+async function changeTheme() {
+  // 先在本设备生效：主题是显示偏好，账号同步失败（后端未升级、断网）不该
+  // 把用户刚选的配色弹回去——那会让人误以为切换功能坏了。
+  user.applyThemePreference(themeVariant.value)
+  try {
+    await api.theme.setMyTheme(themeVariant.value)
+  } catch {
+    // 已写入 localStorage；账号侧这次没记住，下次登录会以服务器值为准。
+    ElMessage({ type: 'warning', message: t('profile.actions.themeSyncFailed') })
+  }
+}
+
+onMounted(() => {
+  loadThemeOptions()
+})
+
+/* 当 store 的 theme 发生改变时（如服务器同步），同步到本地 ref */
+watch(
+  () => user.theme,
+  (newTheme) => {
+    themeVariant.value = newTheme
+  }
+)
 
 /* 渲染模式：精细 = 原版；流畅 = 关边框流光/六边形/卡片线条。
    偏好存在 localStorage，切换后立即生效（写 <html data-render-mode>）。 */
@@ -695,6 +752,27 @@ onMounted(async () => {
                 :tabindex="-1"
                 aria-hidden="true"
               />
+            </div>
+          </li>
+          <li class="profile-action-item">
+            <div class="profile-action profile-action--segmented">
+              <span class="profile-action-label">{{ t('profile.actions.theme') }}</span>
+              <ElSelect
+                v-model="themeVariant"
+                :placeholder="t('profile.actions.themeHint')"
+                class="profile-select"
+                size="small"
+                :aria-label="t('profile.actions.theme')"
+                :loading="themeOptionsLoading"
+                @change="changeTheme"
+              >
+                <ElOption
+                  v-for="option in themeOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </ElSelect>
             </div>
           </li>
           <li class="profile-action-item">
@@ -1614,6 +1692,16 @@ html[data-theme='light'] .profile-device-dialog-input {
   border-radius: 0;
   background: transparent;
   box-shadow: inset 0 -1px 0 var(--phx-line-soft);
+}
+
+/* 主题下拉：和渲染模式一样的行结构，但用下拉框 */
+.profile-select {
+  --el-border-radius-base: 6px;
+  --el-fill-color-blank: color-mix(in srgb, var(--phx-accent) 5%, transparent);
+  --el-text-color-regular: var(--phx-ink);
+  --el-text-color-placeholder: var(--phx-muted);
+  margin-left: auto;
+  width: 160px;
 }
 
 .profile-segmented :deep(.el-segmented__item),

@@ -94,4 +94,4 @@ AI 产品统一称 **ZVAgent**（`/api/ai/*`；「AI 网关」是模块名）。
 - **只读场景**：`routers/ai_scenes_router.py` 提供 `POST /api/ai/scenes/{scene}/runs`（`terminal` / `file_edit`），工具裁到只读集、参考内容脱敏后不落消息表、场景会话 14 天保留；`ban_history` 为新增只读工具。
 - **文件 jail**：`services/file_ops.py:ALLOWED_ROOTS` 只放行 `/www/zvms4`（realpath 后按路径段比较）；`/home` 分支因生产 systemd `ProtectHome=true` 从未生效，2026-11-14 对齐时删除。HTTP 文件管理端点与 agent `fs_*` 共用；越界 403 `FILES_ROOT_FORBIDDEN`。
 
-迁移与保留期见 `docs/database-status.md`；API 契约见仓库根 `docs/AI_GATEWAY_API.md`。
+迁移与保留期见 [数据库状态 API](docs/database-status.md)；AI 契约见 [AI 网关 API](../docs/AI_GATEWAY_API.md)。

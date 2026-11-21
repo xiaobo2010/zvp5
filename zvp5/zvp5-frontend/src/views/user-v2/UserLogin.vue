@@ -492,6 +492,8 @@ async function submitTempPassword() {
     await userStore.setUserInformation(information)
     userStore.shouldResetPassword = false
     userStore.isLogin = true
+    // 临时密码与普通登录安装方式不同，但主题偏好同样要按账号拉一次。
+    await userStore.syncThemeFromServer()
     ElMessage({
       message: t('nav.login.device.tempSession'),
       type: 'success',

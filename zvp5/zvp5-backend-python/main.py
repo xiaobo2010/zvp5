@@ -75,6 +75,7 @@ from routers import (
     system_role_policies_router,
     system_settings_router,
     system_ssh_router,
+    theme_router,
     times_router,
     users_router,
 )
@@ -116,6 +117,7 @@ ROUTERS: tuple[tuple, ...] = (
     (logs_router.router, "/api/logs", ["logs"]),
     (activities_router.router, "/api/v1/activities", None),
     (times_router.router, "/api/v1/times", None),
+    (theme_router.router, "/api/v1/themes", ["themes"]),
     (activity_statistics_router.router, "/api/v1/statistics/activities", None),
     (changelog_router.router, "/api/changelog", ["changelog"]),
     (attachments_router.router, "/api/attachments", ["attachments"]),

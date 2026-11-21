@@ -486,9 +486,14 @@ async def _stream_completion(
                 rate = await model_rates.resolve_rate(model)
                 if ai_usage.has_tokens(tokens):
                     units = ai_usage.af_units(tokens["total_tokens"], rate)
+                elif state["status"] != "success" and state["chars"] == 0:
+                    # 完全没产出（没 usage 且正文 0 字符）的失败不扣额度：上游没
+                    # 交付可计费内容。审计行照写（units=0，token 列仍为 NULL）。
+                    units = 0
                 else:
                     # 没有 usage：token 列留 NULL，units 按字符估算后走**同一个** AF
-                    # 公式。这是「NULL ⟺ 估算」不变式的另一半。
+                    # 公式。这是「NULL ⟺ 估算」不变式的另一半。中途失败但已产出
+                    # 正文的仍按估算收费：上游成本已经发生。
                     units = ai_usage.estimate_af(
                         estimated_prompt_chars, state["chars"], rate
                     )

@@ -96,6 +96,7 @@ declare module 'vue' {
     ZSelectPerson: typeof import('./src/components/form/ZSelectPerson.vue')['default']
     ZSystemAuthDialog: typeof import('./src/components/system/ZSystemAuthDialog.vue')['default']
     ZSystemSettings: typeof import('./src/components/manage/ZSystemSettings.vue')['default']
+    ZThemeStats: typeof import('./src/components/manage/ZThemeStats.vue')['default']
     ZTimeJudge: typeof import('./src/components/activity/ZTimeJudge.vue')['default']
     ZUploadFile: typeof import('./src/components/activity/ZUploadFile.vue')['default']
     ZUserAvatar: typeof import('./src/components/user/ZUserAvatar.vue')['default']

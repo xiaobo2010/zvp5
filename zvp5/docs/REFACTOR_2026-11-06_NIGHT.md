@@ -69,4 +69,4 @@ VITE_API_RACE_BASE=https://zvpapi.xiaobopisces.top/api npm run build
 4. **超大 SFC**：`VolunteerRegister.vue`(4693)、`ZAiChat.vue`(2888)、`ServerDatabase.vue`(2030) 需单独立项拆。
 5. **依赖清理**：`socket.io-client`、`js-md5`、`md5`、`js-yaml`、`jsencrypt`、`bson-objectid`、`universal-cookie`、`vconsole`、`@ckeditor/*`、`@amap/*`、`mockjs`、`oxlint` 等前端 0 引用包（需联网 `pnpm install` 更新 lockfile）；`tqdm` 在后端已无使用者。
 6. **`tasks/data_fix.py`**：文档标注「Mongo 遗留、待接线」，删或接线需产品决策。
-7. **生产部署**：本轮只做了代码与文档，未动线上。后端是 rsync 部署（`/www/zvms4/backend`，无 git），发布前需备份 `backend.bak-<ts>` 并 `systemctl restart zvms4`；nginx 预检/gzip 片段见 `docs/DEPLOY_RACE_GZIP_PREFLIGHT.md`。
+7. **生产部署**：本轮只做了代码与文档，未动线上。后端是 rsync 部署（`/www/zvms4/backend`，无 git），发布前需备份 `backend.bak-<ts>` 并 `systemctl restart zvms4`；nginx 预检/gzip 片段见 `zvp5/docs/DEPLOY_RACE_GZIP_PREFLIGHT.md`。

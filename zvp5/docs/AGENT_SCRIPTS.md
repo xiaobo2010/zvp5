@@ -1,7 +1,7 @@
 # ZVAgent 脚本工具（`script_catalog` / `script_run`）
 
 > 状态：实现已落地（`services/agent/tools_scripts.py`），本文说明**怎么新增一个可被
-> agent 调用的脚本**。基线口径见 `docs/AI_AGENT_OPS_DESIGN.md` §0 的不变量，本文只
+> agent 调用的脚本**。基线口径见 `zvp5/docs/AI_AGENT_OPS_DESIGN.md` §0 的不变量，本文只
 > 讲脚本这一层。
 
 ---

@@ -34,8 +34,8 @@ main 已把 `zvms4-modified-main/` 更名 `zvp5/`，分支仍用旧目录名；
 | `zvp5/deployment/github-actions/README.md` | 运维手册 |
 | `zvp5/zvp5-backend-python/tests/route_utils.py` | 展开 FastAPI `_IncludedRouter` 的测试辅助 |
 
-修改：根 `README.md`（第十节）、`docs/CORS_PREFLIGHT_2026-11-07.md`（事故复核 +
-自动化防回归）、`docs/DEPLOY_API_SPLIT.md`、后端依赖与 lifespan 迁移、前端依赖
+修改：根 `README.md`（现 `docs/history/DEVELOPMENT_LOG.md`，第十节）、`zvp5/docs/CORS_PREFLIGHT_2026-11-07.md`（事故复核 +
+自动化防回归）、`zvp5/docs/DEPLOY_API_SPLIT.md`、后端依赖与 lifespan 迁移、前端依赖
 与锁文件、`SECURITY.md`。
 
 删除：`zvp5/.github/workflows/ci.yml`（嵌套目录里的旧 CI，GitHub 从不执行）、

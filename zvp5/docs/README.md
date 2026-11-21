@@ -1,76 +1,66 @@
-# 义工平台 · 前端约定
+# ZVP5 文档索引
 
-本目录是义工平台前端的设计与实现规范。**所有前端智能体与开发者必须先行阅读
-[《前端设计准则.md》](./前端设计准则.md)，再开始编写任何前端代码。**
+本目录是 ZVP5 的**设计 / 契约 / 运维文档**集合，共 48 个 Markdown 文件（含本索引）。面向使用者的完整文档站维护在独立仓库 [zvp-docs](https://github.com/xiaobo2010/zvp-docs)（在线阅读：<https://xiaobo2010.github.io/zvp-docs/>）；本目录面向仓库内的开发者与维护者。
 
-## 目录结构
+> `前端设计准则.md` 在本目录**只是一个指针**，权威版本在仓库根 [`前端约定/前端设计准则.md`](../../前端约定/前端设计准则.md)。
 
-```
-前端约定/
-├── README.md            ← 本文件（快速开始）
-├── 前端设计准则.md       ← 完整设计准则（色彩/圆角/阴影/弹层/组件规范/检查清单）
-├── demo.html            ← 全组件演示页（浏览器直接打开，可交互预览）
-└── css/
-    ├── main.css         ← 样式总入口（业务页面只需引入这一个文件）
-    ├── design-tokens.css← 设计令牌（颜色/字体/间距/圆角/阴影/动效，唯一事实来源）
-    ├── base.css         ← 基础样式（Reset、排版、栅格、布局骨架、毛玻璃/G2 工具）
-    └── components/
-        ├── buttons.css       ← 按钮、图标按钮、链接、按钮组
-        ├── forms.css         ← 表单与数据录入组件
-        ├── navigation.css    ← 侧边栏、菜单、顶栏、标签页、分页、下拉、步骤条等
-        ├── data-display.css  ← 卡片、表格、列表、标签、头像、日历等展示组件
-        └── feedback.css      ← 弹窗、抽屉、消息、通知、加载、结果页等反馈组件
-```
+## 现行文档（设计 / 契约 / 规范）
 
-## 快速开始
-
-```html
-<!DOCTYPE html>
-<html lang="zh-CN" data-theme="light"><!-- 去掉 data-theme 则跟随系统深浅色 -->
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>义工平台</title>
-  <link rel="stylesheet" href="./css/main.css">
-</head>
-<body>
-  <div class="yg-layout">
-    <aside class="yg-layout__sidebar yg-sidebar yg-liquid-glass">…</aside>
-    <div class="yg-layout__main">
-      <header class="yg-layout__topbar yg-topbar">…</header>
-      <main class="yg-layout__content">…</main>
-    </div>
-  </div>
-</body>
-</html>
-```
-
-- **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
-  不设置则跟随系统。
-- **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
-
-## 给智能体的三条底线
-
-1. **先读准则**：所有视觉决策（颜色、圆角 G2、阴影、弹层不透明规则等）
-   均以《前端设计准则.md》为准。
-2. **只用令牌**：颜色/尺寸/圆角/阴影/动效一律引用 `--yg-*` CSS 变量，
-   禁止硬编码色值与魔法数值，禁止 `!important`。
-3. **类名规范**：前缀 `yg-`，BEM 风格 `yg-block__element--modifier`，
-   状态用 `.is-*`；新增组件必须在准则第 4 章登记类名后方可编写样式。
-
-## 后端设计文档索引
-
-本目录同时收纳后端契约与迁移设计（前端准则见上）：
-
-| 文档 | 内容 |
+| 文档 | 主题 |
 |---|---|
-| `ADB_MIGRATION.md` / `ADB_SCHEMA_SPEC.md` | MongoDB → Oracle ADB 迁移记录与 schema 规格 |
-| `AI_GATEWAY_API.md` | AI 网关：OCR（含 `/api/ai/ocr/file`）、凭据、额度、流水、OpenAI 兼容面、ZVAgent 工具、会话与只读场景 |
-| `AI_CONVERSATION_DESIGN.md` | 会话 / 消息 / run 数据模型与契约（含模型锁定、思考强度、归档、`since_msg_seq`） |
-| `AI_AGENT_OPS_DESIGN.md` | ZVAgent 运维能力（文件 / SSH / 数据库）、写操作提案、`ban_history`、内容安全语义 |
-| `FILES_API_DESIGN.md` | 附件 API，以及系统文件管理的根目录 jail（§13） |
-| `DEVICE_TRACKING_DESIGN.md` | `APP_LOGS` 学海 ID 采集 |
-| `DB_PERF_MAINTENANCE_DESIGN.md` | 数据库性能与保留期维护 |
-| `DEPLOY_ZVP_ORIGIN_2026-11-10.md` | **当前部署口径**：Origin=zvp、同源 /api、DNS 切换与刷新缓存 |
-| `DEPLOY_API_SPLIT.md` | 历史：内容站 / API 直连拆分、CORS、CSP、SSE 与 WebSocket 部署 |
-| `V4242_*` / `REFERENCE_TREES_ALIGNMENT.md` | 阶段契约与参考树对账记录 |
+| [`API_STRUCTURE.md`](./API_STRUCTURE.md) | 后端结构与约定（可直接照抄的实现指南） |
+| [`ADR_API_V1_REVERSIONING.md`](./ADR_API_V1_REVERSIONING.md) | ADR：API 全量归并到 /api/v1，v2/v3 退役 |
+| [`AI_GATEWAY_API.md`](./AI_GATEWAY_API.md) | AI 网关 API 契约 |
+| [`AI_CONVERSATION_DESIGN.md`](./AI_CONVERSATION_DESIGN.md) | AI 会话管理 + 公开渠道契约（冻结稿 v2） |
+| [`AI_AGENT_OPS_DESIGN.md`](./AI_AGENT_OPS_DESIGN.md) | ZVAgent 运维设计（文件 / SSH / 数据库） |
+| [`AGENT_SCRIPTS.md`](./AGENT_SCRIPTS.md) | ZVAgent 脚本工具（script_catalog / script_run） |
+| [`FILES_API_DESIGN.md`](./FILES_API_DESIGN.md) | Files API 设计（照片上传 / 义工单取证） |
+| [`DEVICE_TRACKING_DESIGN.md`](./DEVICE_TRACKING_DESIGN.md) | 设备追踪 / 学海 ID 日志设计（APP_LOGS.XUEHAI_ID） |
+| [`DB_PERF_MAINTENANCE_DESIGN.md`](./DB_PERF_MAINTENANCE_DESIGN.md) | 数据库性能采集 + 清理维护编排设计契约 v1 |
+| [`REDIS_STATE_DESIGN.md`](./REDIS_STATE_DESIGN.md) | Redis 缓存与共享运行态设计 |
+| [`ADB_SCHEMA_SPEC.md`](./ADB_SCHEMA_SPEC.md) | ADB Schema Spec — Mongo(zvms_new) → Oracle ADB |
+| [`V4242_FIXES_AND_OPS_DESIGN.md`](./V4242_FIXES_AND_OPS_DESIGN.md) | v4.2.4-2 契约：缺陷修复 + 系统运维能力 |
+| [`V4242_STAGE2_CONTRACT.md`](./V4242_STAGE2_CONTRACT.md) | v4.2.4-2 Stage 2 契约（冻结） |
+| [`WEBSSH_MULTI_TARGET.md`](./WEBSSH_MULTI_TARGET.md) | Web SSH 多目标（单网关） |
+| [`REDACTION_POLICY.md`](./REDACTION_POLICY.md) | 文档脱敏约定 |
+| [`愚人节UI_普通用户设计稿.md`](./愚人节UI_普通用户设计稿.md) | 普通用户端 UI 设计规范 |
+| [`design/AI_GATEWAY_UI_DRAFT.md`](./design/AI_GATEWAY_UI_DRAFT.md) | AI Gateway UI 视觉重构草案 |
+
+## 历史文档（发布 / 事故 / 审计 / 迁移过程记录，保留可查）
+
+| 文档 | 主题 |
+|---|---|
+| [`ADB_MIGRATION.md`](./ADB_MIGRATION.md) | ADB 迁移计划（MongoDB → Oracle Autonomous Database） |
+| [`AUDIT_2026-11-02.md`](./AUDIT_2026-11-02.md) | 平台终审报告（2026-11-02） |
+| [`AUDIT_2026-11-14_NIGHT_REVIEW.md`](./AUDIT_2026-11-14_NIGHT_REVIEW.md) | 夜间代码审查与优化（2026-11-14 → 11-15） |
+| [`CI_CD_2026-11-08_GITHUB_AUTOMATION.md`](./CI_CD_2026-11-08_GITHUB_AUTOMATION.md) | GitHub 自动化流水线移植与审查 |
+| [`CORS_PREFLIGHT_2026-11-07.md`](./CORS_PREFLIGHT_2026-11-07.md) | CORS 预检延迟调查与修复 |
+| [`OVERHAUL_2026-11-08_ZVP5.md`](./OVERHAUL_2026-11-08_ZVP5.md) | ZVP5 大修总账（2026-11-07 ~ 11-08） |
+| [`PERF_CANARY_2026-11-08_TABLET_SCROLL.md`](./PERF_CANARY_2026-11-08_TABLET_SCROLL.md) | canary 平板滚动流畅性优化 |
+| [`PERF_SECURITY_AUDIT_2026-11-11.md`](./PERF_SECURITY_AUDIT_2026-11-11.md) | canary 前端性能与后端安全审计修复 |
+| [`PRE_PUBLIC_CHECKLIST.md`](./PRE_PUBLIC_CHECKLIST.md) | 转公开仓库检查清单 |
+| [`REFERENCE_TREES_ALIGNMENT.md`](./REFERENCE_TREES_ALIGNMENT.md) | 参考树对齐清单（zvp-latest / zvp5-gitlab → zvp5） |
+| [`RENAME_2026-11-14_ZVMS_TO_ZVP5.md`](./RENAME_2026-11-14_ZVMS_TO_ZVP5.md) | zvms → zvp5 改名记录 |
+| [`REFACTOR_2026-11-06_NIGHT.md`](./REFACTOR_2026-11-06_NIGHT.md) | 夜间重构记录（API 结构 / 性能 / 可维护性） |
+| [`STATIC_ASSET_SPLIT_2026-11-12.md`](./STATIC_ASSET_SPLIT_2026-11-12.md) | 静态资源拆域到 zvpapi |
+| [`ISSUE_2026-11-02_401_TOKEN_EXPIRED.md`](./ISSUE_2026-11-02_401_TOKEN_EXPIRED.md) | 登录 401 Token expired 定位报告 |
+| [`ISSUE_2026-11-04_BACKUP_MISSING_UNIT.md`](./ISSUE_2026-11-04_BACKUP_MISSING_UNIT.md) | 手动备份失败：主机迁移漏 adb-sync 单元 |
+| [`DEPLOY_API_SPLIT.md`](./DEPLOY_API_SPLIT.md) | 内容站 / API 直连拆分部署 |
+| [`DEPLOY_DIRECT_API.md`](./DEPLOY_DIRECT_API.md) | 浏览器直连 API（2026-11-01） |
+| [`DEPLOY_FRONTEND_HTTP2.md`](./DEPLOY_FRONTEND_HTTP2.md) | 前端源站回前端 + HTTP/2 与连接复用 |
+| [`DEPLOY_FRONTEND_TO_BACKEND_HOST.md`](./DEPLOY_FRONTEND_TO_BACKEND_HOST.md) | 前端源站落在后端机（源站变更记录） |
+| [`DEPLOY_FRONTEND_V4.2.2-1.md`](./DEPLOY_FRONTEND_V4.2.2-1.md) | zvp-frontend v4.2.2-1 上线清单 |
+| [`DEPLOY_RACE_GZIP_PREFLIGHT.md`](./DEPLOY_RACE_GZIP_PREFLIGHT.md) | 双路竞速扩展、API gzip 与预检部署要求 |
+| [`DEPLOY_REVPROXY_UNIFIED_2026-11-04.md`](./DEPLOY_REVPROXY_UNIFIED_2026-11-04.md) | 恢复「前端服务器统一反代」拓扑 |
+| [`DEPLOY_ZVP_ORIGIN_2026-11-10.md`](./DEPLOY_ZVP_ORIGIN_2026-11-10.md) | Origin=zvp 部署与缓存刷新规范 |
+| [`DEPLOY_COLDSTART_ZVPAPI_2026-11-11.md`](./DEPLOY_COLDSTART_ZVPAPI_2026-11-11.md) | 冷启动加速：首屏资源改走 zvpapi |
+| [`DEPLOY_2026-11-07_NIGHT.md`](./DEPLOY_2026-11-07_NIGHT.md) | 夜间重构 + TTL 拉长 + canary 同步发布记录 |
+| [`DEPLOY_2026-11-08_V1_CUT.md`](./DEPLOY_2026-11-08_V1_CUT.md) | /api/v1 干净切换 + V052 删列 + canary 重发 |
+| [`DEPLOY_2026-11-12_BACKEND_HARDENING.md`](./DEPLOY_2026-11-12_BACKEND_HARDENING.md) | 后端鲁棒性与性能收口发布记录 |
+| [`DEPLOY_2026-11-12_CANARY_PROMOTE.md`](./DEPLOY_2026-11-12_CANARY_PROMOTE.md) | canary 转正发布记录 |
+| [`DEPLOY_2026-11-13_UI_NOTIFY_BATCH.md`](./DEPLOY_2026-11-13_UI_NOTIFY_BATCH.md) | 前端四项改造 + 通知已读上云发布记录 |
+
+## 文档维护约定
+
+- 新增**设计文档**放本目录，并在上方索引表登记。
+- **过程记录**（发布 / 事故 / 审计 / 迁移）文件名带日期前缀 `YYYY-MM-DD` 主题，归入「历史文档」组。

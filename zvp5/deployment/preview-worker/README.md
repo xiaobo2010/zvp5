@@ -27,7 +27,7 @@ Cloudflare 同区回环——响应带 `Cdn-Loop: cloudflare; loops=1`，状态 
 > CORS 预检会彻底消失（预检是跨域才有的，同源请求浏览器根本不发 OPTIONS）。
 > 落地前需要处理三件事：`Set-Cookie` 去掉 Domain 再下发、WS(`/api/system/ssh/ws`) 用
 > `WebSocketPair` 转发、SSE 直通不缓冲。
-> 背景与实测见 `docs/CORS_PREFLIGHT_2026-11-07.md`。
+> 背景与实测见 `zvp5/docs/CORS_PREFLIGHT_2026-11-07.md`。
 
 ## 自动化（2026-11-14 起）
 

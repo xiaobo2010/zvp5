@@ -149,6 +149,9 @@ users = Table(
     # 主学海设备（V014）: NULL = 未绑定。存量账号保持 NULL，未绑定期间不做设备
     # 校验；一旦绑定，登录只允许来自该设备（或走临时密码）。
     Column("primary_xuehai_id", VARCHAR2(32), nullable=True),
+    # 主题偏好（V055）: 存主题 id 字符串（注册表见 services/theme_registry.py），
+    # 不做外键/CHECK —— 新增主题只改注册表，未知历史值由读路径回落默认主题。
+    Column("theme", VARCHAR2(32), nullable=False, server_default=text("'canary'")),
     _oid_check("users"),
     _json_check("users", "roles"),
     _json_check("users", "eligibility"),

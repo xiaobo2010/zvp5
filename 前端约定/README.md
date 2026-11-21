@@ -13,6 +13,7 @@
 └── css/
     ├── main.css         ← 样式总入口（业务页面只需引入这一个文件）
     ├── design-tokens.css← 设计令牌（颜色/字体/间距/圆角/阴影/动效，唯一事实来源）
+    ├── theme-variants.css← 运行时主题变体（canary / canary2 / canary-pro）
     ├── base.css         ← 基础样式（Reset、排版、栅格、布局骨架、毛玻璃/G2 工具）
     └── components/
         ├── buttons.css       ← 按钮、图标按钮、链接、按钮组
@@ -47,6 +48,9 @@
 
 - **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
   不设置则跟随系统。
+- **主题变体**：`<html data-theme-variant="canary|canary2|canary-pro">` 切换配色
+  变体，与明暗正交；新增变体 = 后端 `services/theme_registry.py` 加一条 +
+  `css/theme-variants.css` 加一段 `html[data-theme-variant='...'] .yg-phi`。
 - **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
 
 ## 给智能体的三条底线

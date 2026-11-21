@@ -303,7 +303,7 @@ class StreamUsageTracker:
     """
 
     def __init__(self) -> None:
-        self._buffer = b""
+        self._buffer = bytearray()
         self._content_chars = 0
         self._fields: dict[str, int | None] = {
             "prompt_tokens": None,
@@ -350,7 +350,7 @@ class StreamUsageTracker:
         """喂一段上游字节；只有完整的帧会被解析。"""
         if not isinstance(chunk, (bytes, bytearray)) or not chunk:
             return
-        self._buffer += bytes(chunk)
+        self._buffer.extend(chunk)
         self._drain(final=False)
 
     def close(self) -> None:
@@ -362,15 +362,16 @@ class StreamUsageTracker:
             cut = self._find_separator()
             if cut is None:
                 break
-            frame, self._buffer = self._buffer[: cut[0]], self._buffer[cut[1] :]
+            frame = bytes(self._buffer[: cut[0]])
+            del self._buffer[: cut[1]]
             self._consume_frame(frame)
 
         if self._buffer and (final or len(self._buffer) > MAX_BUFFER_BYTES):
             # 收尾时按最后一帧解析一次；超限时直接丢弃（不猜边界，避免把内容
             # 拼错成 usage）。
             if final:
-                self._consume_frame(self._buffer)
-            self._buffer = b""
+                self._consume_frame(bytes(self._buffer))
+            self._buffer.clear()
 
     def _find_separator(self) -> tuple[int, int] | None:
         found: tuple[int, int] | None = None

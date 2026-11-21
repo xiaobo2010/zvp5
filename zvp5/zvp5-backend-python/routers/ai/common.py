@@ -355,7 +355,12 @@ def _quota_error(exc: quota.QuotaError) -> HTTPException:
 async def _charge(
     user_oid: str, units: int, roles: list[str] | None = None
 ) -> None:
-    """后置扣减是 best-effort：配额回写失败不能丢掉已经生成的答案。"""
+    """后置扣减是 best-effort：配额回写失败不能丢掉已经生成的答案。
+
+    ``units <= 0``（完全没产出的失败）直接返回：不扣额度，也不为 0 AF 建额度行。
+    """
+    if int(units) <= 0:
+        return
     try:
         await quota.consume(user_oid, "af", units, roles=roles, want_state=False)
     except Exception as exc:  # noqa: BLE001

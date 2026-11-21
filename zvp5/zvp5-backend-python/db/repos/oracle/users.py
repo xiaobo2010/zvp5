@@ -507,6 +507,29 @@ def _clear_primary_xuehai_stmt(oid: str):
     )
 
 
+def _get_theme_stmt(oid: str):
+    """单列读主题：**不**并进 ``_user_columns``（profile 投影保持不变）。"""
+    return select(users_tbl.c.theme).where(users_tbl.c.oid == oid)
+
+
+def _set_theme_stmt(oid: str, theme: str):
+    """写主题偏好——**不**轮换 ``session_id``。
+
+    换配色不是身份变更，改它不该把账号在所有设备上踢下线（与
+    ``_set_primary_xuehai_stmt`` 同口径）。
+    """
+    return update(users_tbl).where(users_tbl.c.oid == oid).values(theme=theme)
+
+
+def _count_by_theme_stmt():
+    """主题使用统计的原始 ``GROUP BY``：未知历史值保持独立分组，由端点归 other。"""
+    return (
+        select(users_tbl.c.theme, func.count())
+        .select_from(users_tbl)
+        .group_by(users_tbl.c.theme)
+    )
+
+
 def _list_banned_by_xuehai_stmt(xuehai_id: str):
     """主设备 = 该学海 ID 且 ``banned = 1`` 的用户（**只做原始筛选**）。
 
@@ -1641,6 +1664,43 @@ class OracleUsersRepo:
             ids = _json_id_array(m["original_ids"])
             out.append({"_id": m["prefix"], "originalIds": [str(x) for x in ids]})
         return out
+
+    async def get_theme(self, oid: str) -> str | None:
+        """该用户的主题 id；行不存在或列为 NULL 时 ``None``（调用方回默认主题）。
+
+        单列读取：``theme`` 刻意不进 ``_user_doc`` / 认证投影，一次主题查询不该
+        把整行（含两个 CLOB）搬出来。
+        """
+        stmt = _get_theme_stmt(normalize_oid(oid))
+        async with _session_for(self._session) as (session, _owns):
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        value = row[0]
+        return value if isinstance(value, str) else None
+
+    async def set_theme(self, oid: str, theme: str) -> None:
+        """写主题偏好（合法性由端点按注册表校验）。不轮换 ``session_id``。"""
+        stmt = _set_theme_stmt(normalize_oid(oid), theme)
+        async with _session_for(self._session) as (session, owns):
+            await session.execute(stmt)
+            if owns:
+                await session.commit()
+
+    async def count_by_theme(self) -> dict[str, int]:
+        """``{主题 id: 账号数}``（原始 ``GROUP BY``，未知历史值原样保留）。
+
+        NULL 分组（理论上不会出现，列是 NOT NULL）折成空串键，端点会把它算进
+        ``other``，不会被误当成某个注册主题。
+        """
+        stmt = _count_by_theme_stmt()
+        async with _session_for(self._session) as (session, _owns):
+            rows = (await session.execute(stmt)).all()
+        counts: dict[str, int] = {}
+        for row in rows:
+            key = row[0] if isinstance(row[0], str) else ""
+            counts[key] = counts.get(key, 0) + int(row[1])
+        return counts
 
 
 __all__ = ["OracleUsersRepo", "UserGoneError", "archive_and_delete_user", "user_trash_tbl"]

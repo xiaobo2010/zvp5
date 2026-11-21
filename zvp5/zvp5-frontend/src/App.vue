@@ -584,6 +584,8 @@ onMounted(async () => {
   try {
     if (userStore.isLogin && route.path !== '/maintenance') {
       await userStore.refreshUser().catch(() => {})
+      // 已登录刷新页面时同步账号主题偏好
+      await userStore.syncThemeFromServer()
       resetPassword()
     }
   } catch {

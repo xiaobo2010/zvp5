@@ -286,6 +286,30 @@ class UsersRepo(Protocol):
         """
         ...
 
+    async def get_theme(self, oid: str) -> str | None:
+        """Return the user's theme id, or ``None`` when the row/column is NULL.
+
+        Not part of the profile projection: theme is a display preference and
+        is read on demand (``GET /api/v1/themes/me``, cache-free single column).
+        """
+        ...
+
+    async def set_theme(self, oid: str, theme: str) -> None:
+        """Store a user's theme id (validated by the caller against the registry).
+
+        The session id is **not** rotated: changing colours is not an identity
+        change and must not log the account out everywhere.
+        """
+        ...
+
+    async def count_by_theme(self) -> dict[str, int]:
+        """Return ``{theme_id: account_count}`` for every distinct stored value.
+
+        Raw ``GROUP BY`` shape: unknown/legacy ids appear under their own key so
+        the caller can fold them into "other" without inventing registry items.
+        """
+        ...
+
     async def list_banned_by_xuehai(self, xuehai_id: str) -> list[Row]:
         """Users whose ``primary_xuehai_id == xuehai_id`` and ``banned = 1``.
 

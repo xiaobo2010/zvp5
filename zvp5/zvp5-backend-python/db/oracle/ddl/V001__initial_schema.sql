@@ -52,6 +52,7 @@ CREATE TABLE users (
   ban_source VARCHAR2(16 CHAR),
   ban_rule VARCHAR2(64 CHAR),
   primary_xuehai_id VARCHAR2(32 CHAR),
+  theme VARCHAR2(32 CHAR) DEFAULT ''canary'' NOT NULL,
   PRIMARY KEY (oid),
   CONSTRAINT ck_users_oid CHECK (REGEXP_LIKE(oid,''^[0-9a-f]{24}$'')),
   CONSTRAINT ck_users_roles_json CHECK (roles IS JSON),

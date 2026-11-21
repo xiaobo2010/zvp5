@@ -67,7 +67,7 @@ GitHub 自己 GC 之前一直在。所以：
 | # | 项 | 结论 |
 | --- | --- | --- |
 | 1 | `README.md:206` 的 `users \| 1781` 行数 | **不改**（用户裁定：用户行数无所谓） |
-| 2 | 学海相关措辞 | **已软化**：去掉「后门 / 漏洞」等定性词，改成「含设备标识采集、任意 URL 代签与外部跳转等未经审计能力」的事实陈述（`README.md` / `zvp5/README.md` / `STATUS.md` / `REFERENCE_TREES_ALIGNMENT.md`） |
+| 2 | 学海相关措辞 | **已软化**：去掉「后门 / 漏洞」等定性词，改成「含设备标识采集、任意 URL 代签与外部跳转等未经审计能力」的事实陈述（`docs/history/DEVELOPMENT_LOG.md` / `docs/history/MAINLINE_DEV_NOTES.md` / `docs/history/MODULE_MIGRATION_AUDIT.md` / `REFERENCE_TREES_ALIGNMENT.md`） |
 | 3 | Cloudflare account id | **已从当前树彻底清除**：`canary.yml` 改为只读 `vars.CLOUDFLARE_ACCOUNT_ID`（值放在 canary environment）；文档里的 account id 与 DNS `record_id` 全部换 `<CF_ACCOUNT_ID>` / `<CF_RECORD_ID>` |
 | 4 | 服务商别名与机房地理 | **已处理**：主机别名统一成 `zvp-backend` / `zvp-frontend`，地理描述统一成「后端 / 前端」；第三方主机不再点名，只按「另一处主机 / 另一处境外出口」描述。当前树只剩前后端两台的身份 |
 | 5 | LICENSE（MIT，署名 `XiaoBo Huang`） | **保留** |
@@ -119,10 +119,10 @@ DNS `record_id` 在 3 个提交里，同批处理。
 
 | 项 | 处置 |
 | --- | --- |
-| 真实学生姓名索引表 | `义工平台代码笔记整理.md` 的 §6 索引表与「来源」说明从当前树删除；该文件的**全部历史版本**已从重写后的历史中移除，脱敏版在重写后作为新提交重新加入 |
+| 真实学生姓名索引表 | `docs/history/LEGACY_CODE_NOTES.md` 的 §6 索引表与「来源」说明从当前树删除；该文件的**全部历史版本**已从重写后的历史中移除，脱敏版在重写后作为新提交重新加入 |
 | 事故复盘 `docs/ISSUE_2026-11-03_AI_CREDENTIAL_UNREADABLE.md` | 当前树与历史一并删除，`zvp5.service` 与 `tools/setup_local.py` 里的引用改为中性表述 |
 | 内网地址 / 权威 NS / 后端公网 IP | 当前树写 `<INTERNAL_HOST>` / `<CF_NAMESERVER>` / `<BACKEND_IP>`；历史与代码/测试统一换成 TEST-NET 文档地址（`192.0.2.x`）与 `ns1.example.com`，保证任何按 IP 解析的断言仍然成立 |
-| README §八「学海 API 调查报告」 | 整节移出仓库，只保留结论；全文存档在仓库外 |
+| `docs/history/DEVELOPMENT_LOG.md` §八「学海 API 调查报告」 | 整节移出仓库，只保留结论；全文存档在仓库外 |
 | 许可 | 新增 `NOTICE`：MIT 覆盖范围、上游 `zvms/zvms4-*` 署名、不再分发内容的说明；README 补「十一、许可」 |
 | `.gitignore` | 根补 `.env*` / `*.pem` / `*.key` / `*.p12` / `aes_key.txt` / `credentials/`；前端补 `.env` 规则（此前完全没有） |
 | 用户裁定不处理 | `reference/xuehai/` 在历史中的第三方签名材料按决定保留；公有域名（`*.xiaobopisces.top`、`albwxy.fun`）不清，CI 里仍是功能默认值 |

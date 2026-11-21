@@ -72,7 +72,7 @@
 
 ## 6. 相关文档 / 产物
 
-- **`docs/ADB_SCHEMA_SPEC.md`** —— 表结构、重命名映射、DAL 分层、DDL 交付、ETL、风险（实现唯一权威）。
+- **`zvp5/docs/ADB_SCHEMA_SPEC.md`** —— 表结构、重命名映射、DAL 分层、DDL 交付、ETL、风险（实现唯一权威）。
 - `db/oracle/` —— 连接/配置/会话脚手架（含 thin-mode wallet 与 prod/test 实例解析）。
 - `db/oracle/ddl/V001__initial_schema.sql` + `db/models.py` + `db/ids.py` + `db/ddl_check.py` —— Schema 核心（待落地）。
 - `db/repos/protocols.py` + `db/backends.py` + `settings.ORACLE_MODULES` —— DAL 分层与开关（待落地）。
