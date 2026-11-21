@@ -330,3 +330,158 @@ export interface RetentionPreview {
   ai_prompt_audit: RetentionPreviewRow
   ai_agent_events: RetentionPreviewRow
 }
+
+/* ------------------------------------------------------------------ */
+/* ZVAgent（`/api/ai/*`）：字段与 conversation_view / run_view 一致。 */
+/* ------------------------------------------------------------------ */
+
+export type AiThinking = 'low' | 'medium' | 'high'
+export type AiConversationStatus = 'active' | 'archived'
+export type AiRunStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface AiConversation {
+  oid: string
+  mode: 'agent'
+  title: string
+  model: string | null
+  thinking: AiThinking | null
+  scene: string | null
+  status: AiConversationStatus
+  tokens: { prompt: number; completion: number; total: number }
+  context: { tokens: number; limit: number; ratio: number }
+  compaction: { upto_seq: number; summarized: boolean; degraded_at: string | null }
+  message_count: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface AiConversationPage {
+  conversations: AiConversation[]
+  next_cursor: string | null
+}
+
+export interface AiTokenUsage {
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  cache_read_tokens: number | null
+  cache_write_tokens: number | null
+}
+
+/** 会话消息：`content` 对 assistant 是 Markdown，对 tool 是工具结果的原文。 */
+export interface AiMessage {
+  oid: string
+  seq: number
+  role: 'user' | 'assistant' | 'tool' | 'system'
+  content: string
+  reasoning: string | null
+  tool_calls: unknown
+  tool_call_id: string | null
+  tool_name: string | null
+  round_no: number | null
+  request_id: string | null
+  usage: AiTokenUsage | null
+  created_at: string | null
+}
+
+export interface AiMessagePage {
+  messages: AiMessage[]
+  has_more: boolean
+  total: number
+}
+
+export interface AiRun {
+  oid: string
+  conversation_oid: string
+  status: AiRunStatus
+  model: string | null
+  stop_reason: string | null
+  rounds: number
+  error_code: string | null
+  error_message: string | null
+  result_message_oid: string | null
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cancel_requested: boolean
+  created_at: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export type AiToolKind = 'read' | 'write'
+
+/** run 详情里的持久化工具事件（`services.agent.proposal.run_events`）。 */
+export interface AiToolEvent {
+  oid: string
+  round_no: number | null
+  tool_name: string | null
+  tool_kind: AiToolKind | null
+  args_summary: string | null
+  result_summary: string | null
+  status: string | null
+  created_at: string | null
+}
+
+export interface AiProposal {
+  oid: string
+  tool_name: string | null
+  summary: string | null
+  args_summary: string | null
+  preview: unknown
+  status: string | null
+  expires_at: string | null
+  requires_dual_auth: boolean
+  dual_auth_cached: boolean
+  created_at: string | null
+}
+
+export interface AiRunDetail {
+  run: AiRun
+  events: AiToolEvent[]
+  proposals: AiProposal[]
+  messages?: AiMessage[]
+}
+
+/** 实时事件流里的累计回答（同一 `stream_key` 反复覆盖）。 */
+export interface AiLiveAssistant {
+  seq: number
+  round_no: number
+  stream_key: string
+  content: string
+}
+
+/** 实时事件流里的工具开始 / 结束（同一 `tool_call_id` 反复覆盖）。 */
+export interface AiLiveTool {
+  seq: number
+  round_no: number
+  tool_call_id: string | null
+  tool_name: string | null
+  tool_kind: AiToolKind | null
+  status: 'pending' | 'success' | 'error'
+  args_summary?: string | null
+  result_summary?: string | null
+}
+
+export interface AiLiveState {
+  assistant: AiLiveAssistant[]
+  tools: AiLiveTool[]
+}
+
+export interface AiSubmitRunResult {
+  run_id: string
+  message_oid: string
+  status: string
+  deduped?: boolean
+}
+
+export interface AiRiskAck {
+  acked: boolean
+  acked_at: string | null
+}

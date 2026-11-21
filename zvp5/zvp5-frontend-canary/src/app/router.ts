@@ -107,7 +107,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'ai/:section?',
         name: 'ai',
-        component: () => import('@/pages/system/PlaceholderPage.vue'),
+        component: () => import('@/pages/ai/AgentPage.vue'),
         meta: { titleKey: 'nav.ai', roles: ['admin', 'department', 'secretary'] }
       }
     ]
