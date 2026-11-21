@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { fetchActivity, fetchActivityMembers } from '@/shared/api/domain'
+import { fetchActivity, fetchActivityMembers, fetchUserBrief } from '@/shared/api/domain'
 import type { Activity, ActivityMemberRow } from '@/types/domain'
 import { ApiError } from '@/shared/http/errors'
 import { formatDate, formatDateTime, formatHours } from '@/shared/lib/format'
@@ -29,24 +29,39 @@ const error = ref('')
 const id = computed(() => String(route.params.id ?? ''))
 const totalPages = computed(() => Math.max(1, Math.ceil(memberTotal.value / memberSize)))
 
+const names = ref<Record<string, string>>({})
+const isOid = (value: string) => /^[0-9a-f]{24}$/i.test(value)
+const personName = (value: string) => (isOid(value) ? names.value[value] || '' : value)
+
 const meta = computed(() => {
   if (!activity.value) return []
+  const { appointee, approver } = activity.value
   return [
     { label: t('activities.date'), value: formatDate(activity.value.date), icon: 'clock' },
     { label: t('activities.place'), value: activity.value.place || '—', icon: 'pin' },
-    { label: t('activities.organizer'), value: activity.value.appointee || '—', icon: 'user' },
+    { label: t('activities.organizer'), value: personName(appointee) || '—', icon: 'user' },
     {
       label: locale.value === 'zh-CN' ? '审核方' : 'Approver',
       value:
-        activity.value.approver === 'authority'
+        approver === 'authority'
           ? locale.value === 'zh-CN'
             ? '学校团委'
             : 'School Youth League'
-          : activity.value.approver || '—',
+          : personName(approver) || '—',
       icon: 'shield'
     }
   ]
 })
+
+function resolveNames(activity: Activity) {
+  const oids = [activity.appointee, activity.approver].filter(isOid)
+  void Promise.allSettled(
+    oids.map(async (oid) => {
+      const user = await fetchUserBrief(oid)
+      names.value = { ...names.value, [oid]: user.name }
+    })
+  )
+}
 
 async function loadMembers() {
   if (!id.value) return
@@ -70,7 +85,9 @@ async function load() {
     const result = await fetchActivity(id.value)
     activity.value = result.activity
     memberTotal.value = result.members_count
-    await loadMembers()
+    resolveNames(result.activity)
+    // 成员列表自己有骨架屏，不参与首屏等待（远程 ADB 一次分页查询可达数秒）。
+    void loadMembers()
   } catch (cause) {
     activity.value = null
     error.value = cause instanceof ApiError ? cause.message : t('common.error')
@@ -115,7 +132,7 @@ onMounted(load)
           </ZBadge>
         </div>
         <h1 class="title">{{ activity.name }}</h1>
-        <p class="description">{{ activity.description || '—' }}</p>
+        <p v-if="activity.description" class="description">{{ activity.description }}</p>
         <dl class="meta">
           <div v-for="item in meta" :key="item.label" class="meta-item">
             <dt><ZIcon :name="item.icon" :size="14" />{{ item.label }}</dt>
@@ -143,7 +160,7 @@ onMounted(load)
               <span class="member-name">
                 <span class="avatar" aria-hidden="true">{{ Array.from(member.member_name || '·')[0] }}</span>
                 <span class="member-text">
-                  <strong>{{ member.member_name || member.member }}</strong>
+                  <strong>{{ member.member_name || '—' }}</strong>
                   <small>{{ t(`activities.type.${member.mode}`) }}</small>
                 </span>
               </span>

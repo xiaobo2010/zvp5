@@ -33,7 +33,9 @@ const stats = ref<UserTimeStatistics | null>(null)
 const activities = ref<UserActivityItem[]>([])
 const notifications = ref<NotificationItem[]>([])
 const readMap = ref<Record<string, number>>({})
-const loading = ref(true)
+const loadingTime = ref(true)
+const loadingActivities = ref(true)
+const loadingNotifications = ref(true)
 const failed = ref(false)
 
 const name = computed(() => session.displayName || '—')
@@ -93,30 +95,61 @@ function percentileLabel(value: number | null): string {
 }
 
 async function load() {
-  loading.value = true
-  failed.value = false
   const oid = session.profile?._id
   if (!oid) {
-    loading.value = false
+    loadingTime.value = false
+    loadingActivities.value = false
+    loadingNotifications.value = false
     return
   }
 
-  const results = await Promise.allSettled([
-    fetchUserTime(oid),
-    fetchUserTimeStatistics(oid),
-    fetchUserActivities(oid, { page: 1, perpage: 5 }),
-    fetchNotifications(),
-    fetchNotificationReads()
-  ])
+  failed.value = false
+  loadingTime.value = true
+  loadingActivities.value = true
+  loadingNotifications.value = true
 
-  if (results[0]?.status === 'fulfilled') time.value = results[0].value
-  if (results[1]?.status === 'fulfilled') stats.value = results[1].value
-  if (results[2]?.status === 'fulfilled') activities.value = results[2].value.activities.slice(0, 5)
-  if (results[3]?.status === 'fulfilled') notifications.value = results[3].value.notifications.slice(0, 3)
-  if (results[4]?.status === 'fulfilled') readMap.value = results[4].value
+  // 各区块独立加载：时长统计（含年级百分位）在 ADB 上可能耗时数秒，
+  // 不能让它拖住首屏。
+  void fetchUserTime(oid)
+    .then((value) => {
+      time.value = value
+    })
+    .catch(() => {
+      failed.value = true
+    })
+    .finally(() => {
+      loadingTime.value = false
+    })
 
-  failed.value = results.every((result) => result.status === 'rejected')
-  loading.value = false
+  void fetchUserTimeStatistics(oid)
+    .then((value) => {
+      stats.value = value
+    })
+    .catch(() => {
+      stats.value = null
+    })
+
+  void fetchUserActivities(oid, { page: 1, perpage: 5 })
+    .then((value) => {
+      activities.value = value.activities.slice(0, 5)
+    })
+    .catch(() => {
+      activities.value = []
+    })
+    .finally(() => {
+      loadingActivities.value = false
+    })
+
+  void Promise.allSettled([fetchNotifications(), fetchNotificationReads()])
+    .then(([noticeResult, readResult]) => {
+      if (noticeResult.status === 'fulfilled') {
+        notifications.value = noticeResult.value.notifications.slice(0, 3)
+      }
+      if (readResult.status === 'fulfilled') readMap.value = readResult.value
+    })
+    .finally(() => {
+      loadingNotifications.value = false
+    })
 }
 
 onMounted(load)
@@ -173,7 +206,7 @@ onMounted(load)
         <span class="block-note">{{ formatHours(total) }} / {{ totalTarget }} {{ t('common.hours') }}</span>
       </div>
 
-      <div v-if="loading" class="grid-3">
+      <div v-if="loadingTime" class="grid-3">
         <ZCard v-for="index in 3" :key="index">
           <ZSkeleton width="40%" height="0.8rem" />
           <div style="height: 1rem" />
@@ -229,7 +262,7 @@ onMounted(load)
         </div>
 
         <ZCard padding="none">
-          <div v-if="loading" class="list">
+          <div v-if="loadingActivities" class="list">
             <div v-for="index in 4" :key="index" class="skeleton-row">
               <ZSkeleton circle width="34px" height="34px" />
               <ZSkeleton width="60%" height="0.9rem" />
@@ -269,7 +302,7 @@ onMounted(load)
         </div>
 
         <ZCard padding="none">
-          <div v-if="loading" class="list">
+          <div v-if="loadingNotifications" class="list">
             <div v-for="index in 3" :key="index" class="skeleton-row">
               <ZSkeleton width="70%" height="0.9rem" />
             </div>

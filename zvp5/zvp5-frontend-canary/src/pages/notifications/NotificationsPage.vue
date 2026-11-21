@@ -22,21 +22,37 @@ const { t } = useI18n()
 
 const items = ref<NotificationItem[]>([])
 const reads = ref<Record<string, number>>({})
+const readsReady = ref(false)
 const version = ref(0)
 const loading = ref(true)
 const error = ref('')
 const expanded = ref<string | null>(null)
 
-const unread = computed(() => items.value.filter((item) => !reads.value[item.id]).length)
+const isUnread = (item: NotificationItem) => readsReady.value && !reads.value[item.id]
+
+const unread = computed(() => (readsReady.value ? items.value.filter(isUnread).length : 0))
 
 async function load() {
   loading.value = true
+  readsReady.value = false
   error.value = ''
   try {
-    const [list, readMap] = await Promise.all([fetchNotifications(), fetchNotificationReads()])
+    // 通知列表与已读版本是两次独立查询（ADB 单次往返可达数百毫秒），
+    // 串行等待会让页面白屏双倍时间；先渲染正文，已读状态到达后再合并。
+    void fetchNotificationReads()
+      .then((readMap) => {
+        reads.value = readMap
+      })
+      .catch(() => {
+        reads.value = {}
+      })
+      .finally(() => {
+        readsReady.value = true
+      })
+
+    const list = await fetchNotifications()
     items.value = list.notifications
     version.value = list.version
-    reads.value = readMap
   } catch (cause) {
     error.value = cause instanceof ApiError ? cause.message : t('common.error')
   } finally {
@@ -93,10 +109,10 @@ onMounted(load)
         :key="item.id"
         padding="none"
         class="notice"
-        :class="{ 'is-unread': !reads[item.id], 'is-open': expanded === item.id }"
+        :class="{ 'is-unread': isUnread(item), 'is-open': expanded === item.id }"
       >
         <button type="button" class="notice-head" @click="open(item)">
-          <span class="dot" :class="{ unread: !reads[item.id] }" aria-hidden="true" />
+          <span class="dot" :class="{ unread: isUnread(item) }" aria-hidden="true" />
           <span class="notice-title">
             <strong>{{ item.title }}</strong>
             <small>
@@ -104,7 +120,7 @@ onMounted(load)
               <template v-if="item.updated_at"> · {{ formatDateTime(item.updated_at) }}</template>
             </small>
           </span>
-          <ZBadge v-if="!reads[item.id]" tone="accent" size="sm">{{ t('notifications.unread') }}</ZBadge>
+          <ZBadge v-if="isUnread(item)" tone="accent" size="sm">{{ t('notifications.unread') }}</ZBadge>
           <ZIcon
             name="chevron-down"
             :size="17"

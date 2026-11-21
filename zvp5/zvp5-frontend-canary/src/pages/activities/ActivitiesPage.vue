@@ -151,7 +151,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
           <p class="card-desc">{{ activity.description || '—' }}</p>
           <div class="card-meta">
             <span><ZIcon name="pin" :size="14" />{{ activity.place || '—' }}</span>
-            <span><ZIcon name="user" :size="14" />{{ activity.appointee || '—' }}</span>
+            <span><ZIcon name="user" :size="14" />{{ activity.creator_name || '—' }}</span>
           </div>
           <div class="card-foot">
             <ZBadge tone="accent">{{ t(`activities.type.${activity.type}`) }}</ZBadge>

@@ -78,6 +78,12 @@ export async function fetchActivity(id: string): Promise<{
   return request({ url: `/v1/activities/${id}`, method: 'GET' })
 }
 
+/** 按 OID 取用户摘要；活动里的 appointee / approver 只有 OID，需要一个名字。 */
+export async function fetchUserBrief(oid: string): Promise<{ _id: string; id: string; name: string }> {
+  const payload = await request<unknown>({ url: `/v1/users/${oid}`, method: 'GET' })
+  return unwrap<{ _id: string; id: string; name: string }>(payload)
+}
+
 export async function fetchActivityMembers(
   id: string,
   page = 1,
