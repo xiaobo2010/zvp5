@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue'
+import ZGlassSurface from './ZGlassSurface.vue'
 import ZIcon from './ZIcon.vue'
 
 const props = withDefaults(
@@ -43,12 +44,14 @@ onBeforeUnmount(() => {
     <Transition name="modal">
       <div v-if="modelValue" class="overlay" @click.self="close">
         <div
-          class="panel"
+          class="panel glass-host"
           :class="`size-${size}`"
           role="dialog"
           aria-modal="true"
           :aria-label="title"
         >
+          <ZGlassSurface material="frosted" depth="lens" :track="true" />
+
           <div v-if="title || !hideClose" class="head">
             <div class="titles">
               <h2 v-if="title" class="title">{{ title }}</h2>
@@ -75,20 +78,20 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: var(--space-4);
   background: var(--mask);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(8px) saturate(120%);
 }
 
 .panel {
+  position: relative;
   width: 100%;
   max-height: 86dvh;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-radius: var(--radius-xl);
-  background: var(--glass-bg-strong);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-lg), var(--shadow-inset);
-  -webkit-backdrop-filter: blur(30px) saturate(160%);
-  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: var(--glass-shadow);
 }
 
 .size-sm {
@@ -136,16 +139,29 @@ onBeforeUnmount(() => {
   flex: none;
   border-radius: 50%;
   color: var(--ink-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
 }
 
 .close:hover {
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  background: color-mix(in srgb, var(--glass-hi) 40%, transparent);
   color: var(--ink);
+  transform: scale(1.05);
+}
+
+.close:active {
+  transform: scale(0.9);
 }
 
 .body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: var(--space-2) var(--space-6) var(--space-6);
+  scrollbar-gutter: stable;
 }
 
 .footer {
@@ -154,16 +170,28 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6) var(--space-6);
+  border-top: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
 }
 
-.modal-enter-active,
+/* --- 进入：弹簧上浮 + 轻微放大；退出：快速收敛 ------------------------- */
+.modal-enter-active {
+  transition: opacity 260ms var(--ease-out);
+}
+
+.modal-enter-active .panel {
+  transition:
+    transform 500ms var(--spring-snappy),
+    opacity 260ms var(--ease-out);
+}
+
 .modal-leave-active {
-  transition: opacity var(--dur-base) var(--ease-out);
+  transition: opacity 180ms var(--ease-out);
 }
 
-.modal-enter-active .panel,
 .modal-leave-active .panel {
-  transition: transform var(--dur-base) var(--ease-spring), opacity var(--dur-base) var(--ease-out);
+  transition:
+    transform 180ms var(--ease-out),
+    opacity 150ms var(--ease-out);
 }
 
 .modal-enter-from,
@@ -171,9 +199,20 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 
-.modal-enter-from .panel,
+.modal-enter-from .panel {
+  opacity: 0;
+  transform: translateY(18px) scale(0.96);
+}
+
 .modal-leave-to .panel {
   opacity: 0;
-  transform: translateY(14px) scale(0.98);
+  transform: translateY(8px) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-enter-from .panel,
+  .modal-leave-to .panel {
+    transform: none;
+  }
 }
 </style>

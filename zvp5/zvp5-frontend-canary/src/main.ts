@@ -9,6 +9,8 @@ import { AUTH_EXPIRED_EVENT, MAINTENANCE_EVENT } from './shared/http/client'
 
 import './design/tokens.css'
 import './design/base.css'
+import './design/glass.css'
+import './design/motion.css'
 
 const app = createApp(App)
 const pinia = createPinia()

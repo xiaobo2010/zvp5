@@ -28,9 +28,27 @@ withDefaults(
   background: var(--surface);
   box-shadow: var(--shadow-xs);
   transition:
-    transform var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--spring-snappy),
     box-shadow var(--dur-base) var(--ease-out),
     border-color var(--dur-base) var(--ease-out);
+}
+
+/* 可交互卡片的液态高光：只在 hover 时出现，不额外跑模糊 */
+.is-hoverable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(120% 90% at 12% 0%, color-mix(in srgb, var(--glass-hi) 38%, transparent), transparent 52%),
+    linear-gradient(135deg, transparent 40%, color-mix(in srgb, var(--accent) 8%, transparent) 100%);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  pointer-events: none;
+}
+
+.is-hoverable:hover::after {
+  opacity: 1;
 }
 
 .tone-surface {
@@ -59,9 +77,11 @@ withDefaults(
 }
 
 .tone-glass {
-  background: var(--glass-bg);
+  background:
+    linear-gradient(158deg, color-mix(in srgb, var(--glass-hi) 28%, transparent), transparent 52%),
+    var(--glass-bg);
   border-color: var(--glass-border);
-  box-shadow: var(--shadow-md), var(--shadow-inset);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-hi);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }

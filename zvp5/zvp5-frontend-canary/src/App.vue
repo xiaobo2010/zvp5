@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import ZToastViewport from '@/shared/ui/ZToastViewport.vue'
+import ZGlassDefs from '@/shared/ui/ZGlassDefs.vue'
 import { useUiStore } from '@/shared/stores/ui'
 
 const ui = useUiStore()
@@ -16,5 +17,6 @@ onMounted(() => {
 
 <template>
   <RouterView />
+  <ZGlassDefs />
   <ZToastViewport />
 </template>

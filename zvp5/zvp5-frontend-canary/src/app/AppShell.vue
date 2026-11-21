@@ -12,7 +12,9 @@ import AppDock from './AppDock.vue'
       <main id="main" class="content">
         <RouterView v-slot="{ Component, route }">
           <Transition name="page" mode="out-in">
-            <component :is="Component" :key="route.path" />
+            <div :key="route.path" class="page-view">
+              <component :is="Component" />
+            </div>
           </Transition>
         </RouterView>
       </main>

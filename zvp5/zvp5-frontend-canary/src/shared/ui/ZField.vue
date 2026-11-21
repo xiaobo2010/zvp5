@@ -96,13 +96,18 @@ function onInput(event: Event) {
   min-height: 48px;
   padding: 0 0.95rem;
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-xs);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, var(--glass-border));
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 26%, transparent), transparent 58%),
+    var(--glass-flat);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 2px color-mix(in srgb, var(--glass-lo) 40%, transparent),
+    var(--shadow-xs);
   transition:
     border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out);
+    box-shadow var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
 }
 
 .size-sm {
@@ -115,8 +120,13 @@ function onInput(event: Event) {
 }
 
 .control:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 34%, transparent), transparent 58%),
+    var(--glass-flat);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .has-error .control {
@@ -160,12 +170,19 @@ input:disabled {
   height: 32px;
   border-radius: var(--radius-xs);
   color: var(--ink-faint);
-  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
 }
 
 .reveal:hover {
   color: var(--ink-soft);
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  background: color-mix(in srgb, var(--glass-hi) 42%, transparent);
+}
+
+.reveal:active {
+  transform: scale(0.88);
 }
 
 .message {
