@@ -12,6 +12,7 @@ export * as notifications from './notifications'
 export * as version from './version'
 export * as attachment from './attachment'
 export * as ai from './ai'
+export * as theme from './theme'
 export const time = {
   async reads(
     search: string = '',

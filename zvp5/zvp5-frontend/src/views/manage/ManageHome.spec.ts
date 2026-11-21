@@ -135,6 +135,15 @@ vi.mock('@/components/manage/ZSystemSettings.vue', async () => {
     })
   }
 })
+vi.mock('@/components/manage/ZThemeStats.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'ZThemeStats',
+      setup: () => () => h('div', { class: 'stub-ZThemeStats' })
+    })
+  }
+})
 vi.mock('@/views/manage/ManageRoles.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return {
@@ -224,9 +233,35 @@ it('still shows every tab to an admin', async () => {
   expect(replaceSpy).not.toHaveBeenCalled()
   expect(wrapper.find('.stub-ZAttachmentAudit').exists()).toBe(true)
   const tabs = wrapper.findAll('.manage-tabs__item').map((tab) => tab.text())
-  for (const value of ['roles', 'notifications', 'ban', 'attachments', 'logs', 'settings']) {
+  for (const value of ['roles', 'notifications', 'ban', 'attachments', 'logs', 'settings', 'themes']) {
     expect(tabs.some((label) => label.startsWith(`manage.manage.tabs.${value}`))).toBe(true)
   }
+
+  wrapper.unmount()
+})
+
+it('shows themes tab only to admin', async () => {
+  storeState.position = ['admin']
+  routeState.params = { action: 'themes' }
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(replaceSpy).not.toHaveBeenCalled()
+  expect(wrapper.find('.stub-ZThemeStats').exists()).toBe(true)
+
+  wrapper.unmount()
+})
+
+it('blocks themes tab for department member', async () => {
+  storeState.position = ['department']
+  routeState.params = { action: 'themes' }
+
+  const wrapper = mountPage()
+  await flushPromises()
+
+  expect(replaceSpy).toHaveBeenCalledWith('/manage/groups')
+  expect(wrapper.find('.stub-ZThemeStats').exists()).toBe(false)
 
   wrapper.unmount()
 })

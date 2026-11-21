@@ -211,6 +211,7 @@ export const zhCN = {
       roles: '角色',
       import: '导入',
       notifications: '通知',
+      themes: '主题',
       ban: '封禁管理',
       deviceBans: '设备封禁',
       attachments: '附件管理',
@@ -910,5 +911,18 @@ export const zhCN = {
     },
     createFailed: '创建导出任务失败，请稍后重试',
     prompt: '导出任务 ID 为 {task}。确认您的进度，当任务完成时点击下方「下载」按钮。'
+  },
+  themes: {
+    title: '主题统计',
+    subtitle: '按账号当前选择的主题统计使用分布',
+    refresh: '刷新',
+    loadFailed: '加载失败，请稍后重试',
+    noPermission: '没有权限查看主题统计（仅管理员可用）',
+    empty: '暂无主题数据',
+    total: '总账号数',
+    theme: '主题',
+    count: '使用人数',
+    percent: '占比',
+    other: '未识别'
   }
 }

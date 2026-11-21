@@ -7,6 +7,7 @@ import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { useGroupsStore } from '@/stores/groups'
+import { readStoredTheme, setStoredTheme } from '@/utils/theme'
 
 interface UserTime {
   onCampus: number
@@ -47,7 +48,9 @@ export const useUserStore = defineStore('user', {
       onCampus: 0,
       offCampus: 0
     },
-    language: 'zh-CN'
+    language: 'zh-CN',
+    // 主题变体：设备缓存初始化，登录后从服务器同步覆盖
+    theme: readStoredTheme()
   }),
   actions: {
     async getUserClassId(groups: string[]) {
@@ -88,6 +91,8 @@ export const useUserStore = defineStore('user', {
         await this.setUserInformation(information)
         this.shouldResetPassword = Boolean(result.weak_password)
         this.isLogin = true
+        // 登录成功后同步账号主题偏好
+        await this.syncThemeFromServer()
       }
     },
     async refreshUser() {
@@ -174,6 +179,21 @@ export const useUserStore = defineStore('user', {
       }
       return strength >= 3
     },
+    /** 立即应用主题偏好：写 DOM 属性 + 落设备缓存。 */
+    applyThemePreference(theme: string) {
+      this.theme = setStoredTheme(theme)
+    },
+    /** 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。 */
+    async syncThemeFromServer() {
+      try {
+        const { theme } = await api.theme.getMyTheme()
+        if (theme) {
+          this.applyThemePreference(theme)
+        }
+      } catch {
+        // 同步失败不影响登录流程，保留设备缓存的主题
+      }
+    }
   },
   persist: {
     storage: localStorage

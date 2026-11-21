@@ -255,6 +255,13 @@ class CachedUsersRepo(_CachedRepo):
         await self._forget_user(args[0] if args else kwargs.get("oid"))
         return result
 
+    async def set_theme(self, *args: Any, **kwargs: Any) -> None:
+        # 主题不进 ``_user_doc``/认证投影，但整行缓存是同一个 oid 的读穿对象：
+        # 写后失效一次，避免将来某个调用方从整行文档里读 theme 时拿到旧值。
+        result = await self._inner.set_theme(*args, **kwargs)
+        await self._forget_user(args[0] if args else kwargs.get("oid"))
+        return result
+
     async def set_class(self, *args: Any, **kwargs: Any) -> None:
         result = await self._inner.set_class(*args, **kwargs)
         await self._forget_user(

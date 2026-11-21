@@ -15,6 +15,7 @@ import ZLogList from '@/components/log/ZLogList.vue'
 import ZBanRules from '@/components/manage/ZBanRules.vue'
 import ZAttachmentAudit from '@/components/manage/ZAttachmentAudit.vue'
 import ZNotificationAdmin from '@/components/manage/ZNotificationAdmin.vue'
+import ZThemeStats from '@/components/manage/ZThemeStats.vue'
 import ZSystemSettings from '@/components/manage/ZSystemSettings.vue'
 import ManageRoles from '@/views/manage/ManageRoles.vue'
 import ZHexGrid from '@/components/decor/ZHexGrid.vue'
@@ -37,7 +38,7 @@ const isSecretary = userStore.position.includes('secretary')
 const secretaryOnly = isSecretary && !isAdmin && !isDepartment
 
 /** 只有管理员能进的分区；其他人访问一律回落到入口分区。 */
-const ADMIN_ONLY = ['notifications', 'roles', 'settings', 'ban']
+const ADMIN_ONLY = ['notifications', 'roles', 'themes', 'settings', 'ban']
 
 /** 管理员与学生会（department）共用的分区：后端 ``_is_manager`` 同样认这两个角色。 */
 const MANAGER_ONLY = ['attachments']
@@ -76,6 +77,7 @@ const VALID_CURRENT = secretaryOnly
       'attachments',
       'logs',
       'notifications',
+      'themes',
       'settings'
     ]
 
@@ -132,6 +134,11 @@ if (isAdmin) {
     label: 'Notifications',
     value: 'notifications',
     icon: Bell
+  }
+  tabs.value[tabs.value.length] = {
+    label: t('manage.manage.tabs.themes'),
+    value: 'themes',
+    icon: Config
   }
   tabs.value[tabs.value.length] = {
     label: 'Ban',
@@ -299,6 +306,7 @@ watch([current, compactTabs], () => {
     <ZBanRules v-else-if="current === 'ban'" />
     <ZAttachmentAudit v-else-if="current === 'attachments'" />
     <ZNotificationAdmin v-else-if="current === 'notifications'" />
+    <ZThemeStats v-else-if="current === 'themes'" />
     <ZSystemSettings v-else-if="current === 'settings'" />
   </div>
 </template>
