@@ -10,8 +10,8 @@ import type {
   AiRunDetail,
   AiRunSubmitResult,
   AiThinkingLevel
-} from '../ai-types'
-import { aiRequest, aiRequestList } from '@/api/ai/http'
+} from '@/../types/ai'
+import { aiRequest, aiRequestList } from './http'
 
 /**
  * 持久会话面（/ai/conversations、/ai/runs）。

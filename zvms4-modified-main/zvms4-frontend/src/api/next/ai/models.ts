@@ -3,8 +3,8 @@ import type {
   AiModelDiscoverRow,
   AiModelPatch,
   AiModelRow
-} from '../ai-types'
-import { aiRequest, aiRequestVoid } from '@/api/ai/http'
+} from '@/../types/ai'
+import { aiRequest, aiRequestVoid } from './http'
 
 /**
  * 模型管理（/ai/models）。仅 admin 可用。

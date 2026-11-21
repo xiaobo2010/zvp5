@@ -6,8 +6,8 @@ import type {
   AiScheduledTaskCreateInput,
   AiScheduledTaskRun,
   AiScheduledTaskUpdateInput
-} from '../ai-types'
-import { aiRequest, aiRequestList, aiRequestVoid } from '@/api/ai/http'
+} from '@/../types/ai'
+import { aiRequest, aiRequestList, aiRequestVoid } from './http'
 
 /**
  * AI 定时任务（/ai/scheduled-tasks）。

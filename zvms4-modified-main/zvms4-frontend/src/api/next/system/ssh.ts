@@ -1,6 +1,6 @@
 import axios from '@/plugins/axios.ts'
 import { baseURL } from '@/plugins/axios.ts'
-import type { AiThinkingLevel } from '../ai-types'
+import type { AiThinkingLevel } from '@/../types/ai'
 
 // GET /api/system/ssh/targets 的响应体:目标目录由服务端下发,前端只拿展示字段。
 export interface SshTarget {

@@ -1,6 +1,6 @@
-import type { AiPromptAuditDetail, AiPromptAuditRecord } from '../ai-types'
-import { aiRequest, aiRequestList } from '@/api/ai/http'
-import { toEpochSeconds, type AiLogTimeInput } from '@/api/ai/logs'
+import type { AiPromptAuditDetail, AiPromptAuditRecord } from '@/../types/ai'
+import { aiRequest, aiRequestList } from './http'
+import { toEpochSeconds, type AiLogTimeInput } from './logs'
 
 /**
  * prompt 审阅（/ai/prompts）。仅 admin 可读，非 admin 返回 403 Permission denied。

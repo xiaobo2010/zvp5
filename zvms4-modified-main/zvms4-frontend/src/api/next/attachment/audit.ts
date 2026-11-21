@@ -13,7 +13,7 @@ import type {
   Response,
   AttachmentAuditDetail,
   AttachmentAuditListItem
-} from '../types-compat'
+} from '@/../types'
 
 export interface AttachmentAuditQuery {
   /** 1 起算。 */

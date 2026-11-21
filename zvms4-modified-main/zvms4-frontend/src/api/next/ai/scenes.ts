@@ -3,8 +3,8 @@ import type {
   AiSceneName,
   AiSceneRunSubmitResult,
   AiThinkingLevel
-} from '../ai-types'
-import { aiRequest } from '@/api/ai/http'
+} from '@/../types/ai'
+import { aiRequest } from './http'
 
 /**
  * 场景智能面（/ai/scenes、/ai/ocr/file）。
