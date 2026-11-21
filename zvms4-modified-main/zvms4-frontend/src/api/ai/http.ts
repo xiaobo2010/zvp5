@@ -1,6 +1,7 @@
 import axios, { baseURL } from '@/plugins/axios'
 import type { Response as AiEnvelope } from '@/../types'
 import { AiRequestError, parseAiCode, parseAiMessage } from './errors'
+import { handleUserBanned, isUserBannedResponse } from './banSignal'
 
 /**
  * AI 网关的请求层。
@@ -13,6 +14,14 @@ import { AiRequestError, parseAiCode, parseAiMessage } from './errors'
  * 用户会同时看到一条原始错误码和一条人话提示。拦截器仍负责 nprogress 与
  * 在飞请求计数，401 与维护模式跳转在本文件复刻。
  */
+
+/**
+ * 场景来源头：后端读它落 ``AI_CALL_LOGS.PURPOSE``（只用于审计，不参与权限/额度）。
+ *
+ * 定义在这层是为了让「哪些调用点属于哪个场景」只有一处常量：新增页面时在调用点
+ * 传一个值即可，头名不会各写一遍。
+ */
+export const AI_SCENE_HEADER = 'X-AI-Scene'
 
 function readHeader(headers: unknown, name: string): string | null {
   if (!headers || typeof headers !== 'object') {
@@ -74,15 +83,13 @@ async function handleUnauthorized(): Promise<void> {
   }
 }
 
-/** AI 场景头：后端按场景选模型/额度。 */
-export const AI_SCENE_HEADER = 'X-AI-Scene'
-
 export interface AiRequestConfig {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete'
   url: string
   data?: unknown
   /** 查询参数；值为 undefined 的键不会落到 query string。 */
   params?: Record<string, string | number | boolean>
+  headers?: Record<string, string>
 }
 
 /**
@@ -94,6 +101,7 @@ async function request(config: AiRequestConfig) {
     url: config.url,
     data: config.data,
     params: config.params,
+    headers: config.headers,
     validateStatus: () => true
   })
 
@@ -119,9 +127,15 @@ async function request(config: AiRequestConfig) {
   }
 
   if (status < 200 || status >= 300) {
+    const code = parseAiCode(body) || `AI_HTTP_${status}`
+    // AI 面自己撞上封禁：validateStatus 放开的代价是本文件看不到拦截器的 403 分支，
+    // 这里补上同一套扇出（写 ban 状态 + 中止在途请求）。仍按原样抛 AiRequestError。
+    if (isUserBannedResponse(status, code)) {
+      handleUserBanned({ headers: response.headers })
+    }
     throw new AiRequestError({
       status,
-      code: parseAiCode(body) || `AI_HTTP_${status}`,
+      code,
       message: parseAiMessage(body),
       requestId: readHeader(response.headers, 'X-AI-Request-Id'),
       retryAfter: readNumberHeader(response.headers, 'Retry-After'),
@@ -212,6 +226,9 @@ export async function aiFetchJson<T>(path: string, init: RequestInit = {}): Prom
 export async function aiFetchRaw(path: string, init: RequestInit = {}): Promise<Response> {
   const token = localStorage.getItem('token')
   const headers: Record<string, string> = {
+    // SSE 的显式声明：中间代理（Caddy / nginx）据此决定不缓冲，部分上游也只在
+    // Accept 里出现 text/event-stream 时才真的开流。
+    Accept: 'text/event-stream',
     'Content-Type': 'application/json',
     ...((init.headers as Record<string, string>) ?? {})
   }
@@ -235,9 +252,15 @@ export async function aiFetchRaw(path: string, init: RequestInit = {}): Promise<
 
 /** 非 2xx 响应 → AiRequestError（携带请求编号、退避与额度头）。 */
 export function aiResponseError(response: Response, body: unknown): AiRequestError {
+  const code = parseAiCode(body) || `AI_HTTP_${response.status}`
+  // OpenAI 面（fetch）不经过 axios 拦截器：封禁 403 也要在这里扇出一次，
+  // 否则 aiFetchJson / 流式建连被拒时界面仍以为账号可用。
+  if (isUserBannedResponse(response.status, code)) {
+    handleUserBanned({ headers: response.headers })
+  }
   return new AiRequestError({
     status: response.status,
-    code: parseAiCode(body) || `AI_HTTP_${response.status}`,
+    code,
     message: parseAiMessage(body),
     requestId: response.headers.get('X-AI-Request-Id'),
     retryAfter: readNumberHeader(response.headers, 'Retry-After'),

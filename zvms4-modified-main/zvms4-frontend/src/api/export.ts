@@ -1,13 +1,13 @@
 import type { Response, ActivityTimeRecord } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import axios from '@/plugins/axios.ts'
+import { translateKey } from '@/utils/errorMessage'
 
 export * as activity from './activity'
 export * as user from './user'
 export * as group from './group'
 export * as exports from './exports'
 export * as logs from './logs'
-export * as changelog from './changelog'
 export * as notifications from './notifications'
 export * as version from './version'
 export * as attachment from './attachment'
@@ -23,7 +23,7 @@ export const time = {
     const result = (
       await axios(`/v1/times`, {
         params: {
-          search,
+          query: search,
           page,
           perpage,
           sort,
@@ -37,7 +37,7 @@ export const time = {
     }
     if (result.status === 'error') {
       ElNotification({
-        title: 'Error when fetching data (' + result.code + ')',
+        title: translateKey('common.fetchFailed', { code: result.code }),
         message: result.message,
         type: 'error'
       })

@@ -37,15 +37,14 @@ async function getAllActivities(
   sortField: string = '_id',
   ascending: boolean = false
 ) {
-  // v5 起 /api/v1/activities 的列表由 v3 实现接管（旧 v2 列表装饰器已摘除），
-  // 分页与筛选参数名相应改为 size/query/type。
-  return (
+  // v3 契约：perpage→size、search→query、activity_type→type（单值），sort/asc 透传。
+  const response = (
     await axios('/v1/activities', {
       params: {
-        type: filter.type === 'all' ? '' : filter.type,
         page,
         size: perpage,
         query: search,
+        type: filter.type,
         sort: sortField,
         asc: ascending
       }
@@ -54,6 +53,8 @@ async function getAllActivities(
     activities: Activity[]
     total: number
   }
+  // 后端 v3 响应不回显 page/perpage，用请求入参补齐以维持原返回形状。
+  return { ...response, page, perpage }
 }
 
 async function getActivity(id: string) {
@@ -98,6 +99,8 @@ const exports = {
     ascending: boolean = false
   ) => getAllActivities({ type: filter }, page, perpage, query, sortField, ascending),
   campus_v3: getAllActivitiesV3,
+  pending: (page: number = 1, size: number = 10, query: string = '') =>
+    getAllActivitiesV3(page, size, query, '', 'pending'),
   class: (
     page: number = 1,
     perpage: number = 10,

@@ -51,9 +51,11 @@ export async function bind(oid: string, payload: BindPayload): Promise<Attachmen
   return result.data
 }
 
-export async function deleteOne(oid: string): Promise<void> {
+/** 软删除附件；``verificationToken`` 走 DELETE 的 body（后端从请求体读）。 */
+export async function deleteOne(oid: string, verificationToken?: string): Promise<void> {
   const result = (await axios(`/attachments/${oid}`, {
-    method: 'delete'
+    method: 'delete',
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
   })).data as Response<unknown>
   if (result.status === 'error') {
     throw new Error(result.message)

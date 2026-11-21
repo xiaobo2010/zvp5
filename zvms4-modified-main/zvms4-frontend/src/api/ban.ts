@@ -85,12 +85,12 @@ export async function getTriggers() {
   return result.data
 }
 
-export async function createRule(payload: BanRuleCreate) {
+export async function createRule(payload: BanRuleCreate, verificationToken?: string) {
   const result = (
     await axios({
       method: 'post',
       url: '/v1/ban/rules',
-      data: payload
+      data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
   if (result.status === 'error') {
@@ -99,11 +99,12 @@ export async function createRule(payload: BanRuleCreate) {
   return result.data
 }
 
-export async function deleteRule(code: string) {
+export async function deleteRule(code: string, verificationToken?: string) {
   const result = (
     await axios({
       method: 'delete',
-      url: `/v1/ban/rules/${code}`
+      url: `/v1/ban/rules/${code}`,
+      ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
     })
   ).data as Response<null>
   if (result.status === 'error') {
@@ -137,12 +138,16 @@ export async function getViolations(page: number = 1, perpage: number = 20, quer
   }
 }
 
-export async function updateRule(code: string, payload: BanRuleUpdate) {
+export async function updateRule(
+  code: string,
+  payload: BanRuleUpdate,
+  verificationToken?: string
+) {
   const result = (
     await axios({
       method: 'put',
       url: `/v1/ban/rules/${code}`,
-      data: payload
+      data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
     })
   ).data as Response<BanRule>
   if (result.status === 'error') {
@@ -188,6 +193,28 @@ export interface BannedUser {
   rule_code?: string | null
 }
 
+export interface BannedDeviceOwner {
+  id: string
+  name: string
+}
+
+export interface BannedDevice {
+  xuehai_id: string
+  reason: string | null
+  until: string | null
+  source: 'rule' | 'admin'
+  rule_code: string | null
+  created_at: string
+  ban_count: number
+  owner: BannedDeviceOwner | null
+}
+
+export interface DeviceBanPayload {
+  xuehai_id: string
+  reason: string
+  until: string | null
+}
+
 export async function getBannedUsers(page: number = 1, perpage: number = 20, query: string = '') {
   const result = (
     await axios('/v1/ban/users', {
@@ -211,4 +238,65 @@ export async function getBannedUsers(page: number = 1, perpage: number = 20, que
     users: result.data,
     size: result.metadata.size
   }
+}
+
+export async function getBannedDevices(
+  page: number = 1,
+  perpage: number = 20,
+  query: string = ''
+) {
+  const result = (
+    await axios('/v1/ban/devices', {
+      params: {
+        page,
+        perpage,
+        query
+      }
+    })
+  ).data as Response<BannedDevice[] | { devices: BannedDevice[]; total: number }> & {
+    metadata?: {
+      size?: number
+    }
+  }
+  if (result.status === 'error') {
+    throw result
+  }
+  const payload = result.data
+  if (Array.isArray(payload)) {
+    return {
+      devices: payload,
+      total: result.metadata?.size ?? payload.length
+    }
+  }
+  return {
+    devices: payload?.devices ?? [],
+    total: payload?.total ?? result.metadata?.size ?? 0
+  }
+}
+
+export async function banDevice(payload: DeviceBanPayload, verificationToken?: string) {
+  await axios({
+    method: 'post',
+    url: '/v1/ban/devices',
+    data: { ...payload, ...(verificationToken ? { verification_token: verificationToken } : {}) }
+  })
+  return true
+}
+
+export async function unbanDevice(xuehaiId: string, verificationToken?: string) {
+  await axios({
+    method: 'delete',
+    url: `/v1/ban/devices/${encodeURIComponent(xuehaiId)}`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
+  })
+  return true
+}
+
+export async function resetDeviceGradient(xuehaiId: string, verificationToken?: string) {
+  await axios({
+    method: 'post',
+    url: `/v1/ban/devices/${encodeURIComponent(xuehaiId)}/reset-gradient`,
+    ...(verificationToken ? { data: { verification_token: verificationToken } } : {})
+  })
+  return true
 }

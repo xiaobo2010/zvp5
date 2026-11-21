@@ -5,6 +5,8 @@ import {
   deleteNotification,
   listActive,
   listAll,
+  listRead,
+  markRead,
   updateNotification
 } from './notifications'
 
@@ -104,5 +106,41 @@ describe('notifications API contract', () => {
     })
 
     await expect(listAll()).rejects.toMatchObject({ code: 403 })
+  })
+
+  it('reads the read map of the current account', async () => {
+    const signal = new AbortController().signal
+    request.mockResolvedValueOnce({
+      data: { status: 'ok', code: 200, data: { read: { 'notice-1': 2 } } }
+    })
+
+    await expect(listRead(signal)).resolves.toEqual({ 'notice-1': 2 })
+    expect(request).toHaveBeenCalledWith({
+      method: 'get',
+      url: '/v1/notifications/read',
+      signal,
+      suppressErrorToast: true
+    })
+  })
+
+  it('falls back to an empty read map when the server omits it', async () => {
+    request.mockResolvedValueOnce({
+      data: { status: 'ok', code: 200, data: {} }
+    })
+
+    await expect(listRead()).resolves.toEqual({})
+  })
+
+  it('marks a single notice as read and returns the server receipt', async () => {
+    request.mockResolvedValueOnce({
+      data: { status: 'ok', code: 200, data: { oid: notice.id, version: 2 } }
+    })
+
+    await expect(markRead(notice.id)).resolves.toEqual({ oid: notice.id, version: 2 })
+    expect(request).toHaveBeenCalledWith({
+      method: 'post',
+      url: `/v1/notifications/${notice.id}/read`,
+      suppressErrorToast: true
+    })
   })
 })

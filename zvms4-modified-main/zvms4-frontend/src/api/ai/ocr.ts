@@ -12,10 +12,20 @@ import { aiRequest } from './http'
  * 额度不足抛 ``AiRequestError``：``AI_QUOTA_EXCEEDED``（个人）或
  * ``AI_OCR_SITE_QUOTA_EXHAUSTED``（站点所有引擎都满），页面文案见 errors.ts。
  */
-export async function enqueueOcr(attachmentOid: string): Promise<AiOcrEnqueueResult> {
+export async function enqueueOcr(
+  attachmentOid: string,
+  verificationToken?: string,
+  provider?: string
+): Promise<AiOcrEnqueueResult> {
   return aiRequest<AiOcrEnqueueResult>({
     method: 'post',
-    url: '/ai/ocr',
-    data: { attachment_oid: attachmentOid }
+    url: verificationToken ? '/ai/volunteer-ocr' : '/ai/ocr',
+    data: verificationToken
+      ? {
+          attachment_oid: attachmentOid,
+          verification_token: verificationToken,
+          ...(provider ? { provider } : {})
+        }
+      : { attachment_oid: attachmentOid, ...(provider ? { provider } : {}) }
   })
 }

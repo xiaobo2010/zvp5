@@ -1,6 +1,6 @@
 import axios from '@/plugins/axios'
 import type { ActivityInstance, Response } from '@/../types'
-import { ElNotification } from 'element-plus'
+import { ElNotification } from 'element-plus/es/components/notification/index.mjs'
 import type { ActivityMember, Activity } from '../../../types/activity.v2'
 
 async function getUserActivities(

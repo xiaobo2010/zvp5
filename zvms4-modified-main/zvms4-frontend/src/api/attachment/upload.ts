@@ -30,6 +30,8 @@ export async function upload(
     headers: {
       'Content-Type': undefined
     },
+    // 上传进度由 onUploadProgress 呈现，不受全局 12s timeout 约束
+    timeout: 0,
     onUploadProgress
   })).data as Response<AttachmentUploadResult | AttachmentUploadResult[]>
 

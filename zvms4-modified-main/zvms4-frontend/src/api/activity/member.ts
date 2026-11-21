@@ -2,18 +2,29 @@ import axios from '@/plugins/axios'
 import { temporaryToken } from '@/plugins/short-token'
 import type { ActivityMember, NewActivityMember } from '@/../types/v2'
 
-export async function insert(aid: string, member: ActivityMember) {
-  // v5 起成员新增只有 v3 实现（v2 的单条 POST 装饰器已摘除），请求体是数组。
+/**
+ * 批量新增活动成员。
+ *
+ * `options.overwrite` 为 true 时带 `?overwrite=true` 查询参数，后端据此把同
+ * (成员, 模式) 的时长改成「设置」而不是「累加」。后端尚未上线该参数时查询参数
+ * 会被忽略，行为与原来完全一致，因此前端可以先于后端发布。
+ *
+ * `options.timeout` 覆盖 axios 实例默认的 12s：批量写入 + 大活动时后端要跑事务，
+ * 用默认超时会被中途掐断。
+ */
+export async function insertMany(
+  aid: string,
+  members: NewActivityMember[],
+  options: { overwrite?: boolean; rejectExisting?: boolean; timeout?: number } = {}
+): Promise<void> {
   await axios(`/v1/activities/${aid}/members`, {
     method: 'post',
-    data: [member]
-  })
-}
-
-export async function insertMany(aid: string, members: NewActivityMember[]): Promise<void> {
-  await axios(`/v1/activities/${aid}/members`, {
-    method: 'post',
-    data: members
+    data: members,
+    params:
+      options.overwrite || options.rejectExisting
+        ? { overwrite: Boolean(options.overwrite), reject_existing: Boolean(options.rejectExisting) }
+        : undefined,
+    timeout: options.timeout
   })
 }
 
@@ -39,12 +50,32 @@ export async function read(aid: string, sid: string) {
   return (await axios(`/v1/activities/${aid}/members/${sid}`)).data as ActivityMember
 }
 
-export async function reads(aid: string, page: number, perpage: number, search: string) {
-  // v5 起成员列表只有 v3 实现（v2 的 GET 装饰器已摘除），分页参数名是 size/query。
-  return reads_v3(aid, page, perpage, search)
+export async function modifyStatus(
+  aid: string,
+  sessionId: string,
+  status: ActivityMember['status']
+) {
+  return (
+    await axios({
+      url: `/v1/activities/${aid}/members/${sessionId}/status`,
+      method: 'put',
+      data: {
+        status
+      }
+    })
+  ).data as {
+    id: string
+    status: ActivityMember['status']
+  }
 }
 
-export async function reads_v3(aid: string, page: number, size: number, query: string) {
+export async function reads_v3(
+  aid: string,
+  page: number,
+  size: number,
+  query: string,
+  options: { timeout?: number } = {}
+) {
   return (
     await axios(`/v1/activities/${aid}/members`, {
       method: 'GET',
@@ -52,7 +83,8 @@ export async function reads_v3(aid: string, page: number, size: number, query: s
         page,
         size,
         query
-      }
+      },
+      timeout: options.timeout
     })
   ).data as {
     members: (ActivityMember & { member_name: string })[]

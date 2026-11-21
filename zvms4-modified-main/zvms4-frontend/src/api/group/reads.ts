@@ -1,18 +1,6 @@
 import axios from '@/plugins/axios'
 import type { User, ActivityTimePage } from '@/../types'
 
-export async function users(
-  gid: string,
-  page: number = 1,
-  perpage: number = 10,
-  search: string = '',
-  pwdm: boolean = false
-) {
-  // v5 起 /api/v1/groups/{id}/users 只有 v3 实现（v2 的 GET 装饰器已摘除），
-  // 参数名是 size/query，响应是 { data, total }。
-  return users_v3(gid, page, perpage, search, pwdm)
-}
-
 export async function users_v3(
   gid: string,
   page: number = 1,
