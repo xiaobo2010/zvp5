@@ -22,7 +22,7 @@ export const zhCN = {
     darkMode: '深色模式',
     theme: '主题',
     themeHint: '选择界面主题',
-    themeFailed: '主题切换失败',
+    themeSyncFailed: '主题已在本设备生效，但账号同步失败',
     renderMode: '渲染模式',
     renderSmooth: '流畅',
     renderFine: '精细',

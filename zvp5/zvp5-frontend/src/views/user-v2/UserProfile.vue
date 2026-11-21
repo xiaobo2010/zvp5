@@ -85,16 +85,14 @@ async function loadThemeOptions() {
 }
 
 async function changeTheme() {
-  const oldTheme = user.theme
-  // 乐观更新：立即应用
+  // 先在本设备生效：主题是显示偏好，账号同步失败（后端未升级、断网）不该
+  // 把用户刚选的配色弹回去——那会让人误以为切换功能坏了。
   user.applyThemePreference(themeVariant.value)
   try {
     await api.theme.setMyTheme(themeVariant.value)
   } catch {
-    // 失败回滚：恢复原主题并显示错误
-    user.applyThemePreference(oldTheme)
-    themeVariant.value = oldTheme
-    ElMessage({ type: 'error', message: t('profile.actions.themeFailed') })
+    // 已写入 localStorage；账号侧这次没记住，下次登录会以服务器值为准。
+    ElMessage({ type: 'warning', message: t('profile.actions.themeSyncFailed') })
   }
 }
 
