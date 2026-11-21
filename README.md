@@ -29,6 +29,7 @@
 - **系统运维**在管理台里看数据库健康度、文件、终端与配置。
 
 平台由镇海中学在真实使用中迭代而成，本仓库是它的**完整实现**（MIT 开源）。
+本平台的上一代为ZVMS4，由于开发人员毕业已停止迭代。
 
 ### 功能面
 
@@ -56,7 +57,7 @@
 - Web SSH 终端：多目标、双人 TOTP + 一次性 ticket、并发上限、审计留痕
 - 在线设置中心与用户配额、维护模式开关、角色策略、双人 TOTP 管理
 
-**ZVAgent（AI 助手，`/api/ai/*`）**
+**ZVAgent（AI 助手）**
 
 - 持久会话与流式回复，逐轮增量拉取；模型在建会话时锁定，思考强度三档
 - 只读场景：文件预览 OCR 识别文字、编辑器「AI 分析」、终端「智能分析」
@@ -81,7 +82,7 @@
 | 部署 | systemd + nginx + uvicorn（:8018）· GitHub Actions 发布流水线 · Cloudflare Worker 预览站 |
 | 测试 | pytest（后端 253 个测试文件）· Vitest（前端 105 个 spec）· Cypress |
 
-> 早期版本基于 MongoDB，现已全量迁移到 Oracle ADB；仓库中的 Mongo 相关代码仅作历史
+> 早期版本继承ZVMS4代码基于 MongoDB，现已全量迁移到 Oracle ADB；仓库中的 Mongo 相关代码仅作历史
 > 记录（见 `zvp5/docs/ADB_MIGRATION.md`）。
 
 ---
@@ -167,7 +168,7 @@ zvp5/
 
 ## 文档
 
-| 我想知道 | 去哪看 |
+| 我想知道 | 解决方案 |
 | --- | --- |
 | 怎么把前后端跑起来 | [文档站 · 快速开始](https://xiaobo2010.github.io/zvp-docs/getting-started/) |
 | 后端怎么分层、路由怎么组织 | [`zvp5/docs/API_STRUCTURE.md`](zvp5/docs/API_STRUCTURE.md) |
@@ -206,8 +207,8 @@ PR 流程，以及**脱敏红线**（本仓库公开，任何 PR 都不得引入
 
 ## 安全
 
-发现漏洞请走 [`SECURITY.md`](SECURITY.md) 的私密渠道，**不要开公开 Issue**。
-部署者自查清单（凭证、频控、文件 jail、审计、依赖扫描）也在那一页。
+发现重大安全漏洞请走 [`SECURITY.md`](SECURITY.md) 的私密渠道，**不要开公开 Issue**。部署者自查清单（凭证、频控、文件 jail、审计、依赖扫描）也在那一页。
+一般问题和改进建议请走公开Issue。
 
 ## 许可
 
