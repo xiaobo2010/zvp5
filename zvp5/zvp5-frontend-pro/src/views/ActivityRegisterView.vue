@@ -511,11 +511,9 @@ onMounted(() => {
         </section>
       </template>
 
-      <Transition name="feedback">
-        <p v-if="feedback" class="feedback" :class="`feedback--${feedbackType}`" role="status">
-          {{ feedback }}
-        </p>
-      </Transition>
+      <p v-if="feedback" class="glass-feedback" :class="`glass-feedback--${feedbackType}`" role="status">
+        {{ feedback }}
+      </p>
     </div>
   </div>
 </template>
@@ -591,9 +589,7 @@ onMounted(() => {
 .picker-card,
 .work-card {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-shadow);
@@ -767,30 +763,6 @@ onMounted(() => {
 }
 
 .message--error { color: var(--tone-rose); }
-
-.feedback {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-callout);
-}
-
-.feedback--success {
-  color: rgb(6, 95, 70);
-  background: var(--tone-green-bg);
-  border: 1px solid rgba(52, 199, 89, 0.24);
-}
-
-.feedback--error {
-  color: rgb(153, 27, 27);
-  background: var(--tone-rose-bg);
-  border: 1px solid rgba(255, 59, 48, 0.24);
-}
-
-.feedback-enter-active,
-.feedback-leave-active { transition: opacity 180ms var(--ease-smooth), transform 180ms var(--ease-spring); }
-.feedback-enter-from,
-.feedback-leave-to { opacity: 0; transform: translateY(4px); }
 
 @media (max-width: 820px) {
   .picker-card { grid-template-columns: 1fr; }

@@ -256,7 +256,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Error state -->
-    <div v-if="modelsError && !modelsLoading" class="error-banner" role="alert">
+    <div v-if="modelsError && !modelsLoading" class="error-banner glass-feedback glass-feedback--error" role="alert">
       <span>{{ modelsError }}</span>
       <button type="button" class="ghost-button ghost-button--small" @click="loadModels">
         重试
@@ -311,7 +311,7 @@ onUnmounted(() => {
         <div class="turn-content">
           <p v-if="!turn.content && turn.status === 'pending'" class="turn-placeholder">…</p>
           <p v-else class="turn-text">{{ turn.content }}</p>
-          <div v-if="turn.status === 'error' && turn.errorMessage" class="turn-error">
+          <div v-if="turn.status === 'error' && turn.errorMessage" class="turn-error glass-feedback glass-feedback--error">
             {{ turn.errorMessage }}
             <span v-if="turn.errorCode" class="error-code">({{ turn.errorCode }})</span>
           </div>
@@ -497,12 +497,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--tone-rose-bg);
-  color: var(--tone-rose);
-  font-size: var(--font-size-callout);
-  line-height: var(--line-height-normal);
   flex-wrap: wrap;
 }
 
@@ -547,18 +541,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
-  animation: turn-in 240ms var(--ease-spring);
-}
-
-@keyframes turn-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  animation: surface-enter-keyframes 250ms var(--ease-settle) backwards;
 }
 
 .turn-header {
@@ -619,10 +602,10 @@ onUnmounted(() => {
 }
 
 .chat-turn.user .turn-text {
-  background: linear-gradient(135deg, #409cff 0%, #0071e3 100%);
-  border-color: rgba(0, 113, 227, 0.22);
-  color: #ffffff;
-  box-shadow: 0 2px 12px rgba(0, 113, 227, 0.18);
+  background: linear-gradient(145deg, #eaf4fd, #d9e8f8);
+  border-color: #c3d9ee;
+  color: #194873;
+  box-shadow: var(--glass-rim), 0 2px 8px #164b7914;
 }
 
 .turn-placeholder {
@@ -643,12 +626,6 @@ onUnmounted(() => {
 
 .turn-error {
   max-width: 85%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--tone-rose-bg);
-  color: var(--tone-rose);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-normal);
 }
 
 .error-code {

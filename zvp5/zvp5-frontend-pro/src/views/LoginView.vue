@@ -88,11 +88,7 @@ onUnmounted(() => {
   <div class="login-view">
     <!-- Left atmospheric panel -->
     <div class="aurora-panel" :class="{ visible: showContent }">
-      <div class="aurora-canvas">
-        <div class="aurora-orb aurora-orb-1"></div>
-        <div class="aurora-orb aurora-orb-2"></div>
-        <div class="aurora-orb aurora-orb-3"></div>
-      </div>
+      <div class="aurora-canvas" aria-hidden="true"></div>
 
       <div class="time-shard" :class="{ visible: showContent }">
         <div class="clock-orb">
@@ -113,8 +109,6 @@ onUnmounted(() => {
     <!-- Right login card -->
     <div class="login-container">
       <div class="login-card glass-material" :class="{ visible: showContent }">
-        <div class="refraction-band"></div>
-
         <div class="card-header">
           <h2 class="card-title">登录</h2>
           <p class="card-subtitle">使用学号和密码继续</p>
@@ -154,10 +148,7 @@ onUnmounted(() => {
             />
           </div>
 
-          <div v-if="errorMessage" class="error-banner" role="alert">
-            <svg class="error-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
-            </svg>
+          <div v-if="errorMessage" class="glass-feedback glass-feedback--error" role="alert">
             {{ errorMessage }}
           </div>
 
@@ -168,11 +159,12 @@ onUnmounted(() => {
             :class="{ loading }"
           >
             <span v-if="!loading" class="button-label">登录</span>
-            <span v-else class="button-spinner">
-              <svg class="spinner-icon" viewBox="0 0 24 24" fill="none">
+            <span v-else class="button-spinner" role="status">
+              <svg class="spinner-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <circle class="spinner-track" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
                 <path class="spinner-head" d="M12 2a10 10 0 0110 10" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
               </svg>
+              正在登录
             </span>
           </button>
         </form>
@@ -190,7 +182,6 @@ onUnmounted(() => {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  background: linear-gradient(135deg, var(--color-bg-canvas) 0%, var(--color-bg-canvas-sky) 50%, var(--color-bg-canvas) 100%);
   overflow-x: hidden;
 }
 
@@ -204,7 +195,7 @@ onUnmounted(() => {
   overflow: hidden;
   opacity: 0;
   transform: translateX(-2rem);
-  transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+  transition: opacity var(--duration-slow) var(--ease-settle), transform var(--duration-slow) var(--ease-settle);
 }
 
 .aurora-panel.visible {
@@ -214,61 +205,19 @@ onUnmounted(() => {
 
 .aurora-canvas {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-
-.aurora-orb {
-  position: absolute;
+  inset: 6% auto auto -24%;
+  width: min(57vw, 830px);
+  aspect-ratio: 1;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.4;
-  animation: aurora-float 20s ease-in-out infinite;
+  border: 1px solid #ffffff8a;
+  background:
+    radial-gradient(circle, #fff9ed54, transparent 67%),
+    radial-gradient(circle, transparent 57%, #ffffff48 57.2%, transparent 57.5%, transparent 64%, #ffffff68 64.2%, transparent 64.5%);
+  pointer-events: none;
 }
 
-.aurora-orb-1 {
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, var(--color-brand) 0%, transparent 70%);
-  top: -10%;
-  left: -10%;
-  animation-delay: 0s;
-}
-
-.aurora-orb-2 {
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, var(--tone-teal) 0%, transparent 70%);
-  top: 30%;
-  left: 20%;
-  animation-delay: -7s;
-}
-
-.aurora-orb-3 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, var(--tone-blue) 0%, transparent 70%);
-  bottom: 10%;
-  left: -5%;
-  animation-delay: -14s;
-}
-
-@keyframes aurora-float {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-  }
-  33% {
-    transform: translate(30px, -40px) scale(1.1);
-  }
-  66% {
-    transform: translate(-20px, 30px) scale(0.95);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .aurora-orb {
-    animation: none;
-  }
+@media (forced-colors: active) {
+  .aurora-canvas { display: none; }
 }
 
 .time-shard {
@@ -277,7 +226,7 @@ onUnmounted(() => {
   margin-bottom: var(--space-10);
   opacity: 0;
   transform: translateY(1rem);
-  transition: opacity 0.6s ease-out 0.1s, transform 0.6s ease-out 0.1s;
+  transition: opacity var(--duration-base) var(--ease-settle) 65ms, transform var(--duration-base) var(--ease-settle) 65ms;
 }
 
 .time-shard.visible {
@@ -296,32 +245,9 @@ onUnmounted(() => {
   position: absolute;
   inset: -12px;
   border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    var(--color-brand),
-    var(--tone-teal),
-    var(--color-brand)
-  );
-  opacity: 0.3;
-  filter: blur(16px);
-  animation: orb-pulse 4s ease-in-out infinite;
-}
-
-@keyframes orb-pulse {
-  0%, 100% {
-    opacity: 0.3;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.5;
-    transform: scale(1.05);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .orb-halo {
-    animation: none;
-  }
+  background: conic-gradient(from 35deg, #e4ecff54, #b4d6ec9e, #ffcbb380, #e4ecff54);
+  opacity: 0.62;
+  border: 1px solid #ffffffa8;
 }
 
 .orb-core {
@@ -331,11 +257,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
+  background: var(--glass-floating-bg);
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-floating-shadow);
 }
 
 .time-display {
@@ -358,7 +283,7 @@ onUnmounted(() => {
   z-index: 1;
   opacity: 0;
   transform: translateY(1rem);
-  transition: opacity 0.6s ease-out 0.2s, transform 0.6s ease-out 0.2s;
+  transition: opacity var(--duration-base) var(--ease-settle) 110ms, transform var(--duration-base) var(--ease-settle) 110ms;
 }
 
 .welcome-text.visible {
@@ -389,7 +314,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: var(--space-10);
+  min-width: 0;
+  padding: clamp(32px, 6vw, 96px);
   padding-left: var(--space-7);
 }
 
@@ -397,10 +323,10 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   max-width: 440px;
-  padding: var(--space-10);
+  padding: clamp(28px, 4vw, 60px);
   opacity: 0;
   transform: translateX(2rem);
-  transition: opacity 0.8s ease-out 0.15s, transform 0.8s ease-out 0.15s;
+  transition: opacity var(--duration-slow) var(--ease-settle) 70ms, transform var(--duration-slow) var(--ease-settle) 70ms;
 }
 
 .login-card.visible {
@@ -417,7 +343,7 @@ onUnmounted(() => {
   backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-xl);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--glass-floating-shadow);
 }
 
 .glass-material::before {
@@ -445,23 +371,6 @@ onUnmounted(() => {
 .glass-material > * {
   position: relative;
   z-index: 1;
-}
-
-.refraction-band {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 120px;
-  background: linear-gradient(
-    115deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.05) 50%,
-    transparent 100%
-  );
-  border-radius: var(--radius-xl);
-  pointer-events: none;
-  opacity: 0.38;
 }
 
 .card-header {
@@ -551,25 +460,6 @@ onUnmounted(() => {
   color: var(--tone-rose);
 }
 
-.error-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  background: rgba(244, 63, 94, 0.1);
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  border-radius: var(--radius-md);
-  color: var(--tone-rose);
-  font-size: var(--font-size-callout);
-  font-weight: 500;
-}
-
-.error-icon {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-}
-
 .submit-button {
   position: relative;
   isolation: isolate;
@@ -581,12 +471,10 @@ onUnmounted(() => {
   color: #ffffff;
   background: linear-gradient(
     135deg,
-    rgba(0, 113, 227, 0.78) 0%,
-    rgba(64, 156, 255, 0.58) 52%,
-    rgba(0, 113, 227, 0.68) 100%
+    #205988f5,
+    #28649aee 49%,
+    #294d84f5
   );
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
-  backdrop-filter: blur(18px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: var(--radius-md);
   box-shadow:
@@ -598,8 +486,7 @@ onUnmounted(() => {
   margin-top: var(--space-3);
   transition:
     transform var(--duration-fast) var(--ease-spring),
-    box-shadow var(--duration-fast) var(--ease-smooth),
-    filter var(--duration-fast) var(--ease-smooth);
+    box-shadow var(--duration-fast) var(--ease-smooth);
 }
 
 .submit-button::before {
@@ -609,7 +496,7 @@ onUnmounted(() => {
   z-index: 0;
   background: var(--glass-highlight);
   border-radius: inherit;
-  opacity: 0.34;
+  opacity: 0.22;
   pointer-events: none;
 }
 
@@ -629,7 +516,6 @@ onUnmounted(() => {
 }
 
 .submit-button:hover:not(:disabled) {
-  filter: brightness(1.06) saturate(1.06);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.68),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
@@ -638,7 +524,7 @@ onUnmounted(() => {
 }
 
 .submit-button:hover:not(:disabled)::after {
-  opacity: 0.62;
+  opacity: 0.18;
   transform: translateX(120%);
 }
 
@@ -658,10 +544,10 @@ onUnmounted(() => {
 }
 
 .submit-button:disabled {
-  opacity: 0.5;
+  background: #dce8f3;
+  color: #3d5a76;
   cursor: not-allowed;
   transform: none;
-  filter: none;
 }
 
 .submit-button.loading {
@@ -675,6 +561,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-2);
 }
 
 .spinner-icon {
@@ -690,9 +577,10 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border-moderate);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--glass-floating-bg);
+  box-shadow: var(--glass-rim);
   color: var(--color-text-secondary);
   font-size: var(--font-size-callout);
   font-weight: 600;
@@ -764,7 +652,7 @@ onUnmounted(() => {
   }
 
   .login-card {
-    padding: var(--space-7);
+    padding: clamp(22px, 7vw, 42px);
   }
 
   .card-title {
@@ -802,5 +690,10 @@ onUnmounted(() => {
   .submit-button:active:not(:disabled) {
     transform: none;
   }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .submit-button:not(:disabled) { background: #205988; }
+  .submit-button::before,
+  .submit-button::after { display: none; }
 }
 </style>

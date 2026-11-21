@@ -202,9 +202,7 @@ function goBack() {
   padding: var(--space-6);
   color: inherit;
   text-decoration: none;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-shadow);

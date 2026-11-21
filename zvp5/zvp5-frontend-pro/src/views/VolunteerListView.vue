@@ -766,9 +766,7 @@ onBeforeUnmount(() => {
 /* Frosted glass card base */
 .glass-card {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-shadow);

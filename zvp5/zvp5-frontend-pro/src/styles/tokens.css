@@ -5,13 +5,14 @@
   --color-brand: #0071e3;
   --color-brand-hover: #0077ed;
   --color-brand-active: #006edb;
+  --accent-ink: #175588;
 
   --color-text-primary: #1d1d1f;
   --color-text-secondary: #6e6e73;
-  --color-text-tertiary: #86868b;
+  --color-text-tertiary: #636d7b;
   --color-text-inverse: #f5f5f7;
 
-  --color-bg-canvas: #eef4fa;
+  --color-bg-canvas: #f3f6fa;
   --color-bg-canvas-sky: #e8eff7;
   --color-bg-canvas-cream: #f3ede3;
   --color-bg-canvas-mint: #e6f2ec;
@@ -38,32 +39,34 @@
   --tone-ink: #6e6e73;
   --tone-ink-bg: rgba(110, 110, 115, 0.12);
 
-  /* Liquid Glass Material (authoritative recipe) */
+  /* Satin content surfaces and the more translucent floating controls. */
+  --surface-matte: linear-gradient(150deg, #ffffffef, #f5f8fbe8 66%, #f8fafde1);
   --glass-bg: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(207, 234, 255, 0.38) 54%,
-    rgba(255, 255, 255, 0.24) 100%
+    147deg,
+    #fffdf9d6,
+    #eaf4ff9e 57%,
+    #f8f5ffbd
   );
-  --glass-tint: rgba(0, 113, 227, 0.045);
-  --glass-border: rgba(255, 255, 255, 0.78);
-  --glass-shadow: 0 20px 50px rgba(28, 68, 120, 0.09),
-    0 2px 6px rgba(28, 68, 120, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.32);
-  --glass-blur: blur(18px) saturate(190%) brightness(1.05);
+  --glass-floating-bg: linear-gradient(145deg, #fffdf9e8, #edf5fdc7 60%, #f6f4ffdb);
+  --glass-tint: rgb(42 106 170 / 0.06);
+  --glass-border: rgb(255 255 255 / 0.83);
+  --glass-rim: inset 0 1px 0 #fffffff0, inset 1px 0 0 #ffffff8a, inset 0 -1px 0 #587ea11c;
+  --glass-shadow: var(--glass-rim), 0 1px 2px #223f5b0e, 0 10px 28px #314e6910;
+  --glass-floating-shadow: var(--glass-rim), 0 4px 12px #2f4e6714, 0 20px 48px #334f6c1f;
+  --glass-blur: blur(16px) saturate(150%);
   --glass-highlight: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.94) 0%,
-    rgba(255, 255, 255, 0.2) 38%,
-    rgba(255, 255, 255, 0) 58%
+    162deg,
+    #fffefbe6,
+    #ffffff33 29%,
+    transparent 56%
   );
   --glass-sheen: linear-gradient(
     115deg,
-    rgba(255, 255, 255, 0) 22%,
-    rgba(255, 255, 255, 0.52) 46%,
-    rgba(255, 255, 255, 0.08) 56%,
-    rgba(255, 255, 255, 0) 72%
+    transparent 23%,
+    #fffdf98c 43%,
+    #e8f3ff78 49%,
+    #fbecfa30 55%,
+    transparent 69%
   );
 
   /* Typography scale */
@@ -121,6 +124,7 @@
 
   /* Motion — q弹 spring easing */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 0.8, 0.24, 1);
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.6, 1);
@@ -147,8 +151,21 @@
   }
 }
 
-@supports not (backdrop-filter: blur(14px)) {
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
-    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-bg: var(--surface-matte);
+    --glass-floating-bg: var(--surface-matte);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --surface-matte: #f9fbfe;
+    --glass-bg: #f3f7fb;
+    --glass-floating-bg: #f3f7fb;
+    --glass-blur: none;
+    --glass-mobile-blur: none;
+    --glass-border: #8c9fb2;
+    --glass-sheen: none;
   }
 }

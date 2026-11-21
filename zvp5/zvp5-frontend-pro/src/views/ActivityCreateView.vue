@@ -320,9 +320,7 @@ async function handleSubmit() {
 /* Form */
 .add-volunteer__form {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   padding: var(--space-6);

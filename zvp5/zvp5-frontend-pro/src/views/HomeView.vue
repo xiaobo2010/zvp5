@@ -856,11 +856,6 @@ onUnmounted(() => {
   padding: var(--space-8) clamp(20px, 4vw, 40px) var(--space-10);
   max-width: 1200px;
   margin: 0 auto;
-  background:
-    radial-gradient(ellipse 46% 30% at 8% 0%, rgba(0, 122, 255, 0.11), transparent 70%),
-    radial-gradient(ellipse 36% 26% at 94% 3%, rgba(255, 149, 0, 0.1), transparent 72%),
-    radial-gradient(ellipse 44% 32% at 52% 100%, rgba(20, 184, 166, 0.08), transparent 72%),
-    linear-gradient(145deg, rgba(245, 251, 255, 0.72), rgba(255, 252, 248, 0.52));
 }
 
 /* Greeting */
@@ -899,18 +894,11 @@ onUnmounted(() => {
   gap: var(--space-3);
   padding: 10px 18px 10px 10px;
   border-radius: var(--radius-pill);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.74) 0%,
-    rgba(229, 243, 255, 0.54) 58%,
-    rgba(255, 245, 235, 0.5) 100%
-  );
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.86);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 8px 24px rgba(18, 48, 82, 0.08);
+  background: var(--glass-floating-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-floating-shadow);
   overflow: hidden;
 }
 
@@ -936,8 +924,6 @@ onUnmounted(() => {
   border-radius: 50%;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(213, 236, 255, 0.56));
-  -webkit-backdrop-filter: blur(10px) saturate(160%);
-  backdrop-filter: blur(10px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.86);
   box-shadow:
     inset 0 1px 2px rgba(255, 255, 255, 0.9),
@@ -955,20 +941,8 @@ onUnmounted(() => {
     rgba(255, 149, 0, 0.26),
     rgba(0, 122, 255, 0.32)
   );
-  filter: blur(7px);
-  opacity: 0.6;
-  animation: clockPulse 3.2s ease-in-out infinite;
-}
-
-@keyframes clockPulse {
-  0%, 100% {
-    opacity: 0.6;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.3;
-    transform: scale(1.05);
-  }
+  opacity: 0.32;
+  pointer-events: none;
 }
 
 .greeting__clock {
@@ -1046,9 +1020,7 @@ onUnmounted(() => {
 /* Identity Card - Frosted Glass */
 .identity-card {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
@@ -1165,11 +1137,9 @@ onUnmounted(() => {
 .total-hours {
   position: relative;
   background:
-    radial-gradient(circle at 18% 12%, rgba(0, 122, 255, 0.14), transparent 42%),
-    radial-gradient(circle at 92% 88%, rgba(255, 149, 0, 0.1), transparent 38%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(235, 247, 255, 0.5) 100%);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+    radial-gradient(ellipse at 12% 0%, #bfddf65c, transparent 55%),
+    radial-gradient(ellipse at 98% 100%, #fbe2c86b, transparent 48%),
+    var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
@@ -1295,9 +1265,7 @@ onUnmounted(() => {
 /* Glass Panel Base */
 .glass-panel {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-shadow);
@@ -1350,16 +1318,10 @@ onUnmounted(() => {
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.74) 0%,
-    rgba(214, 234, 252, 0.52) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  background: var(--glass-floating-bg);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  color: var(--color-brand);
+  color: var(--accent-ink);
   font-size: var(--font-size-body);
   font-weight: 500;
   text-decoration: none;
@@ -1494,8 +1456,6 @@ onUnmounted(() => {
     rgba(255, 255, 255, 0.45) 0%,
     rgba(255, 255, 255, 0.28) 100%
   );
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  backdrop-filter: blur(12px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: var(--radius-lg);
   box-shadow:
@@ -1848,7 +1808,7 @@ onUnmounted(() => {
   padding: var(--space-8) var(--space-6);
   margin-bottom: var(--space-8);
   text-align: center;
-  animation: state-enter var(--duration-slow) var(--ease-smooth) both;
+  animation: surface-enter-keyframes var(--duration-base) var(--ease-settle) backwards;
 }
 
 .state-panel__title {
@@ -1869,17 +1829,6 @@ onUnmounted(() => {
 .state-panel__action {
   min-width: 132px;
   margin-top: var(--space-2);
-}
-
-@keyframes state-enter {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /* Skeleton loading */
@@ -2108,9 +2057,5 @@ onUnmounted(() => {
     animation: none;
   }
 
-  .greeting__clock-light {
-    animation: none;
-    opacity: 0;
-  }
 }
 </style>

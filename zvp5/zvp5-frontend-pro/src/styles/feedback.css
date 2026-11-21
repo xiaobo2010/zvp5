@@ -1,0 +1,74 @@
+/* A small droplet leads the surface into view. Both settle once, on insertion. */
+.glass-feedback {
+  --feedback-tint: #d9eafd;
+  --feedback-ink: #175588;
+  position: relative;
+  padding: var(--space-3) var(--space-4);
+  padding-inline-start: 34px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm) var(--radius-md) var(--radius-md) var(--radius-md);
+  background: linear-gradient(148deg, #fffaf5, var(--feedback-tint) 90%);
+  box-shadow: var(--glass-rim), 0 4px 12px #28466813;
+  color: var(--feedback-ink);
+  font-size: var(--font-size-callout);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+  transform-origin: 18px 50%;
+  animation: feedback-rise 350ms var(--ease-settle) backwards;
+}
+
+.glass-feedback::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 17px;
+  inset-inline-start: 13px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 31% 25%, #fff 4%, var(--feedback-tint) 34%, var(--feedback-ink) 100%);
+  box-shadow: 0 0 0 2px #ffffffad, 0 2px 4px #28466826;
+  pointer-events: none;
+  animation: feedback-droplet 390ms var(--ease-settle) backwards;
+}
+
+.glass-feedback--error {
+  --feedback-tint: #f6dfe4;
+  --feedback-ink: #8d2637;
+}
+
+.glass-feedback--warn {
+  --feedback-tint: #fae9c9;
+  --feedback-ink: #765014;
+}
+
+.glass-feedback--success {
+  --feedback-tint: #d8eee5;
+  --feedback-ink: #21634d;
+}
+
+@keyframes feedback-rise {
+  from { opacity: 0; transform: translateY(5px) scale(0.95, 0.88); }
+  72% { opacity: 1; transform: translateY(-1px) scale(1.005, 1.025); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes feedback-droplet {
+  from { opacity: 0; transform: translate(-4px, 6px) scale(0.3); }
+  68% { opacity: 1; transform: translate(0, -2px) scale(1.18); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-feedback,
+  .glass-feedback::before {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-feedback {
+    background: var(--feedback-tint);
+    border-color: var(--feedback-ink);
+    box-shadow: none;
+  }
+}

@@ -1,4 +1,5 @@
 @import './tokens.css';
+@import './feedback.css';
 
 :root {
   color-scheme: light;
@@ -25,41 +26,16 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(1200px 700px at 8% -12%, rgb(232 239 247 / 0.85), transparent 58%),
-    radial-gradient(1000px 680px at 98% 32%, rgb(230 242 236 / 0.75), transparent 65%),
-    radial-gradient(900px 600px at 42% 108%, rgb(243 237 227 / 0.65), transparent 72%),
-    radial-gradient(1100px 650px at 72% 96%, rgb(255 235 242 / 0.6), transparent 68%),
-    var(--color-bg-canvas);
+  background: var(--color-bg-canvas);
   color: var(--color-text-primary);
   font-size: var(--font-size-body);
   line-height: var(--line-height-normal);
   overflow-x: hidden;
 }
 
-/* Ambient light — subtle single source for app surface */
-body::before,
-body::after {
-  content: '';
-  position: fixed;
-  pointer-events: none;
-  z-index: -1;
-}
-
-body::before {
-  inset: -20% -10% auto;
-  height: 70%;
-  background:
-    radial-gradient(ellipse 900px 420px at 18% 8%, rgb(255 255 255 / 0.34), transparent 66%),
-    radial-gradient(ellipse 720px 320px at 78% 0%, rgb(0 113 227 / 0.1), transparent 72%);
-}
-
-body::after {
-  inset: 0;
-  background:
-    radial-gradient(ellipse 900px 620px at 12% 62%, rgb(0 113 227 / 0.12), transparent 70%),
-    radial-gradient(ellipse 760px 520px at 94% 82%, rgb(255 201 144 / 0.1), transparent 72%),
-    radial-gradient(ellipse 820px 560px at 88% 18%, rgb(255 225 238 / 0.14), transparent 68%);
+.pro-app {
+  isolation: isolate;
+  min-height: 100vh;
 }
 
 h1,
@@ -120,17 +96,15 @@ html {
 
 /* Surface entrance animation with staggered timing via --i CSS variable */
 .surface-enter {
-  --stagger-delay: calc(var(--i, 0) * 50ms);
-  opacity: 0;
-  transform: translateY(12px);
-  animation: surface-enter-keyframes var(--duration-base) var(--ease-out) forwards;
+  --stagger-delay: min(calc(var(--i, 0) * 32ms), 120ms);
+  animation: surface-enter-keyframes var(--duration-base) var(--ease-settle) backwards;
   animation-delay: var(--stagger-delay);
 }
 
 @keyframes surface-enter-keyframes {
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  from {
+    opacity: var(--surface-start-opacity, 0);
+    translate: 0 var(--surface-travel, 8px);
   }
 }
 
@@ -138,7 +112,7 @@ html {
    smaller radius instead of dropping the effect or disabling glass entirely. */
 @media (max-width: 767px) {
   :root {
-    --glass-blur: blur(12px) saturate(170%) brightness(1.03);
+    --glass-blur: var(--glass-mobile-blur, blur(10px) saturate(145%));
   }
 }
 
@@ -147,12 +121,18 @@ html {
     scroll-behavior: auto;
   }
 
+  .surface-enter {
+    animation: none;
+  }
+
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }

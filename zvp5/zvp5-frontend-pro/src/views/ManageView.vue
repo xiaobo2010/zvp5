@@ -1117,7 +1117,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="overviewError" class="inline-note inline-note--warn" role="alert">
+                <p v-if="overviewError" class="inline-note glass-feedback glass-feedback--warn" role="alert">
                   {{ overviewError }}
                 </p>
 
@@ -1270,7 +1270,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="usersError" class="inline-note inline-note--error" role="alert">
+                <p v-if="usersError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ usersError }}
                 </p>
                 <p v-if="!users.length" class="empty-inline">没有匹配的用户。</p>
@@ -1364,7 +1364,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="groupsError" class="inline-note inline-note--error" role="alert">
+                <p v-if="groupsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ groupsError }}
                 </p>
                 <p v-if="!groups.length" class="empty-inline">没有匹配的班级或权限组。</p>
@@ -1484,10 +1484,10 @@ watch(activeTab, ensureTab, { immediate: true })
                     </p>
                   </div>
 
-                  <p v-if="notificationCreateNotice" class="inline-note inline-note--success" role="status">
+                  <p v-if="notificationCreateNotice" class="inline-note glass-feedback glass-feedback--success" role="status">
                     {{ notificationCreateNotice }}
                   </p>
-                  <p v-if="notificationCreateError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="notificationCreateError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ notificationCreateError }}
                   </p>
                   <p class="panel__footnote">
@@ -1546,19 +1546,19 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="notificationsError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="notificationsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ notificationsError }}
                   </p>
                   <p
                     v-if="notificationActionNotice"
-                    class="inline-note inline-note--success"
+                    class="inline-note glass-feedback glass-feedback--success"
                     role="status"
                   >
                     {{ notificationActionNotice }}
                   </p>
                   <p
                     v-if="notificationActionError"
-                    class="inline-note inline-note--error"
+                    class="inline-note glass-feedback glass-feedback--error"
                     role="alert"
                   >
                     {{ notificationActionError }}
@@ -1646,7 +1646,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="rolesError" class="inline-note inline-note--error" role="alert">
+                <p v-if="rolesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ rolesError }}
                 </p>
                 <p v-if="!sortedRolePolicies.length" class="empty-inline">暂无角色策略。</p>
@@ -1750,7 +1750,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="logsError" class="inline-note inline-note--error" role="alert">
+                <p v-if="logsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ logsError }}
                 </p>
                 <p v-if="!logs.length" class="empty-inline">没有匹配的日志。</p>
@@ -1835,19 +1835,19 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="settingsError" class="inline-note inline-note--error" role="alert">
+                <p v-if="settingsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ settingsError }}
                 </p>
                 <p
                   v-if="settingsSaveNotice"
-                  class="inline-note inline-note--success"
+                  class="inline-note glass-feedback glass-feedback--success"
                   role="status"
                 >
                   {{ settingsSaveNotice }}
                 </p>
                 <p
                   v-if="settingsSaveError"
-                  class="inline-note inline-note--error"
+                  class="inline-note glass-feedback glass-feedback--error"
                   role="alert"
                 >
                   {{ settingsSaveError }}
@@ -1987,7 +1987,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="banRulesError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="banRulesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ banRulesError }}
                   </p>
                   <p v-if="!banRules.length" class="empty-inline">暂无封禁规则。</p>
@@ -2034,7 +2034,7 @@ watch(activeTab, ensureTab, { immediate: true })
                   </button>
                 </form>
 
-                <p v-if="banRecordsError" class="inline-note inline-note--error" role="alert">
+                <p v-if="banRecordsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ banRecordsError }}
                 </p>
                 <div v-if="banLoading && !banLoaded" class="state-block" role="status">
@@ -2129,7 +2129,7 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="attachmentsError" class="inline-note inline-note--error" role="alert">
+                <p v-if="attachmentsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ attachmentsError }}
                 </p>
                 <p v-if="!attachments.length" class="empty-inline">暂无附件。</p>
@@ -2302,9 +2302,7 @@ watch(activeTab, ensureTab, { immediate: true })
 
 .panel {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   padding: var(--space-5);
@@ -2631,26 +2629,7 @@ select.input:focus-visible {
 }
 
 .inline-note {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-callout);
-  line-height: var(--line-height-normal);
   margin-top: var(--space-4);
-}
-
-.inline-note--error {
-  background: var(--tone-rose-bg);
-  color: var(--tone-rose);
-}
-
-.inline-note--warn {
-  background: var(--tone-amber-bg);
-  color: #8a5600;
-}
-
-.inline-note--success {
-  background: var(--tone-green-bg);
-  color: #1d7a34;
 }
 
 .empty-inline {
@@ -2859,18 +2838,9 @@ select.input:focus-visible {
   gap: var(--space-3);
   flex-wrap: wrap;
   margin-top: var(--space-3);
-  animation: pager-in 300ms var(--ease-spring);
-}
-
-@keyframes pager-in {
-  from {
-    opacity: 0.55;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --surface-start-opacity: 0.55;
+  --surface-travel: 3px;
+  animation: surface-enter-keyframes 230ms var(--ease-settle) backwards;
 }
 
 .pager__info {

@@ -802,7 +802,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else-if="health">
-                  <p v-if="healthError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="healthError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ healthError }}
                   </p>
 
@@ -1025,7 +1025,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="keysError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="keysError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ keysError }}
                   </p>
                   <p v-if="!keys.length" class="empty-inline">暂无已登记的凭据。</p>
@@ -1109,7 +1109,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="modelsError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="modelsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ modelsError }}
                   </p>
                   <p v-if="!models.length" class="empty-inline">暂无模型记录。</p>
@@ -1197,7 +1197,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="quotaError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="quotaError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ quotaError }}
                   </p>
                   <p v-if="!quotaUsers.length" class="empty-inline">没有匹配的用户。</p>
@@ -1300,7 +1300,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="logsError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="logsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ logsError }}
                   </p>
                   <p v-if="!logs.length" class="empty-inline">当前页没有调用记录。</p>
@@ -1397,7 +1397,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="scheduledError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="scheduledError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ scheduledError }}
                   </p>
                   <p v-if="!scheduledTasks.length" class="empty-inline">暂无定时任务。</p>
@@ -1480,7 +1480,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="ocrError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="ocrError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ ocrError }}
                   </p>
                   <p v-if="!ocrEngines.length" class="empty-inline">暂无 OCR 引擎。</p>
@@ -1571,7 +1571,7 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else-if="stats">
-                  <p v-if="statsError" class="inline-note inline-note--error" role="alert">
+                  <p v-if="statsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                     {{ statsError }}
                   </p>
 
@@ -1870,9 +1870,7 @@ watch(activeTab, ensureTab, { immediate: true })
 
 .panel {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   padding: var(--space-5);
@@ -2162,16 +2160,7 @@ watch(activeTab, ensureTab, { immediate: true })
 }
 
 .inline-note {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-callout);
-  line-height: var(--line-height-normal);
   margin-top: var(--space-4);
-}
-
-.inline-note--error {
-  background: var(--tone-rose-bg);
-  color: var(--tone-rose);
 }
 
 .empty-inline {
@@ -2437,18 +2426,9 @@ watch(activeTab, ensureTab, { immediate: true })
   gap: var(--space-3);
   flex-wrap: wrap;
   margin-top: var(--space-3);
-  animation: pager-in 300ms var(--ease-spring);
-}
-
-@keyframes pager-in {
-  from {
-    opacity: 0.55;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --surface-start-opacity: 0.55;
+  --surface-travel: 3px;
+  animation: surface-enter-keyframes 230ms var(--ease-settle) backwards;
 }
 
 .pager__info {

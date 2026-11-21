@@ -267,19 +267,31 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.62) 0%,
-    rgba(238, 246, 254, 0.42) 100%
-  );
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.78);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.68) 0%, rgba(248, 250, 252, 0.52) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(12px) saturate(165%));
+  backdrop-filter: var(--glass-blur, blur(12px) saturate(165%));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.82));
   border-radius: var(--radius-pill);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 2px 10px rgba(18, 48, 82, 0.06);
+  box-shadow: var(--glass-floating-shadow);
   isolation: isolate;
+}
+
+.animated-tabs::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.7) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 .animated-tabs::-webkit-scrollbar {
@@ -293,30 +305,41 @@ onBeforeUnmount(() => {
   left: 0;
   z-index: 0;
   border-radius: var(--radius-pill);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.42) 0%,
-    rgba(255, 255, 255, 0.24) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  backdrop-filter: blur(12px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.68);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.52) 0%, rgba(240, 248, 255, 0.38) 100%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.72));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 2px 8px rgba(14, 165, 233, 0.12);
+    0 2px 6px rgba(0, 113, 227, 0.1),
+    0 0 0 0.5px rgba(255, 255, 255, 0.4),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   opacity: 0;
   pointer-events: none;
   transition:
-    transform 420ms cubic-bezier(0.34, 1.46, 0.64, 1),
-    width 420ms cubic-bezier(0.34, 1.46, 0.64, 1),
-    opacity 180ms var(--ease-smooth);
+    transform 440ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    width 440ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.animated-tabs__indicator::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 100%
+  );
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 .animated-tabs__indicator.is-dragging {
   transition:
-    transform 220ms var(--ease-out),
-    width 220ms var(--ease-out),
-    opacity 180ms var(--ease-smooth);
+    transform 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .animated-tabs__indicator.is-ready {
@@ -340,8 +363,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   cursor: pointer;
   transition:
-    color var(--duration-fast) var(--ease-smooth),
-    transform var(--duration-fast) var(--ease-spring);
+    color 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 260ms cubic-bezier(0.34, 1.08, 0.64, 1);
 }
 
 .animated-tabs__tab:hover {
@@ -350,6 +373,7 @@ onBeforeUnmount(() => {
 
 .animated-tabs__tab:active {
   transform: scale(0.97);
+  transition-duration: 140ms;
 }
 
 .animated-tabs__tab:focus-visible {
@@ -358,16 +382,31 @@ onBeforeUnmount(() => {
 }
 
 .animated-tabs__tab.is-active {
-  color: var(--color-brand);
+  color: var(--accent-ink);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animated-tabs__indicator {
-    transition: none;
+    transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .animated-tabs__tab {
-    transition: color var(--duration-fast) var(--ease-smooth);
+    transition: color 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .animated-tabs__tab:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .animated-tabs__indicator {
+    background: #e3eef8;
+    border-color: var(--accent-ink);
+  }
+
+  .animated-tabs__indicator::before {
+    display: none;
   }
 }
 </style>

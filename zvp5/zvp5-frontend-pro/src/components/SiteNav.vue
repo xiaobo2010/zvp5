@@ -495,24 +495,20 @@ async function handleAdminClick(path: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.8) 0%,
-    rgba(232, 242, 252, 0.6) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.86);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(248, 250, 252, 0.68) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(10px) saturate(165%));
+  backdrop-filter: var(--glass-blur, blur(10px) saturate(165%));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.88));
   border-left: none;
   border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
   color: var(--color-text-primary);
   cursor: grab;
   touch-action: none;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    color var(--duration-fast) var(--ease-smooth),
-    box-shadow var(--duration-fast) var(--ease-smooth);
-  box-shadow: var(--glass-shadow);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--glass-floating-shadow);
   overflow: hidden;
   isolation: isolate;
 }
@@ -520,19 +516,45 @@ async function handleAdminClick(path: string) {
 .site-nav__handle::before {
   content: '';
   position: absolute;
+  top: -1px;
+  right: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.6) 10%,
+    rgba(255, 255, 255, 0.9) 50%,
+    rgba(255, 255, 255, 0.6) 90%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.site-nav__handle::after {
+  content: '';
+  position: absolute;
   inset: 0;
-  background: var(--glass-highlight);
+  background: radial-gradient(
+    circle at 80% 50%,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0) 60%
+  );
   border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
   pointer-events: none;
 }
 
 .site-nav__handle:hover {
-  transform: translateY(-50%) scale(1.05);
+  transform: translateY(-50%) scale(1.04);
   color: var(--color-brand);
+  box-shadow: var(--glass-floating-shadow), 0 0 0 1px rgb(0 113 227 / 0.12);
 }
 
 .site-nav__handle:active {
-  transform: translateY(-50%) scale(0.95);
+  transform: translateY(-50%) scale(0.96);
+  transition-duration: 120ms;
 }
 
 .site-nav__handle:focus-visible {
@@ -542,6 +564,7 @@ async function handleAdminClick(path: string) {
 
 .site-nav__handle.is-dragging {
   cursor: grabbing;
+  transition: none;
 }
 
 .site-nav__handle-icon {
@@ -554,9 +577,7 @@ async function handleAdminClick(path: string) {
   position: fixed;
   inset: 0;
   z-index: 998;
-  background: rgba(8, 20, 36, 0.24);
-  /* The drawer already owns the expensive backdrop blur; a second full-screen
-     blur here is pure GPU cost for no visible gain. */
+  background: rgba(8, 20, 36, 0.32);
 }
 
 /* Hidden left drawer */
@@ -570,11 +591,11 @@ async function handleAdminClick(path: string) {
   height: 100dvh;
   padding: var(--space-5);
   padding-bottom: max(var(--space-5), env(safe-area-inset-bottom));
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border-right: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(248, 250, 252, 0.78) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(20px) saturate(165%));
+  backdrop-filter: var(--glass-blur, blur(20px) saturate(165%));
+  border-right: 1px solid var(--glass-border, rgba(255, 255, 255, 0.92));
+  box-shadow: var(--glass-floating-shadow);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -582,9 +603,29 @@ async function handleAdminClick(path: string) {
   overscroll-behavior: contain;
   transform: translateX(calc(-100% + var(--drawer-drag, 0px)));
   opacity: 0;
-  transition: transform var(--duration-base) var(--ease-smooth),
-    opacity var(--duration-base) var(--ease-smooth);
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.12, 0.64, 1),
+    opacity 420ms cubic-bezier(0.4, 0, 0.2, 1);
   outline: none;
+}
+
+.site-nav__drawer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1.5px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.7) 10%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(255, 255, 255, 0.7) 90%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 .site-nav__drawer.is-open {
@@ -623,14 +664,8 @@ async function handleAdminClick(path: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.72) 0%,
-    rgba(232, 242, 252, 0.48) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.68) 0%, rgba(248, 250, 252, 0.52) 100%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.84));
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   cursor: pointer;
@@ -638,37 +673,43 @@ async function handleAdminClick(path: string) {
   isolation: isolate;
   flex-shrink: 0;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-    0 2px 8px rgba(18, 48, 82, 0.08);
+    0 1px 3px rgba(18, 48, 82, 0.06),
+    0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    color var(--duration-fast) var(--ease-smooth),
-    box-shadow var(--duration-fast) var(--ease-smooth);
+    transform 240ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 240ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .site-nav__drawer-close::before {
   content: '';
   position: absolute;
-  inset: 0;
-  background: var(--glass-highlight);
+  top: 0;
+  right: 0;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.4) 100%
+  );
   border-radius: var(--radius-md);
-  opacity: 0.6;
   pointer-events: none;
-  z-index: -1;
 }
 
 .site-nav__drawer-close:hover {
   color: var(--color-brand);
-  transform: scale(1.05);
+  transform: scale(1.04);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 4px 12px rgba(18, 48, 82, 0.12);
+    0 2px 6px rgba(18, 48, 82, 0.08),
+    0 0 0 0.5px rgba(0, 113, 227, 0.2),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
 }
 
 .site-nav__drawer-close:active {
-  transform: scale(0.95);
+  transform: scale(0.96);
+  transition-duration: 120ms;
 }
 
 .site-nav__drawer-close:focus-visible {
@@ -684,28 +725,31 @@ async function handleAdminClick(path: string) {
   z-index: 0;
   height: 44px;
   border-radius: var(--radius-md);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(232, 242, 252, 0.35) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.86);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(240, 248, 255, 0.38) 100%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.88));
+  box-shadow:
+    0 2px 6px rgba(0, 113, 227, 0.08),
+    0 0 0 0.5px rgba(255, 255, 255, 0.4),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   transition:
-    transform cubic-bezier(0.34, 1.46, 0.64, 1) 420ms,
-    width cubic-bezier(0.34, 1.46, 0.64, 1) 420ms;
+    transform 460ms cubic-bezier(0.34, 1.32, 0.64, 1),
+    width 460ms cubic-bezier(0.34, 1.32, 0.64, 1);
   pointer-events: none;
 }
 
 .site-nav__drawer-thumb::before {
   content: '';
   position: absolute;
-  inset: 0;
-  background: var(--glass-sheen);
+  top: 0;
+  right: 0;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 100%
+  );
   border-radius: inherit;
-  opacity: 0.22;
-  transform: translateX(-42%);
   pointer-events: none;
 }
 
@@ -726,25 +770,19 @@ async function handleAdminClick(path: string) {
   position: relative;
   z-index: 1;
   border-radius: var(--radius-md);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.78) 0%,
-    rgba(232, 242, 252, 0.58) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.84);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 250, 252, 0.56) 100%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.86));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.04),
-    0 2px 8px rgba(18, 48, 82, 0.05);
+    0 1px 3px rgba(18, 48, 82, 0.04),
+    0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   overflow: hidden;
   isolation: isolate;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    background-color var(--duration-fast) var(--ease-smooth),
-    border-color var(--duration-fast) var(--ease-smooth),
-    box-shadow var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   min-height: 44px;
@@ -760,42 +798,43 @@ async function handleAdminClick(path: string) {
 .site-nav__drawer-action::before {
   content: '';
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
   background: var(--glass-sheen);
-  border-radius: inherit;
-  opacity: 0.18;
-  transform: translateX(-42%);
-  pointer-events: none;
+  transform: translateX(0);
   transition:
-    opacity var(--duration-base) var(--ease-smooth),
-    transform var(--duration-base) var(--ease-smooth);
-  z-index: -1;
+    transform 680ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  opacity: 0;
 }
 
 .site-nav__drawer-link:hover::before,
 .site-nav__drawer-action:hover::before {
-  opacity: 0.75;
-  transform: translateX(100%);
+  opacity: 1;
+  transform: translateX(200%);
 }
 
 .site-nav__drawer-link:hover {
   border-color: rgba(255, 255, 255, 0.92);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-    0 4px 14px rgba(18, 48, 82, 0.1);
-  transform: translateX(4px);
+    0 2px 6px rgba(18, 48, 82, 0.06),
+    0 0 0 0.5px rgba(255, 255, 255, 0.6),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
+  transform: translateX(3px);
 }
 
 .site-nav__drawer-link.is-active,
 .site-nav__drawer-action.is-active {
-  animation: drawer-active-in var(--duration-base) var(--ease-spring);
+  animation: drawer-active-in 420ms cubic-bezier(0.34, 1.08, 0.64, 1);
 }
 
 @keyframes drawer-active-in {
   from {
-    opacity: 0.55;
-    transform: translateX(-5px) scale(0.985);
+    opacity: 0.6;
+    transform: translateX(-4px) scale(0.988);
   }
   to {
     opacity: 1;
@@ -804,14 +843,14 @@ async function handleAdminClick(path: string) {
 }
 
 .site-nav__drawer-link.is-active {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.92);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(240, 248, 255, 0.72) 100%);
+  border-color: rgba(0, 113, 227, 0.24);
   color: var(--color-brand);
   font-weight: 600;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
-    0 4px 14px rgba(0, 113, 227, 0.12);
+    0 2px 8px rgba(0, 113, 227, 0.12),
+    0 0 0 0.5px rgba(0, 113, 227, 0.15),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
   z-index: 1;
   position: relative;
 }
@@ -826,8 +865,8 @@ async function handleAdminClick(path: string) {
 }
 
 .site-nav__drawer-link.is-pressing {
-  transform: scale(0.96);
-  transition: transform 180ms cubic-bezier(0.34, 1.46, 0.64, 1);
+  transform: scale(0.97);
+  transition: transform 200ms cubic-bezier(0.34, 1.32, 0.64, 1);
 }
 
 /* Drawer sections */
@@ -866,26 +905,20 @@ async function handleAdminClick(path: string) {
   font-size: var(--font-size-body);
   font-weight: 500;
   border-radius: var(--radius-md);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.78) 0%,
-    rgba(232, 242, 252, 0.58) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.84);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 250, 252, 0.56) 100%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.86));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.04),
-    0 2px 8px rgba(18, 48, 82, 0.05);
+    0 1px 3px rgba(18, 48, 82, 0.04),
+    0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   text-align: left;
   cursor: pointer;
   overflow: hidden;
   isolation: isolate;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    border-color var(--duration-fast) var(--ease-smooth),
-    box-shadow var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -895,23 +928,20 @@ async function handleAdminClick(path: string) {
 .site-nav__drawer-action:hover {
   border-color: rgba(255, 255, 255, 0.92);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-    0 4px 14px rgba(18, 48, 82, 0.1);
-  transform: translateX(4px);
+    0 2px 6px rgba(18, 48, 82, 0.06),
+    0 0 0 0.5px rgba(255, 255, 255, 0.6),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
+  transform: translateX(3px);
 }
 
 .site-nav__drawer-action.is-active {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 113, 227, 0.2) 0%,
-    rgba(255, 255, 255, 0.66) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.92);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(240, 248, 255, 0.72) 100%);
+  border-color: rgba(0, 113, 227, 0.24);
   color: var(--color-brand);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    0 4px 14px rgba(0, 113, 227, 0.12);
+    0 2px 8px rgba(0, 113, 227, 0.12),
+    0 0 0 0.5px rgba(0, 113, 227, 0.15),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
 }
 
 .site-nav__drawer-action.is-active::before {
@@ -926,13 +956,14 @@ async function handleAdminClick(path: string) {
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
   opacity: 1;
   transition:
-    height var(--duration-base) var(--ease-spring),
-    opacity var(--duration-base) var(--ease-smooth);
+    height 320ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 2;
 }
 
 .site-nav__drawer-action:active {
   transform: translateX(2px);
+  transition-duration: 120ms;
 }
 
 .site-nav__drawer-action:focus-visible {
@@ -954,17 +985,39 @@ async function handleAdminClick(path: string) {
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .site-nav__handle {
-    transition: none;
+    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .site-nav__handle:hover {
+    transform: translateY(-50%);
+  }
+
+  .site-nav__handle:active {
+    transform: translateY(-50%);
   }
 
   .site-nav__drawer {
-    transition: none;
+    transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .site-nav__drawer-close,
-  .site-nav__drawer-link,
+  .site-nav__drawer-close {
+    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .site-nav__drawer-close:hover,
+  .site-nav__drawer-close:active {
+    transform: none;
+  }
+
+  .site-nav__drawer-link {
+    transition:
+      background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   .site-nav__drawer-action {
-    transition: none;
+    transition:
+      border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .site-nav__drawer-link::before,
@@ -977,32 +1030,33 @@ async function handleAdminClick(path: string) {
     animation: none;
   }
 
-  .site-nav__handle:hover,
   .site-nav__drawer-link:hover,
   .site-nav__drawer-action:hover {
     transform: none;
   }
 
-  .site-nav__handle:active,
   .site-nav__drawer-action:active {
     transform: none;
   }
+
+  .site-nav__drawer-thumb {
+    transition: none;
+  }
 }
 
-/* Support for browsers without backdrop-filter */
-@supports not (backdrop-filter: blur(1px)) {
-  .site-nav__handle {
-    background: rgba(255, 255, 255, 0.92);
-  }
-
-  .site-nav__drawer {
-    background: rgba(255, 255, 255, 0.92);
-  }
-
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .site-nav__drawer-close,
   .site-nav__drawer-link,
   .site-nav__drawer-action {
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--surface-matte);
+    border-color: var(--glass-border);
+  }
+
+  .site-nav__drawer-thumb,
+  .site-nav__drawer-link.is-active,
+  .site-nav__drawer-action.is-active {
+    background: #e3eef8;
+    border-color: var(--accent-ink);
   }
 }
 </style>

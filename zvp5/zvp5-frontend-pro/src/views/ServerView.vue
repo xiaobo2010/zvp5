@@ -991,7 +991,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="overviewError" class="inline-note inline-note--error" role="alert">
+                <p v-if="overviewError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ overviewError }}
                 </p>
 
@@ -1048,7 +1048,7 @@ onBeforeUnmount(() => {
 
                 <p
                   v-if="overviewMaintenance?.enabled"
-                  class="inline-note inline-note--warn"
+                  class="inline-note glass-feedback glass-feedback--warn"
                 >
                   系统当前处于维护模式{{ overviewMaintenance?.announcement ? `：${overviewMaintenance.announcement}` : '。' }}
                 </p>
@@ -1091,7 +1091,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="maintenanceError" class="inline-note inline-note--error" role="alert">
+                <p v-if="maintenanceError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ maintenanceError }}
                 </p>
 
@@ -1106,7 +1106,7 @@ onBeforeUnmount(() => {
 
                 <p
                   v-if="maintenanceEnabled && maintenanceAnnouncement"
-                  class="inline-note inline-note--warn announcement-note"
+                  class="inline-note glass-feedback glass-feedback--warn announcement-note"
                 >
                   {{ maintenanceAnnouncement }}
                 </p>
@@ -1128,10 +1128,10 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <p v-if="maintenanceActionNotice" class="inline-note inline-note--success" role="status">
+                <p v-if="maintenanceActionNotice" class="inline-note glass-feedback glass-feedback--success" role="status">
                   {{ maintenanceActionNotice }}
                 </p>
-                <p v-if="maintenanceActionError" class="inline-note inline-note--error" role="alert">
+                <p v-if="maintenanceActionError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ maintenanceActionError }}
                 </p>
 
@@ -1238,7 +1238,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="dbError" class="inline-note inline-note--error" role="alert">
+                <p v-if="dbError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ dbError }}
                 </p>
 
@@ -1271,7 +1271,7 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">应用表空间</h3>
                       <span class="sub-panel__meta">仅业务表所在表空间</span>
                     </div>
-                    <p v-if="dbTablespaces && !dbTablespaces.available" class="inline-note inline-note--warn">
+                    <p v-if="dbTablespaces && !dbTablespaces.available" class="inline-note glass-feedback glass-feedback--warn">
                       {{ sectionUnavailableText(dbTablespaces) }}
                     </p>
                     <div v-else-if="appTablespaces.length" class="meter-list">
@@ -1308,7 +1308,7 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">负载与连接池</h3>
                       <span class="sub-panel__meta">{{ dbLoad?.source || '—' }}</span>
                     </div>
-                    <p v-if="dbLoad && !dbLoad.available" class="inline-note inline-note--warn">
+                    <p v-if="dbLoad && !dbLoad.available" class="inline-note glass-feedback glass-feedback--warn">
                       {{ sectionUnavailableText(dbLoad) }}
                     </p>
                     <template v-else>
@@ -1328,7 +1328,7 @@ onBeforeUnmount(() => {
 
                     <div v-if="dbPool" class="pool-block">
                       <h4 class="pool-block__title">连接池</h4>
-                      <p v-if="!dbPool.available" class="inline-note inline-note--warn">
+                      <p v-if="!dbPool.available" class="inline-note glass-feedback glass-feedback--warn">
                         {{ sectionUnavailableText(dbPool) }}
                       </p>
                       <template v-else>
@@ -1379,7 +1379,7 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">最大数据表</h3>
                       <span class="sub-panel__meta">按总占用降序 · 仅显示前 6 项</span>
                     </div>
-                    <p v-if="dbTables && !dbTables.available" class="inline-note inline-note--warn">
+                    <p v-if="dbTables && !dbTables.available" class="inline-note glass-feedback glass-feedback--warn">
                       {{ sectionUnavailableText(dbTables) }}
                     </p>
                     <div v-else-if="dbTopTables.length" class="compact-list">
@@ -1436,7 +1436,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="totpError" class="inline-note inline-note--error" role="alert">
+                <p v-if="totpError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ totpError }}
                 </p>
 
@@ -1455,44 +1455,44 @@ onBeforeUnmount(() => {
                   <div
                     v-if="totpData"
                     class="totp-countdown"
-                      role="progressbar"
-                      aria-label="动态码剩余时间"
-                      :aria-valuenow="Math.round(totpProgress)"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                    >
-                      <svg viewBox="0 0 100 100" class="totp-countdown__svg">
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="3"
-                          opacity="0.1"
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="3"
-                          stroke-dasharray="282.74"
-                          :stroke-dashoffset="`${282.74 * (1 - totpProgress / 100)}`"
-                          class="totp-countdown__ring"
-                          :class="{
-                            'totp-countdown__ring--critical': totpRemaining <= 10,
-                            'totp-countdown__ring--warning': totpRemaining > 10 && totpRemaining <= 24
-                          }"
-                          stroke-linecap="round"
-                        />
-                      </svg>
-                      <div class="totp-countdown__text">
-                        <span class="totp-countdown__value">{{ totpRemaining }}</span>
-                        <span class="totp-countdown__unit">s</span>
-                      </div>
+                    role="progressbar"
+                    aria-label="动态码剩余时间"
+                    :aria-valuenow="Math.round(totpProgress)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  >
+                    <svg viewBox="0 0 100 100" class="totp-countdown__svg">
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="45"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="3"
+                        opacity="0.1"
+                      />
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="45"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="3"
+                        stroke-dasharray="282.74"
+                        :stroke-dashoffset="`${282.74 * (1 - totpProgress / 100)}`"
+                        class="totp-countdown__ring"
+                        :class="{
+                          'totp-countdown__ring--critical': totpRemaining <= 10,
+                          'totp-countdown__ring--warning': totpRemaining > 10 && totpRemaining <= 24
+                        }"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                    <div class="totp-countdown__text">
+                      <span class="totp-countdown__value">{{ totpRemaining }}</span>
+                      <span class="totp-countdown__unit">s</span>
                     </div>
+                  </div>
 
                   <div class="totp-actions">
                     <button
@@ -1520,7 +1520,7 @@ onBeforeUnmount(() => {
                   <p class="totp-info__item">查看会写入审计日志</p>
                 </div>
 
-                <p v-if="totpExpired" class="inline-note inline-note--warn" role="status">
+                <p v-if="totpExpired" class="inline-note glass-feedback glass-feedback--warn" role="status">
                   动态码已过期，请刷新后再查看。
                 </p>
               </template>
@@ -1558,7 +1558,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="sshError" class="inline-note inline-note--error" role="alert">
+                <p v-if="sshError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ sshError }}
                 </p>
 
@@ -1593,7 +1593,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div v-else class="state-block">当前没有配置 SSH 目标。</div>
 
-                <p class="inline-note inline-note--info">
+                <p class="inline-note glass-feedback">
                   本页面仅展示目标目录；不提供终端连接、票据创建或命令执行入口。
                 </p>
               </template>
@@ -1668,7 +1668,7 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="filesError" class="inline-note inline-note--error" role="alert">
+                <p v-if="filesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                   {{ filesError }}
                 </p>
 
@@ -1767,7 +1767,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <template v-else>
-                    <p v-if="schemaError" class="inline-note inline-note--error" role="alert">
+                    <p v-if="schemaError" class="inline-note glass-feedback glass-feedback--error" role="alert">
                       {{ schemaError }}
                     </p>
                     <div v-if="filteredSchema.length" class="schema-list" role="group" aria-label="表或视图">
@@ -2078,9 +2078,7 @@ onBeforeUnmount(() => {
 
 .panel {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
   padding: var(--space-5);
@@ -2361,31 +2359,7 @@ onBeforeUnmount(() => {
 }
 
 .inline-note {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-callout);
-  line-height: var(--line-height-normal);
   margin-top: var(--space-4);
-}
-
-.inline-note--error {
-  background: var(--tone-rose-bg);
-  color: var(--tone-rose);
-}
-
-.inline-note--warn {
-  background: var(--tone-amber-bg);
-  color: #8a5600;
-}
-
-.inline-note--success {
-  background: var(--tone-green-bg);
-  color: #1d7a34;
-}
-
-.inline-note--info {
-  background: var(--tone-blue-bg);
-  color: #0a5fb8;
 }
 
 .announcement-note {
@@ -2773,8 +2747,8 @@ onBeforeUnmount(() => {
 .totp-display {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(4px, 1.2vw, 8px);
   width: 320px;
   max-width: 100%;
 }
@@ -2785,18 +2759,15 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border-radius: calc(var(--radius-lg) * 0.8);
-  background: rgba(255, 255, 255, 0.56);
-  backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 8px 32px rgba(0, 0, 0, 0.1);
+  background: var(--glass-floating-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
   font-size: clamp(20px, 5vw, 32px);
   font-weight: 700;
   color: var(--color-text-primary);
   user-select: none;
-  animation: surface-enter 0.5s ease-out both;
+  animation: surface-enter-keyframes 260ms var(--ease-settle) backwards;
   animation-delay: var(--delay, 0ms);
 }
 
@@ -2825,7 +2796,9 @@ onBeforeUnmount(() => {
 .totp-countdown__svg {
   position: absolute;
   inset: 0;
-  color: var(--tone-blue);
+  width: 100%;
+  height: 100%;
+  color: var(--accent-ink);
   transform: rotate(-90deg);
 }
 
@@ -2848,13 +2821,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(12px);
+  background: var(--glass-floating-bg);
   border-radius: 50%;
   width: 56px;
   height: 56px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-rim);
 }
 
 .totp-countdown__value {
@@ -3241,18 +3213,9 @@ onBeforeUnmount(() => {
   gap: var(--space-3);
   flex-wrap: wrap;
   margin-top: var(--space-3);
-  animation: pager-in 300ms var(--ease-spring);
-}
-
-@keyframes pager-in {
-  from {
-    opacity: 0.55;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --surface-start-opacity: 0.55;
+  --surface-travel: 3px;
+  animation: surface-enter-keyframes 230ms var(--ease-settle) backwards;
 }
 
 .pager__info {
@@ -3282,23 +3245,10 @@ onBeforeUnmount(() => {
 
 .confirm-dialog::backdrop {
   background: rgba(15, 30, 50, 0.32);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
 }
 
 .confirm-dialog[open] {
-  animation: dialog-in 180ms var(--ease-out);
-}
-
-@keyframes dialog-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  animation: surface-enter-keyframes 220ms var(--ease-settle) backwards;
 }
 
 .confirm-dialog__body {
