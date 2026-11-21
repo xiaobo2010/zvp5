@@ -674,12 +674,24 @@ onBeforeUnmount(() => {
   flex: none;
   border-radius: 50%;
   color: var(--ink-faint);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 65%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 26%, transparent), transparent 55%),
+    var(--glass-flat);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
 }
 
 .remove:hover {
-  background: color-mix(in srgb, var(--c-danger) 12%, transparent);
+  background-color: color-mix(in srgb, var(--c-danger) 14%, transparent);
   color: var(--c-danger);
+  transform: scale(1.06);
+}
+
+.remove:active {
+  transform: scale(0.9);
 }
 
 .remove:disabled {

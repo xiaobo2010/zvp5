@@ -605,13 +605,25 @@ onMounted(load)
   height: 26px;
   border-radius: 50%;
   color: var(--ink-faint);
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 70%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 30%, transparent), transparent 55%),
+    var(--glass-flat);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
 }
 
 .mini:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent-ink);
+  transform: translateY(-1px) scale(1.06);
+}
+
+.mini:active {
+  transform: scale(0.9);
 }
 
 .mini:disabled {

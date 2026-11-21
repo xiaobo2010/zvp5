@@ -259,12 +259,23 @@ onMounted(load)
   color: var(--ink-faint);
 }
 
-.expand-enter-active,
-.expand-leave-active {
-  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+.expand-enter-active {
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 380ms var(--spring-soft);
 }
 
-.expand-enter-from,
+.expand-leave-active {
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+
+.expand-enter-from {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.995);
+}
+
 .expand-leave-to {
   opacity: 0;
   transform: translateY(-4px);

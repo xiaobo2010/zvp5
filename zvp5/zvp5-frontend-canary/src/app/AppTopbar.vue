@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useUiStore } from '@/shared/stores/ui'
 import { useSessionStore } from '@/shared/stores/session'
 import ZAvatar from '@/shared/ui/ZAvatar.vue'
+import ZGlassSurface from '@/shared/ui/ZGlassSurface.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 
 const route = useRoute()
@@ -22,10 +23,34 @@ function toggleLocale() {
   locale.value = next
   ui.setLocale(next)
 }
+
+/* 滚动时才加投影：避免静止时与内容抢视觉重心，也避免滚动中反复重算布局。 */
+const scrolled = ref(false)
+let frame = 0
+
+function onScroll() {
+  if (frame) return
+  frame = window.requestAnimationFrame(() => {
+    scrolled.value = window.scrollY > 8
+    frame = 0
+  })
+}
+
+onMounted(() => {
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+  if (frame) window.cancelAnimationFrame(frame)
+})
 </script>
 
 <template>
-  <header class="topbar">
+  <header class="topbar glass-host" :class="{ 'is-scrolled': scrolled }">
+    <ZGlassSurface material="nav" depth="lens" :track="true" />
+
     <div class="left">
       <RouterLink to="/" class="compact-brand" aria-label="ZVP5 首页">ZVP5</RouterLink>
       <h1 class="page-title">{{ title }}</h1>
@@ -61,10 +86,12 @@ function toggleLocale() {
   gap: var(--space-4);
   height: var(--topbar-height);
   padding: 0 var(--gutter);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  backdrop-filter: blur(18px) saturate(140%);
+  border-bottom: 1px solid color-mix(in srgb, var(--glass-border) 55%, transparent);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+
+.topbar.is-scrolled {
+  box-shadow: 0 12px 30px -24px rgba(40, 30, 16, 0.38);
 }
 
 .left {
@@ -102,32 +129,59 @@ function toggleLocale() {
 }
 
 .chip {
+  position: relative;
   display: grid;
   place-items: center;
   min-width: 34px;
   height: 34px;
   padding: 0 0.5rem;
   border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 80%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 34%, transparent), transparent 55%),
+    var(--glass-flat);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 2px 8px -6px rgba(40, 30, 16, 0.4);
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--ink-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    transform var(--dur-micro) var(--spring-snappy),
+    box-shadow var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    background-color var(--dur-micro) var(--ease-out);
 }
 
 .chip:hover {
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--ink);
+  background-color: color-mix(in srgb, var(--glass-hi) 30%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 8px 18px -10px rgba(40, 30, 16, 0.45);
+  transform: translateY(-1px) scale(1.04);
+}
+
+.chip:active {
+  transform: scale(0.94);
 }
 
 .avatar-link {
   display: inline-flex;
   margin-left: 0.2rem;
   border-radius: 50%;
-  transition: transform var(--dur-fast) var(--ease-out);
+  transition:
+    transform var(--dur-micro) var(--spring-snappy),
+    box-shadow var(--dur-micro) var(--ease-out);
 }
 
 .avatar-link:hover {
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 8px 18px -10px rgba(40, 30, 16, 0.5);
+}
+
+.avatar-link:active {
+  transform: scale(0.95);
 }
 
 @media (max-width: 1080px) {

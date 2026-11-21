@@ -469,12 +469,29 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   flex: none;
   border-radius: 50%;
   color: var(--ink-faint);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 70%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 30%, transparent), transparent 55%),
+    var(--glass-flat);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .edit:hover {
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent-ink);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    0 8px 18px -12px rgba(40, 30, 16, 0.5);
+  transform: translateY(-1px) scale(1.05);
+}
+
+.edit:active {
+  transform: scale(0.9);
 }
 
 .pager {

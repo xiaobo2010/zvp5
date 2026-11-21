@@ -8,6 +8,7 @@ import { ApiError } from '@/shared/http/errors'
 import ZField from '@/shared/ui/ZField.vue'
 import ZButton from '@/shared/ui/ZButton.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
+import ZGlassSurface from '@/shared/ui/ZGlassSurface.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 
 const { t, locale } = useI18n()
@@ -124,95 +125,98 @@ function toggleLocale() {
     </section>
 
     <section class="panel">
-      <div class="form-wrap">
-        <header class="form-head">
-          <p class="eyebrow">{{ mode === 'device' ? t('login.deviceTitle') : t('login.formEyebrow') }}</p>
-          <h2>{{ mode === 'device' ? t('login.deviceTitle') : t('login.formTitle') }}</h2>
-        </header>
+      <div class="form-card glass-host">
+        <ZGlassSurface material="frosted" depth="lens" :track="true" />
+        <div class="form-wrap">
+          <header class="form-head">
+            <p class="eyebrow">{{ mode === 'device' ? t('login.deviceTitle') : t('login.formEyebrow') }}</p>
+            <h2>{{ mode === 'device' ? t('login.deviceTitle') : t('login.formTitle') }}</h2>
+          </header>
 
-        <form v-if="mode === 'password'" class="form" @submit.prevent="submit">
-          <ZField
-            id="student-id"
-            v-model="id"
-            :label="t('login.idLabel')"
-            :placeholder="t('login.idPlaceholder')"
-            autocomplete="username"
-            inputmode="text"
-            icon="user"
-          />
-          <ZField
-            id="password"
-            v-model="password"
-            :label="t('login.passwordLabel')"
-            :placeholder="t('login.passwordPlaceholder')"
-            type="password"
-            autocomplete="current-password"
-            allow-reveal
-            icon="shield"
-            :error="error"
-            :hint="t('login.totpHint')"
-            @enter="submit"
-          />
-          <ZButton
-            type="submit"
-            variant="primary"
-            size="lg"
-            block
-            :loading="session.busy"
-            :disabled="!canSubmit"
-          >
-            {{ session.busy ? t('login.submitting') : t('login.submit') }}
-          </ZButton>
-        </form>
+          <form v-if="mode === 'password'" class="form" @submit.prevent="submit">
+            <ZField
+              id="student-id"
+              v-model="id"
+              :label="t('login.idLabel')"
+              :placeholder="t('login.idPlaceholder')"
+              autocomplete="username"
+              inputmode="text"
+              icon="user"
+            />
+            <ZField
+              id="password"
+              v-model="password"
+              :label="t('login.passwordLabel')"
+              :placeholder="t('login.passwordPlaceholder')"
+              type="password"
+              autocomplete="current-password"
+              allow-reveal
+              icon="shield"
+              :error="error"
+              :hint="t('login.totpHint')"
+              @enter="submit"
+            />
+            <ZButton
+              type="submit"
+              variant="primary"
+              size="lg"
+              block
+              :loading="session.busy"
+              :disabled="!canSubmit"
+            >
+              {{ session.busy ? t('login.submitting') : t('login.submit') }}
+            </ZButton>
+          </form>
 
-        <form v-else class="form" @submit.prevent="submitTemp">
-          <ZAlert tone="info" :title="t('login.deviceTitle')" :description="t('login.deviceDesc')" />
-          <ZField
-            id="challenge"
-            v-model="challenge"
-            :label="t('login.challengeLabel')"
-            readonly
-            disabled
-          />
-          <ZField
-            id="temp-password"
-            v-model="tempPassword"
-            :label="t('login.tempPasswordLabel')"
-            type="password"
-            allow-reveal
-            :error="error"
-            autocomplete="one-time-code"
-            @enter="submitTemp"
-          />
-          <ZButton
-            type="submit"
-            variant="primary"
-            size="lg"
-            block
-            :loading="session.busy"
-            :disabled="!tempPassword"
-          >
-            {{ t('login.tempSubmit') }}
-          </ZButton>
-          <ZButton variant="quiet" block @click="backToPassword">
-            {{ t('login.backToPassword') }}
-          </ZButton>
-        </form>
+          <form v-else class="form" @submit.prevent="submitTemp">
+            <ZAlert tone="info" :title="t('login.deviceTitle')" :description="t('login.deviceDesc')" />
+            <ZField
+              id="challenge"
+              v-model="challenge"
+              :label="t('login.challengeLabel')"
+              readonly
+              disabled
+            />
+            <ZField
+              id="temp-password"
+              v-model="tempPassword"
+              :label="t('login.tempPasswordLabel')"
+              type="password"
+              allow-reveal
+              :error="error"
+              autocomplete="one-time-code"
+              @enter="submitTemp"
+            />
+            <ZButton
+              type="submit"
+              variant="primary"
+              size="lg"
+              block
+              :loading="session.busy"
+              :disabled="!tempPassword"
+            >
+              {{ t('login.tempSubmit') }}
+            </ZButton>
+            <ZButton variant="quiet" block @click="backToPassword">
+              {{ t('login.backToPassword') }}
+            </ZButton>
+          </form>
 
-        <footer class="form-foot">
-          <span class="badge-line">
-            <ZIcon name="shield" :size="15" />
-            RSA · TOTP · Device Guard
-          </span>
-          <div class="switches">
-            <button type="button" class="switch" @click="toggleLocale">
-              {{ locale === 'zh-CN' ? 'EN' : '中' }}
-            </button>
-            <button type="button" class="switch" @click="ui.toggleTheme()">
-              <ZIcon :name="ui.isDark ? 'sun' : 'moon'" :size="16" />
-            </button>
-          </div>
-        </footer>
+          <footer class="form-foot">
+            <span class="badge-line">
+              <ZIcon name="shield" :size="15" />
+              RSA · TOTP · Device Guard
+            </span>
+            <div class="switches">
+              <button type="button" class="switch" @click="toggleLocale">
+                {{ locale === 'zh-CN' ? 'EN' : '中' }}
+              </button>
+              <button type="button" class="switch" @click="ui.toggleTheme()">
+                <ZIcon :name="ui.isDark ? 'sun' : 'moon'" :size="16" />
+              </button>
+            </div>
+          </footer>
+        </div>
       </div>
     </section>
   </div>
@@ -355,21 +359,32 @@ function toggleLocale() {
     radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.85), transparent 46%),
     radial-gradient(circle at 62% 70%, color-mix(in srgb, var(--c-sage) 55%, transparent), transparent 60%),
     linear-gradient(150deg, #e8bd6e, #a96a1c 65%, #6f4210);
-  box-shadow: 0 30px 70px -30px rgba(120, 80, 20, 0.6);
+  box-shadow:
+    inset 0 2px 6px rgba(255, 255, 255, 0.4),
+    0 30px 70px -30px rgba(120, 80, 20, 0.6);
   opacity: 0.9;
-  animation: float 9s var(--ease-in-out) infinite;
 }
 
 .panel {
   display: grid;
   place-items: center;
   padding: clamp(1.5rem, 1rem + 3vw, 4rem);
-  background: var(--bg);
+  background:
+    radial-gradient(40rem 30rem at 18% 8%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 62%),
+    radial-gradient(36rem 28rem at 88% 92%, color-mix(in srgb, var(--c-sage) 10%, transparent), transparent 60%),
+    var(--bg);
+}
+
+.form-card {
+  width: 100%;
+  max-width: 27rem;
+  padding: clamp(1.4rem, 1rem + 2.2vw, 2.35rem);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }
 
 .form-wrap {
-  width: 100%;
-  max-width: 25rem;
   animation: rise var(--dur-slow) var(--ease-out) 80ms both;
 }
 
@@ -421,15 +436,28 @@ function toggleLocale() {
   height: 30px;
   padding: 0 0.4rem;
   border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 75%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 28%, transparent), transparent 55%),
+    var(--glass-flat);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--ink-muted);
-  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
 }
 
 .switch:hover {
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  background-color: color-mix(in srgb, var(--glass-hi) 36%, transparent);
   color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.switch:active {
+  transform: scale(0.92);
 }
 
 @keyframes rise {
@@ -440,16 +468,6 @@ function toggleLocale() {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
   }
 }
 
