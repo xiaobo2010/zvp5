@@ -126,7 +126,9 @@ const zhCN = {
     tabs: {
       review: '活动审核',
       users: '用户',
-      groups: '班级'
+      groups: '班级',
+      notify: '通知',
+      logs: '审计'
     },
     users: {
       title: '用户',
@@ -183,6 +185,53 @@ const zhCN = {
       memberAdded: '已加入班级',
       memberRemoved: '已移出班级',
       permissionGroupHint: '权限组的成员由角色策略决定，不能在此增删。'
+    },
+    notify: {
+      title: '通知发布',
+      subtitle: '发布公告，编辑或停用既有通知。',
+      create: '发布通知',
+      createTitle: '发布通知',
+      editTitle: '编辑通知',
+      titleLabel: '标题',
+      contentLabel: '正文',
+      stateLabel: '状态',
+      password: '当前密码',
+      passwordHint: '发布与修改需要再验证一次密码，令牌 5 分钟内有效。',
+      empty: '还没有通知',
+      inactive: '已停用',
+      activeState: '生效中',
+      auto: '自动同步',
+      published: '通知已发布',
+      updated: '通知已更新',
+      disable: '停用',
+      enable: '启用',
+      edit: '编辑',
+      author: '发布人',
+      version: '版本',
+      save: '保存',
+      required: '标题、正文和密码都不能为空',
+      verifyFailed: '密码验证失败'
+    },
+    logs: {
+      title: '审计日志',
+      subtitle: '平台写操作与安全事件的可追溯记录。',
+      searchPlaceholder: '搜索 URL 或内容',
+      empty: '没有匹配的日志',
+      level: '级别',
+      type: '类型',
+      performer: '操作者',
+      groups: {
+        all: '全部',
+        security: '安全',
+        write: '写操作',
+        system: '系统'
+      },
+      levelLabels: {
+        all: '全部',
+        info: '信息',
+        warning: '警告',
+        error: '错误'
+      }
     }
   },
   profile: {
@@ -348,7 +397,9 @@ const enUS = {
     tabs: {
       review: 'Reviews',
       users: 'Users',
-      groups: 'Classes'
+      groups: 'Classes',
+      notify: 'Notices',
+      logs: 'Audit'
     },
     users: {
       title: 'Users',
@@ -405,6 +456,53 @@ const enUS = {
       memberAdded: 'Added to class',
       memberRemoved: 'Removed from class',
       permissionGroupHint: 'Permission group members come from role policies and cannot be edited here.'
+    },
+    notify: {
+      title: 'Announcements',
+      subtitle: 'Publish notices, edit or deactivate existing ones.',
+      create: 'New notice',
+      createTitle: 'New notice',
+      editTitle: 'Edit notice',
+      titleLabel: 'Title',
+      contentLabel: 'Body',
+      stateLabel: 'State',
+      password: 'Current password',
+      passwordHint: 'Publishing and editing require password verification; the token lasts 5 minutes.',
+      empty: 'No notices yet',
+      inactive: 'Inactive',
+      activeState: 'Live',
+      auto: 'Auto-synced',
+      published: 'Notice published',
+      updated: 'Notice updated',
+      disable: 'Deactivate',
+      enable: 'Activate',
+      edit: 'Edit',
+      author: 'Author',
+      version: 'Version',
+      save: 'Save',
+      required: 'Title, body and password are required',
+      verifyFailed: 'Password verification failed'
+    },
+    logs: {
+      title: 'Audit log',
+      subtitle: 'Traceable record of write operations and security events.',
+      searchPlaceholder: 'Search URL or content',
+      empty: 'No logs match',
+      level: 'Level',
+      type: 'Type',
+      performer: 'Actor',
+      groups: {
+        all: 'All',
+        security: 'Security',
+        write: 'Writes',
+        system: 'System'
+      },
+      levelLabels: {
+        all: 'All',
+        info: 'Info',
+        warning: 'Warning',
+        error: 'Error'
+      }
     }
   },
   profile: {

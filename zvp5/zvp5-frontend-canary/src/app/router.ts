@@ -87,6 +87,18 @@ const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'manage/notifications',
+        name: 'manage-notifications',
+        component: () => import('@/pages/manage/NotifyPage.vue'),
+        meta: { titleKey: 'manage.notify.title' }
+      },
+      {
+        path: 'manage/logs',
+        name: 'manage-logs',
+        component: () => import('@/pages/manage/LogsPage.vue'),
+        meta: { titleKey: 'manage.logs.title' }
+      },
+      {
         path: 'server/:section?',
         name: 'server',
         component: () => import('@/pages/system/PlaceholderPage.vue'),

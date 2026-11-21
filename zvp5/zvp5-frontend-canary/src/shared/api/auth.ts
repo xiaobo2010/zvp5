@@ -49,6 +49,21 @@ export async function fetchProfile(oid: string): Promise<UserProfile> {
   return request<UserProfile>({ url: `/v1/users/${oid}`, method: 'GET' })
 }
 
+/**
+ * 密码再认证：换一张 5 分钟有效的短期令牌，用于发布通知、删号等敏感写操作。
+ * 服务端对 `purpose !== 'login'` 一律只签短期令牌，不会签发会话。
+ */
+export async function verifyPassword(id: string, password: string): Promise<string> {
+  const pem = await fetchPublicCert()
+  const credential = await encryptCredential(pem, password)
+  const result = await request<{ token: string }>({
+    url: '/v1/users/auth',
+    method: 'POST',
+    data: { id, credential, mode: 'short', purpose: 'verify' }
+  })
+  return result.token
+}
+
 export async function fetchMyPolicy(): Promise<FeaturePolicy> {
   const payload = await request<unknown>({ url: '/system/role-policies/me', method: 'GET' })
   return unwrap<FeaturePolicy>(payload)

@@ -1,7 +1,9 @@
 import { request } from '@/shared/http/client'
 import type {
   ActivityStatus,
+  AdminNotification,
   AdminUserRow,
+  AuditLogRow,
   GroupMemberRow,
   GroupRow,
   TimeMode,
@@ -141,4 +143,67 @@ export async function addGroupMember(groupId: string, userId: string): Promise<v
 
 export async function removeGroupMember(groupId: string, userId: string): Promise<void> {
   await request({ url: `/v1/groups/${groupId}/users/${userId}`, method: 'DELETE' })
+}
+
+/** 管理端通知列表：包含已停用条目，按创建时间倒序。 */
+export async function fetchAdminNotifications(): Promise<{
+  version: number
+  notifications: AdminNotification[]
+}> {
+  const body = await request<unknown>({ url: '/v1/notifications/admin', method: 'GET' })
+  const data = (body as { data?: { version: number; notifications: AdminNotification[] } }).data
+  return { version: data?.version ?? 0, notifications: data?.notifications ?? [] }
+}
+
+export async function createNotification(payload: {
+  title: string
+  content: string
+  verification_token: string
+}): Promise<AdminNotification> {
+  const body = await request<unknown>({ url: '/v1/notifications', method: 'POST', data: payload })
+  const data = (body as { data?: { notification: AdminNotification } }).data
+  return data!.notification
+}
+
+export async function updateNotification(
+  id: string,
+  payload: {
+    title?: string
+    content?: string
+    active?: boolean
+    verification_token: string
+  }
+): Promise<AdminNotification> {
+  const body = await request<unknown>({
+    url: `/v1/notifications/${id}`,
+    method: 'PUT',
+    data: payload
+  })
+  const data = (body as { data?: { notification: AdminNotification } }).data
+  return data!.notification
+}
+
+/** 审计日志：`metadata.size` 是总数，`data` 是当页行。 */
+export async function fetchLogs(params: {
+  page: number
+  perpage: number
+  query: string
+  type: string
+  level: string
+}): Promise<{ data: AuditLogRow[]; total: number }> {
+  const body = await request<{
+    data?: AuditLogRow[]
+    metadata?: { size?: number }
+  }>({
+    url: '/logs',
+    method: 'GET',
+    params: {
+      page: params.page,
+      perpage: params.perpage,
+      query: params.query,
+      type: params.type,
+      level: params.level
+    }
+  })
+  return { data: body.data ?? [], total: body.metadata?.size ?? 0 }
 }

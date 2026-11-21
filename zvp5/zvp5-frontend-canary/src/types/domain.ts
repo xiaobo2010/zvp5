@@ -90,6 +90,27 @@ export interface NotificationItem {
   updated_at?: string
 }
 
+/** 管理端的通知行：多了启用状态，用户侧列表不会返回停用条目。 */
+export interface AdminNotification extends NotificationItem {
+  active?: boolean
+  source_ref?: string | null
+}
+
+/** 审计日志行（`GET /v1/logs`）。timestamp 是秒级浮点。 */
+export interface AuditLogRow {
+  _id: string
+  url: string
+  user: string | null
+  user_name?: string | null
+  data: string
+  timestamp: number
+  type: string
+  level: string
+  xuehai_id?: string | null
+  client_ip?: string | null
+  user_agent?: string | null
+}
+
 /** 管理端用户行（`GET /v1/users`）：比 UserProfile 多一个班级名与封禁标记。 */
 export interface AdminUserRow {
   _id: string

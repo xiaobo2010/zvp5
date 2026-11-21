@@ -14,6 +14,12 @@ const tabs = computed(() => {
       { to: '/manage/groups', label: t('manage.tabs.groups') }
     )
   }
+  if (session.isAdmin || session.can('notify.publish')) {
+    items.push({ to: '/manage/notifications', label: t('manage.tabs.notify') })
+  }
+  if (session.isAdmin || session.can('logs.read')) {
+    items.push({ to: '/manage/logs', label: t('manage.tabs.logs') })
+  }
   return items
 })
 </script>
