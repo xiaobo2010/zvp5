@@ -16,6 +16,21 @@ export interface UserProfile {
   banned?: boolean
 }
 
+/** `GET /v1/users/me/device`：当前请求携带的设备号 + 主设备绑定/封禁状态。 */
+export interface MyDeviceState {
+  xuehai_id: string
+  primary_xuehai_id: string | null
+  device_banned: boolean
+  device_ban_reason: string | null
+  device_ban_until: string | null
+}
+
+/** `GET /v1/users/{oid}/totp`：本人当前登录动态码与过期时间（epoch 秒）。 */
+export interface TotpCode {
+  otp: string
+  exp: number
+}
+
 export interface LoginResult {
   token: string
   _id: string
