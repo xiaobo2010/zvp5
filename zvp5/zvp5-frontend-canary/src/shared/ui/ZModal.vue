@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue'
+import { AnimatePresence, motion } from 'motion-v'
+import { fades, springs } from '@/motion/presets'
 import ZGlassSurface from './ZGlassSurface.vue'
 import ZIcon from './ZIcon.vue'
 
@@ -41,16 +43,29 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <Transition name="modal">
-      <div v-if="modelValue" class="overlay" @click.self="close">
-        <div
+    <AnimatePresence>
+      <motion.div
+        v-if="modelValue"
+        key="overlay"
+        class="overlay"
+        :initial="{ opacity: 0 }"
+        :animate="{ opacity: 1 }"
+        :exit="{ opacity: 0 }"
+        :transition="fades.scrim"
+        @click.self="close"
+      >
+        <motion.div
           class="panel glass-host"
           :class="`size-${size}`"
           role="dialog"
           aria-modal="true"
           :aria-label="title"
+          :initial="{ opacity: 0, y: 18, scale: 0.96 }"
+          :animate="{ opacity: 1, y: 0, scale: 1 }"
+          :exit="{ opacity: 0, y: 8, scale: 0.98 }"
+          :transition="springs.soft"
         >
-          <ZGlassSurface material="frosted" depth="lens" :track="true" />
+          <ZGlassSurface material="frosted" depth="lens" interactive :elasticity="0.5" />
 
           <div v-if="title || !hideClose" class="head">
             <div class="titles">
@@ -63,9 +78,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="body"><slot /></div>
           <div v-if="$slots.footer" class="footer"><slot name="footer" /></div>
-        </div>
-      </div>
-    </Transition>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   </Teleport>
 </template>
 
@@ -171,48 +186,5 @@ onBeforeUnmount(() => {
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6) var(--space-6);
   border-top: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
-}
-
-/* --- 进入：弹簧上浮 + 轻微放大；退出：快速收敛 ------------------------- */
-.modal-enter-active {
-  transition: opacity 260ms var(--ease-out);
-}
-
-.modal-enter-active .panel {
-  transition:
-    transform 500ms var(--spring-snappy),
-    opacity 260ms var(--ease-out);
-}
-
-.modal-leave-active {
-  transition: opacity 180ms var(--ease-out);
-}
-
-.modal-leave-active .panel {
-  transition:
-    transform 180ms var(--ease-out),
-    opacity 150ms var(--ease-out);
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .panel {
-  opacity: 0;
-  transform: translateY(18px) scale(0.96);
-}
-
-.modal-leave-to .panel {
-  opacity: 0;
-  transform: translateY(8px) scale(0.98);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .modal-enter-from .panel,
-  .modal-leave-to .panel {
-    transform: none;
-  }
 }
 </style>

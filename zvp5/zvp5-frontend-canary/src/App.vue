@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { MotionConfig } from 'motion-v'
 import ZToastViewport from '@/shared/ui/ZToastViewport.vue'
 import ZGlassDefs from '@/shared/ui/ZGlassDefs.vue'
 import { useUiStore } from '@/shared/stores/ui'
@@ -16,7 +17,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <RouterView />
-  <ZGlassDefs />
-  <ZToastViewport />
+  <!-- reduced-motion="user"：系统开启「减少动态效果」时，弹簧与位移收敛为淡入淡出 -->
+  <MotionConfig reduced-motion="user">
+    <RouterView />
+    <ZGlassDefs />
+    <ZToastViewport />
+  </MotionConfig>
 </template>
+

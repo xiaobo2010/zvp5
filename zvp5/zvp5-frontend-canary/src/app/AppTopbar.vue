@@ -49,7 +49,7 @@ onBeforeUnmount(() => {
 
 <template>
   <header class="topbar glass-host" :class="{ 'is-scrolled': scrolled }">
-    <ZGlassSurface material="nav" depth="lens" :track="true" />
+    <ZGlassSurface material="nav" depth="lens" mode="standard" interactive :elasticity="0.7" />
 
     <div class="left">
       <RouterLink to="/" class="compact-brand" aria-label="ZVP5 首页">ZVP5</RouterLink>

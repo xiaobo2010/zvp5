@@ -571,17 +571,35 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   border: 1px solid var(--line);
   font-size: var(--text-sm);
   color: var(--ink-muted);
-  background: var(--surface-raised);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 22%, transparent), transparent 58%),
+    var(--surface-raised);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 55%, transparent);
   transition:
     border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out);
+    background-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-micro) var(--spring-snappy);
+}
+
+.pick:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  transform: translateY(-1px);
+}
+
+.pick:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .pick.is-on {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
   background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised));
   color: var(--accent-ink);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 70%, transparent),
+    0 6px 16px -12px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .pick:disabled {

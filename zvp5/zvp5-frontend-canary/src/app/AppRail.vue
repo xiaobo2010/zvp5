@@ -2,6 +2,8 @@
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { motion } from 'motion-v'
+import { springs } from '@/motion/presets'
 import { useSessionStore } from '@/shared/stores/session'
 import { useUiStore } from '@/shared/stores/ui'
 import { useNavItems, useRoleLabel } from '@/app/navigation'
@@ -73,7 +75,7 @@ async function signOut() {
 
 <template>
   <aside class="rail glass-host">
-    <ZGlassSurface material="nav" depth="lens" track />
+    <ZGlassSurface material="nav" depth="lens" interactive :elasticity="0.7" />
 
     <RouterLink to="/" class="brand" aria-label="ZVP5 首页">
       <span class="mark" aria-hidden="true">Z</span>
@@ -84,15 +86,19 @@ async function signOut() {
     </RouterLink>
 
     <nav ref="navEl" class="nav" aria-label="主导航">
-      <span
+      <motion.span
         class="nav-pill"
-        :class="{ 'is-ready': pill.ready }"
         aria-hidden="true"
-        :style="{
-          transform: `translate(${pill.x}px, ${pill.y}px)`,
-          width: `${pill.width}px`,
-          height: `${pill.height}px`
+        :initial="false"
+        :animate="{
+          x: pill.x,
+          y: pill.y,
+          width: pill.width,
+          height: pill.height,
+          opacity: pill.ready ? 1 : 0
         }"
+        :transition="springs.snappy"
+        :style="{ borderRadius: 'var(--radius-sm)' }"
       />
       <RouterLink
         v-for="item in navItems"
@@ -230,16 +236,8 @@ async function signOut() {
     inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 70%, transparent),
     0 6px 18px -12px color-mix(in srgb, var(--accent) 60%, transparent);
   opacity: 0;
-  transition:
-    transform 460ms var(--spring-snappy),
-    width 320ms var(--spring-snappy),
-    height 320ms var(--spring-snappy),
-    opacity 180ms var(--ease-out);
+  will-change: transform;
   pointer-events: none;
-}
-
-.nav-pill.is-ready {
-  opacity: 1;
 }
 
 .nav-item {

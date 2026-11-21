@@ -2,6 +2,8 @@
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { motion } from 'motion-v'
+import { springs } from '@/motion/presets'
 import { useNavItems } from '@/app/navigation'
 import ZGlassSurface from '@/shared/ui/ZGlassSurface.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
@@ -53,17 +55,19 @@ watch(
 
 <template>
   <nav class="dock glass-host" aria-label="移动端主导航">
-    <ZGlassSurface material="prominent" depth="lens" :track="true" />
+    <ZGlassSurface material="prominent" depth="lens" interactive :elasticity="0.8" />
     <div ref="track" class="dock-track">
-      <span
+      <motion.span
         class="dock-pill"
-        :class="{ 'is-ready': pill.ready }"
         aria-hidden="true"
-        :style="{
-          transform: `translateX(${pill.x}px)`,
-          width: `${pill.width}px`,
-          height: `${pill.height}px`
+        :initial="false"
+        :animate="{
+          x: pill.x,
+          width: pill.width,
+          height: pill.height,
+          opacity: pill.ready ? 1 : 0
         }"
+        :transition="springs.snappy"
       />
       <RouterLink
         v-for="item in items"
@@ -121,16 +125,8 @@ watch(
     color-mix(in srgb, var(--accent) 16%, var(--glass-bg-strong));
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 66%, transparent);
   opacity: 0;
+  will-change: transform;
   pointer-events: none;
-  transition:
-    transform 460ms var(--spring-snappy),
-    width 320ms var(--spring-snappy),
-    height 320ms var(--spring-snappy),
-    opacity 180ms var(--ease-out);
-}
-
-.dock-pill.is-ready {
-  opacity: 1;
 }
 
 .dock-item {

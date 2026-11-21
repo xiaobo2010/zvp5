@@ -12,6 +12,21 @@
   isolation: isolate;
 }
 
+/* 指针高光位置：注册成可插值的自定义属性后，ZGlassSurface 只负责写目标值，
+   插值交给合成线程，mousemove 不会触发组件重渲染。
+   旧浏览器不支持 @property 时退化为「直接跳变」，视觉仍可用。 */
+@property --glass-x {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --glass-y {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 .glass,
 .glass-strong {
   position: relative;
