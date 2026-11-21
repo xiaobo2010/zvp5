@@ -332,6 +332,18 @@ def test_tracker_handles_several_frames_in_one_chunk() -> None:
     assert tracker.total_tokens == 12
 
 
+def test_tracker_releases_consumed_frames_from_its_buffer() -> None:
+    """已解析的帧立刻从缓冲区丢掉（bytearray 原地删除，不整段复制）。"""
+    tracker = usage.StreamUsageTracker()
+
+    for _ in range(1000):
+        tracker.feed(DELTA_FRAME)
+        assert tracker._buffer == bytearray()
+
+    assert tracker.content_chars == 2000
+    assert tracker.captured is False
+
+
 def test_tracker_parses_the_last_frame_without_a_trailing_blank_line() -> None:
     """上游可能在最后一帧后直接关连接：没有空行收尾也要读出来。"""
     tracker = usage.StreamUsageTracker()

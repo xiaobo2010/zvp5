@@ -565,3 +565,75 @@ def test_usage_frame_still_wins_over_the_estimate(catalog, stream, blocking, aud
     row = audit_repo.rows[0]
     assert row["total_tokens"] == 13
     assert row["units"] == ai_usage.af_units(13, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# 失败计费：完全没产出才免扣
+# ---------------------------------------------------------------------------
+
+
+def test_stream_failure_without_output_is_not_charged_but_still_audited(
+    catalog, stream, audit_repo, monkeypatch
+):
+    """没 usage 且正文 0 字符的失败：units=0、不扣配额，审计行照写。"""
+    charges = Recorder()
+    monkeypatch.setattr(quota, "consume", charges)
+    catalog([_entry()])
+    stream(
+        b'data: {"choices":[{"delta":{}}]}\n\n',
+        routing.RouteError("AI_TIMEOUT", "upstream timed out", 504),
+    )
+
+    response = _post_stream()
+
+    assert response.status_code == 200
+    assert json.loads(_frames(response.text)[-2])["error"]["code"] == "AI_TIMEOUT"
+    assert charges.calls == []
+    row = audit_repo.rows[0]
+    assert row["status"] == "timeout"
+    assert row["units"] == 0
+    assert row["total_tokens"] is None
+
+
+def test_stream_failure_after_partial_output_is_charged_by_estimate(
+    catalog, stream, audit_repo, monkeypatch
+):
+    """已产出部分正文的失败仍按估算收费：上游成本已经发生。"""
+    charges = Recorder()
+    monkeypatch.setattr(quota, "consume", charges)
+    catalog([_entry()])
+    stream(
+        DELTA.format("半句").encode(),
+        routing.RouteError("AI_TIMEOUT", "upstream timed out", 504),
+    )
+
+    response = _post_stream()
+
+    assert response.status_code == 200
+    expected = ai_usage.estimate_af(
+        ai_usage.prompt_chars({"messages": [{"role": "user", "content": "hi"}]}),
+        2,
+        1.0,
+    )
+    row = audit_repo.rows[0]
+    assert row["units"] == expected >= 1
+    assert row["total_tokens"] is None
+    assert charges.calls[0][0] == (ADMIN, "af", expected)
+
+
+def test_blocking_failure_is_audited_without_charging(
+    catalog, stream, blocking, audit_repo, monkeypatch
+):
+    """非流式（含流式回退到非流式）的失败路径本来就不扣额度。"""
+    charges = Recorder()
+    monkeypatch.setattr(quota, "consume", charges)
+    catalog([_entry()])
+    stream(RuntimeError("boom"))
+    blocking(routing.RouteError("AI_TIMEOUT", "upstream timed out", 504))
+
+    response = _post_stream()
+
+    assert response.status_code == 504
+    assert [row["status"] for row in audit_repo.rows] == ["error", "timeout"]
+    assert [row["units"] for row in audit_repo.rows] == [0, 0]
+    assert charges.calls == []
