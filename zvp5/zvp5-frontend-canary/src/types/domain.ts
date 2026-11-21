@@ -90,6 +90,37 @@ export interface NotificationItem {
   updated_at?: string
 }
 
+/** 管理端用户行（`GET /v1/users`）：比 UserProfile 多一个班级名与封禁标记。 */
+export interface AdminUserRow {
+  _id: string
+  id: string
+  name: string
+  roles: UserRole[]
+  class_id: string
+  class_name: string
+  banned: boolean
+}
+
+/** 班级或权限组（`GET /v1/groups`）。权限组没有 type 字段时按 name+permissions 判断。 */
+export interface GroupRow {
+  _id: string
+  name: string
+  type?: 'class' | 'permission'
+  description?: string
+  permissions?: string[]
+}
+
+/** 班级 / 权限组成员行（`GET /v1/groups/{id}/users`）。 */
+export interface GroupMemberRow {
+  _id: string
+  id: string
+  name: string
+  roles: UserRole[]
+  class_id: string
+  class_name: string
+  banned: boolean
+}
+
 export interface FeaturePolicy {
   features: Record<string, boolean>
   quotas: {

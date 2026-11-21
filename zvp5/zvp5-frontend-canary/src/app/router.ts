@@ -69,6 +69,24 @@ const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'manage/users',
+        name: 'manage-users',
+        component: () => import('@/pages/manage/UsersPage.vue'),
+        meta: {
+          titleKey: 'manage.users.title',
+          roles: ['admin', 'department']
+        }
+      },
+      {
+        path: 'manage/groups',
+        name: 'manage-groups',
+        component: () => import('@/pages/manage/GroupsPage.vue'),
+        meta: {
+          titleKey: 'manage.groups.title',
+          roles: ['admin', 'department']
+        }
+      },
+      {
         path: 'server/:section?',
         name: 'server',
         component: () => import('@/pages/system/PlaceholderPage.vue'),

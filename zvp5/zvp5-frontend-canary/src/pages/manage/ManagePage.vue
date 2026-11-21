@@ -17,6 +17,7 @@ import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
+import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
 const session = useSessionStore()
@@ -140,6 +141,8 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       </div>
       <span class="range num">{{ total }}</span>
     </header>
+
+    <ManageTabs />
 
     <ZAlert v-if="!canReview" tone="warning" :description="t('manage.noPermission')" />
 
