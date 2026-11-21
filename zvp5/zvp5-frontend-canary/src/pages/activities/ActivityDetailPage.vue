@@ -3,9 +3,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { fetchActivity, fetchActivityMembers, fetchUserBrief } from '@/shared/api/domain'
-import type { Activity, ActivityMemberRow } from '@/types/domain'
+import {
+  updateActivityStatus,
+  updateMemberRecord,
+  updateMemberStatus
+} from '@/shared/api/manage'
+import type { Activity, ActivityMemberRow, TimeMode } from '@/types/domain'
 import { ApiError } from '@/shared/http/errors'
 import { formatDate, formatDateTime, formatHours } from '@/shared/lib/format'
+import { useSessionStore } from '@/shared/stores/session'
+import { useUiStore } from '@/shared/stores/ui'
 import ZBadge from '@/shared/ui/ZBadge.vue'
 import ZButton from '@/shared/ui/ZButton.vue'
 import ZCard from '@/shared/ui/ZCard.vue'
@@ -13,9 +20,14 @@ import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
+import ZModal from '@/shared/ui/ZModal.vue'
+import ZField from '@/shared/ui/ZField.vue'
+import ZSegmented from '@/shared/ui/ZSegmented.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
+const session = useSessionStore()
+const ui = useUiStore()
 
 const activity = ref<Activity | null>(null)
 const members = ref<ActivityMemberRow[]>([])
@@ -61,6 +73,97 @@ function resolveNames(activity: Activity) {
       names.value = { ...names.value, [oid]: user.name }
     })
   )
+}
+
+const canManage = computed(() => session.isManager)
+const activitySaving = ref(false)
+const memberSaving = ref<string | null>(null)
+
+const editOpen = ref(false)
+const editTarget = ref<ActivityMemberRow | null>(null)
+const editDuration = ref('')
+const editMode = ref<TimeMode>('on-campus')
+const editError = ref('')
+
+const modeOptions = computed(() => [
+  { value: 'on-campus', label: t('activities.type.on-campus') },
+  { value: 'off-campus', label: t('activities.type.off-campus') },
+  { value: 'social-practice', label: t('activities.type.social-practice') }
+])
+
+function report(cause: unknown) {
+  if (cause instanceof ApiError) {
+    if (cause.status === 409) {
+      ui.notify(t('manage.conflict'), 'neutral')
+      void load()
+      return
+    }
+    if (cause.status === 403) {
+      ui.notify(t('manage.reviewerOnly'), 'danger')
+      return
+    }
+    ui.notify(cause.message, 'danger')
+    return
+  }
+  ui.notify(t('common.error'), 'danger')
+}
+
+async function reviewActivity(next: 'effective' | 'refused') {
+  if (!activity.value || activitySaving.value) return
+  activitySaving.value = true
+  try {
+    await updateActivityStatus(activity.value._id, next)
+    activity.value.status = next
+    ui.notify(t('manage.done'), 'success')
+  } catch (cause) {
+    report(cause)
+  } finally {
+    activitySaving.value = false
+  }
+}
+
+async function reviewMember(member: ActivityMemberRow, next: 'effective' | 'refused') {
+  if (memberSaving.value) return
+  memberSaving.value = member._id
+  try {
+    await updateMemberStatus(id.value, member._id, next)
+    member.status = next
+    ui.notify(t('manage.done'), 'success')
+  } catch (cause) {
+    report(cause)
+  } finally {
+    memberSaving.value = null
+  }
+}
+
+function openEdit(member: ActivityMemberRow) {
+  editTarget.value = member
+  editDuration.value = String(member.duration)
+  editMode.value = member.mode
+  editError.value = ''
+  editOpen.value = true
+}
+
+async function saveRecord() {
+  const target = editTarget.value
+  if (!target) return
+  const duration = Number(editDuration.value)
+  if (!Number.isFinite(duration) || duration <= 0) {
+    editError.value = locale.value === 'zh-CN' ? '时长必须大于 0' : 'Duration must be greater than 0'
+    return
+  }
+  memberSaving.value = target._id
+  try {
+    await updateMemberRecord(id.value, target._id, { duration, mode: editMode.value })
+    target.duration = duration
+    target.mode = editMode.value
+    editOpen.value = false
+    ui.notify(t('manage.done'), 'success')
+  } catch (cause) {
+    report(cause)
+  } finally {
+    memberSaving.value = null
+  }
 }
 
 async function loadMembers() {
@@ -139,6 +242,26 @@ onMounted(load)
             <dd>{{ item.value }}</dd>
           </div>
         </dl>
+
+        <div v-if="canManage" class="review-bar">
+          <span class="review-label">{{ locale === 'zh-CN' ? '审核活动' : 'Review' }}</span>
+          <ZButton
+            size="sm"
+            variant="secondary"
+            :disabled="activitySaving"
+            @click="reviewActivity('refused')"
+          >
+            {{ t('manage.refuse') }}
+          </ZButton>
+          <ZButton
+            size="sm"
+            variant="primary"
+            :disabled="activitySaving"
+            @click="reviewActivity('effective')"
+          >
+            {{ t('manage.approve') }}
+          </ZButton>
+        </div>
       </header>
 
       <section class="members" aria-labelledby="members-title">
@@ -170,6 +293,36 @@ onMounted(load)
               >
                 {{ t(`activities.status.${member.status}`) }}
               </ZBadge>
+              <div v-if="canManage" class="member-actions">
+                <button
+                  v-if="member.status !== 'effective'"
+                  type="button"
+                  class="mini"
+                  :disabled="memberSaving === member._id"
+                  :aria-label="t('manage.approve')"
+                  @click="reviewMember(member, 'effective')"
+                >
+                  <ZIcon name="check" :size="14" />
+                </button>
+                <button
+                  v-if="member.status === 'pending'"
+                  type="button"
+                  class="mini"
+                  :disabled="memberSaving === member._id"
+                  :aria-label="t('manage.refuse')"
+                  @click="reviewMember(member, 'refused')"
+                >
+                  <ZIcon name="x" :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="mini"
+                  :aria-label="locale === 'zh-CN' ? '修改时长' : 'Edit hours'"
+                  @click="openEdit(member)"
+                >
+                  <ZIcon name="pencil" :size="14" />
+                </button>
+              </div>
             </li>
           </ul>
 
@@ -205,6 +358,37 @@ onMounted(load)
         <span>{{ locale === 'zh-CN' ? '更新于' : 'Updated' }} {{ formatDateTime(activity.updatedAt) }}</span>
       </footer>
     </template>
+
+    <ZModal
+      v-model="editOpen"
+      size="sm"
+      :title="locale === 'zh-CN' ? '修改时长' : 'Edit hours'"
+      :description="editTarget?.member_name"
+    >
+      <div class="edit-form">
+        <ZField
+          v-model="editDuration"
+          :label="locale === 'zh-CN' ? '时长（小时）' : 'Hours'"
+          inputmode="decimal"
+          :error="editError"
+        />
+        <div class="edit-mode">
+          <span class="edit-label">{{ locale === 'zh-CN' ? '时长类型' : 'Mode' }}</span>
+          <ZSegmented v-model="editMode" :options="modeOptions" size="sm" :aria-label="t('activities.title')" />
+        </div>
+      </div>
+      <template #footer>
+        <ZButton variant="ghost" size="sm" @click="editOpen = false">{{ t('common.cancel') }}</ZButton>
+        <ZButton
+          variant="primary"
+          size="sm"
+          :disabled="memberSaving === editTarget?._id"
+          @click="saveRecord"
+        >
+          {{ t('common.save') }}
+        </ZButton>
+      </template>
+    </ZModal>
   </div>
 </template>
 
@@ -388,6 +572,68 @@ onMounted(load)
   justify-content: center;
   gap: var(--space-4);
   margin-top: var(--space-4);
+}
+
+.review-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.review-label {
+  flex: 1;
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.member-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.mini {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.mini:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+}
+
+.mini:disabled {
+  opacity: 0.45;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.edit-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.edit-label {
+  font-size: var(--text-xs);
+  font-weight: 550;
+  color: var(--ink-soft);
 }
 
 .page-num {

@@ -14,14 +14,11 @@ export function useNavItems() {
   return computed<NavItem[]>(() => {
     const items: NavItem[] = [
       { to: '/', labelKey: 'nav.home', icon: 'home' },
-      { to: '/activities', labelKey: 'nav.activities', icon: 'compass' }
+      { to: '/activities', labelKey: 'nav.activities', icon: 'compass' },
+      { to: '/notifications', labelKey: 'nav.notifications', icon: 'bell' }
     ]
 
-    if (!session.isAdmin) {
-      items.push({ to: '/notifications', labelKey: 'nav.notifications', icon: 'bell' })
-    }
-
-    if (session.isManager || session.roles.includes('secretary')) {
+    if (session.isManager) {
       items.push({ to: '/manage', labelKey: 'nav.manage', icon: 'shield' })
     }
 

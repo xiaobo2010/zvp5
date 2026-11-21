@@ -107,6 +107,23 @@ const zhCN = {
     unread: '未读',
     markRead: '标为已读'
   },
+  manage: {
+    title: '管理中心',
+    subtitle: '审核活动、登记义工、核对时长。',
+    queue: '审核队列',
+    all: '全部活动',
+    searchPlaceholder: '搜索活动名称或负责人',
+    emptyQueue: '没有待审核的活动',
+    emptyList: '没有匹配的活动',
+    approve: '通过',
+    refuse: '驳回',
+    noPermission: '当前身份没有审核权限。',
+    reviewerOnly: '仅管理员与学生会可以执行审核。',
+    done: '审核完成',
+    conflict: '状态已被其他人修改，已刷新列表',
+    memberHint: '在活动详情页可以审核成员与修改时长。',
+    open: '打开详情'
+  },
   profile: {
     title: '个人中心',
     account: '账号',
@@ -250,6 +267,23 @@ const enUS = {
     empty: 'No notifications yet',
     unread: 'Unread',
     markRead: 'Mark as read'
+  },
+  manage: {
+    title: 'Management',
+    subtitle: 'Review activities, register volunteers, verify hours.',
+    queue: 'Review queue',
+    all: 'All activities',
+    searchPlaceholder: 'Search by name or organizer',
+    emptyQueue: 'Nothing waiting for review',
+    emptyList: 'No activities match',
+    approve: 'Approve',
+    refuse: 'Decline',
+    noPermission: 'Your role cannot review activities.',
+    reviewerOnly: 'Only administrators and the student union can review.',
+    done: 'Review saved',
+    conflict: 'Someone else changed the status; the list was refreshed',
+    memberHint: 'Open an activity to review members and edit hours.',
+    open: 'Open detail'
   },
   profile: {
     title: 'Profile',

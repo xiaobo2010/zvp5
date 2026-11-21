@@ -60,12 +60,12 @@ const routes: RouteRecordRaw[] = [
         meta: { titleKey: 'nav.profile' }
       },
       {
-        path: 'manage/:section?',
+        path: 'manage',
         name: 'manage',
-        component: () => import('@/pages/system/PlaceholderPage.vue'),
+        component: () => import('@/pages/manage/ManagePage.vue'),
         meta: {
           titleKey: 'nav.manage',
-          roles: ['admin', 'department', 'secretary']
+          roles: ['admin', 'department']
         }
       },
       {

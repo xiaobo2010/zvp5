@@ -40,6 +40,7 @@ const paths: Record<string, string[]> = {
   'chevron-right': ['M10 6l6 6-6 6'],
   'chevron-down': ['M6 10l6 6 6-6'],
   check: ['M4 12.5 9 17.5 20 6.5'],
+  pencil: ['M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z', 'M14 6l4 4'],
   x: ['M6 6l12 12M18 6 6 18'],
   alert: [
     'M12 8v5M12 16.5v.5',

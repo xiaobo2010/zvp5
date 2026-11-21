@@ -27,6 +27,8 @@ export interface LoginResult {
 
 export type TimeMode = 'on-campus' | 'off-campus' | 'social-practice'
 
+export type ActivityStatus = 'pending' | 'effective' | 'refused' | 'draft'
+
 export type UserTime = Record<TimeMode, number>
 
 export interface TimePercentile {
