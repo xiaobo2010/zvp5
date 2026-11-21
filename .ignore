@@ -1,2 +1,4 @@
+# ripgrep 忽略规则（补充 .gitignore）
+# .slim/ 是本地过程留档，不进版本库；此处对其下的深工目录显式取消忽略，便于本地检索。
 !.slim/deepwork/
 !.slim/deepwork/**

@@ -216,7 +216,7 @@ Content-Type: application/json
 - **类型**：按扩展名收敛到 `jpg` / `jpeg` / `png` / `webp`（大小写不敏感）；其它 → 400 `AI_UNSUPPORTED_MEDIA`。
 - **体积**：与附件 OCR 同一个上限（默认 20MB，`AI_OCR_MAX_IMAGE_BYTES` 可覆盖），超限 400 `AI_OCR_IMAGE_TOO_LARGE`。
 - **执行**：同步识别（不落 `file_ocr`、不产生附件配额），返回 `{"status":"ok","code":200,"data":{"text":"..."}}`。
-- **路径 jail**：越界 → 403 `FILES_ROOT_FORBIDDEN`（根目录只允许 `/www/zvms4`，见 `docs/FILES_API_DESIGN.md` §13）；未命中路径也走同一套错误翻译。
+- **路径 jail**：越界 → 403 `FILES_ROOT_FORBIDDEN`（根目录只允许 `/www/zvms4`，见 `zvp5/docs/FILES_API_DESIGN.md` §13）；未命中路径也走同一套错误翻译。
 - **计价与审计**：频控（`ocr`）+ 用户 `ocr` 月额度 + 站点额度 + 每次尝试的 `ai_call_logs`，与 §2.1/§2.3 同一套规则；成功另写一条 `APP_LOGS`（`type=ai_ocr_enqueue`）。
 
 | 状态 | `detail` | 触发 |
@@ -1093,7 +1093,7 @@ CAS `proposed → executing → confirmed|failed`。
 
 ## 16. 持久会话、run 与只读场景
 
-会话与 run 的完整设计见 `docs/AI_CONVERSATION_DESIGN.md`。本节只列网关侧的协议事实。
+会话与 run 的完整设计见 `zvp5/docs/AI_CONVERSATION_DESIGN.md`。本节只列网关侧的协议事实。
 
 ### 16.1 端点
 

@@ -88,4 +88,4 @@
 - **失败语义**：证据/警告写库失败不改变「本次拒绝」；封禁落库失败也不回滚已入库证据，只记异常等运维补封。
 - **对外**：只有 `AI_SAFETY_REJECTED` 与固定文案，不暴露档位、天数或规则名（规则名只进 `ban_violations` 的内部证据）。
 
-审核侧语义（fail-closed、判定不可用时不记违规）见仓库根 `docs/AI_AGENT_OPS_DESIGN.md` §10.2。
+审核侧语义（fail-closed、判定不可用时不记违规）见仓库根 `zvp5/docs/AI_AGENT_OPS_DESIGN.md` §10.2。

@@ -1,3 +1,7 @@
+> **归档说明**：本文是上游 `zvms/zvms4-frontend` 的技术报告快照，描述的是 MongoDB 时代的
+> 前端技术栈（Vant / Animate.css / Husky 等），**与当前 ZVP5 实现不符**。
+> 仅作来源溯源参考，当前前端的技术栈与命令见 `zvp5/zvp5-frontend/README.md`。
+
 # ZVMS 4 Frontend - Technical Report
 
 ## Executive Summary

@@ -33,7 +33,7 @@
 | C6 | `pillow==12.0.0` 已装但**零图片/OCR 代码**；无 tesseract/opencv/pytesseract | `requirements.txt:34` |
 | C7 | 鉴权：JWT `per` ∈ `student/secretary/department/admin`；`compulsory_temporary_token`→`scope=temporary_token`（5min）；**`get_current_user` 不查库**（banned 只在登录点拦，token 最长 10 天仍有效） | `util/cert.py:127-149,180-181`、`util/object_id.py:74-102` |
 | C8 | `SEC_PATTERN` 含 `r"api/file"`；中间件要求 UA 含 `Mozilla`，否则 418 + 写 `security_alert`（URL 全量含 query） | `main.py:78-122` |
-| C9 | 应用代码**零出站 HTTP**（`requirements.txt` 有 `httpx==0.28.1` 但仅供 TestClient，代码零命中）——既有红线 | 全树 grep；`STATUS.md` Part 4 §23 |
+| C9 | 应用代码**零出站 HTTP**（`requirements.txt` 有 `httpx==0.28.1` 但仅供 TestClient，代码零命中）——既有红线 | 全树 grep；`docs/history/MODULE_MIGRATION_AUDIT.md` Part 4 §23 |
 | C10 | 树内代理配置是 **nginx 文件**（`config/nginx`，`access_log` 记全 URI）；宿主实际跑 Caddy，配置在仓库外 | `config/nginx` |
 | C11 | **单 uvicorn 进程**（无 `--workers`）；DB 池 `pool_size=5 + max_overflow=5` | `config/supervisor.conf`、`db/oracle/engine.py` |
 | C12 | 前端 axios baseURL `/api` + 注入 Bearer；上传先例仅 Element Plus `<ElUpload>`，无 axios FormData | `src/plugins/axios.ts:11-22,57-64`、`ZUploadFile.vue:73-93` |
@@ -356,4 +356,4 @@ ROOT_FORBIDDEN_CODE = "FILES_ROOT_FORBIDDEN"
 - 同一判定同时约束 HTTP 端点和 agent 工具：不存在「文件管理器进不去、agent 能读」的缝隙。
 - 前端快捷目录与路径跳转同步收敛到这两个根，越界在提交前就被拦（后端仍是最终裁决）。
 
-受影响的端点：`/api/system/files` 的 list / stat / preview / download / upload / mkdir / rename / delete / chmod / edit，以及 `/api/ai/ocr/file`（路径桥，见 `docs/AI_GATEWAY_API.md` §2.5）。
+受影响的端点：`/api/system/files` 的 list / stat / preview / download / upload / mkdir / rename / delete / chmod / edit，以及 `/api/ai/ocr/file`（路径桥，见 `zvp5/docs/AI_GATEWAY_API.md` §2.5）。

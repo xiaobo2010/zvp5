@@ -21,7 +21,7 @@
 
 | # | 事实 | 出处 |
 |---|---|---|
-| D1 | 前端 `getXuehaiId()` **双源**：① 原生桥 `window.xhBrowserJava?.getUserId?.()`（学海浏览器 xhbrowser）；② 兜底解析 `navigator.userAgent` 的 `userId/(\w+)`（资料中心 App xhdatacenter，UA 形如 `deviceId/<x> userId/<y>`）。两者都归一等价性为正整数，否则 `0` | `zvp5-frontend/src/plugins/ua.ts:23-33`；来源 `义工平台代码笔记整理.md:1240-1249` |
+| D1 | 前端 `getXuehaiId()` **双源**：① 原生桥 `window.xhBrowserJava?.getUserId?.()`（学海浏览器 xhbrowser）；② 兜底解析 `navigator.userAgent` 的 `userId/(\w+)`（资料中心 App xhdatacenter，UA 形如 `deviceId/<x> userId/<y>`）。两者都归一等价性为正整数，否则 `0` | `zvp5-frontend/src/plugins/ua.ts:23-33`；来源 `docs/history/LEGACY_CODE_NOTES.md:1240-1249` |
 | D2 | 请求拦截器按需注入 `Xuehai-Id` 头：仅当 `getXuehaiId() > 0` 且未显式设置时写入 | `zvp5-frontend/src/plugins/axios.ts:61-64` |
 | D3 | `window.xhBrowserJava` 的 TS 声明存在（可选属性） | `zvp5-frontend/src/types/xuehai.d.ts:5` |
 | D4 | 后端读取头 `Xuehai-Id` 并 `.strip()`；头名大小写不敏感由 Starlette 保证 | `zvp5-backend-python/typings/log.py:66-67` |
@@ -34,7 +34,7 @@
 | D11 | 仓储协议 `AppLogsRepo` 行形状含 `xuehai_id`（`str`） | `db/repos/protocols.py:664-719` |
 | D12 | 管理端读端点 `GET /api/logs` 返回行含 `xuehai_id`，本轮新增 `xuehai_id` 过滤 | `routers/logs_router.py:13-65` |
 | D13 | `db/ddl_check.py` 只比对 `models.metadata` 与 `V001`；新对象须 **V001(fresh)+V00N(存量)** 双写 | `db/ddl_check.py:50,232-239`、`db/oracle/ddl/README.md:26-32` |
-| D14 | 应用代码**零出站 HTTP**（既有红线）：本设计不新增任何外呼 | 全树 grep；`docs/FILES_API_DESIGN.md` C9 |
+| D14 | 应用代码**零出站 HTTP**（既有红线）：本设计不新增任何外呼 | 全树 grep；`zvp5/docs/FILES_API_DESIGN.md` C9 |
 
 > D5–D8 覆盖三类写入点：`Depends(inject_log)` 依赖（15+ 站点）、显式 `ZVMSLog(...)`、中间件；未发现遗漏 `xuehai_id` 的写入点。
 
@@ -155,7 +155,7 @@ APP_LOGS.XUEHAI_ID  ──►  GET /api/logs?xuehai_id=…（admin 反查）    
 **风险**
 
 1. **可伪造**：`Xuehai-Id` 由客户端自报，非学海侧签名校验；不能单独作为封禁/鉴权唯一依据（与 D1–D2 的信任边界一致）。
-2. **PII 边界**：学海 ID 关联到自然人设备，属敏感标识；读端已限 `admin`，且**不写入 URL / 不落 query**，避免经代理 access_log 二次泄漏（见 `docs/FILES_API_DESIGN.md` C10/C14 的同类关注）。
+2. **PII 边界**：学海 ID 关联到自然人设备，属敏感标识；读端已限 `admin`，且**不写入 URL / 不落 query**，避免经代理 access_log 二次泄漏（见 `zvp5/docs/FILES_API_DESIGN.md` C10/C14 的同类关注）。
 3. **空值二义**：非平板请求与采集失败均记为 `""`；如需区分，后续可加显式标志（本轮不做）。
 4. **UA 兜底的取值假设**：资料中心 App 分支假定 UA 的 `userId/<y>` 是**原始数字 id**。若实际为 MD5（32 位十六进制）等非数字串，`Number()` 归零 → 仍采集不到；届时需换取 `window.webView.getUserId()`（返回 MD5）并放宽列语义（`VARCHAR2(32)` 可容纳）。**首次上线需用真机 UA 复核。**
 

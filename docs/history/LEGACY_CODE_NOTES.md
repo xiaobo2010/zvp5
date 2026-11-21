@@ -1,3 +1,6 @@
+> **免责声明**：本文整理自旧版生产平台活动描述中的开发笔记，描述的是 **Python + Redis + MongoDB/BSON 的旧平台结构**，
+> 与当前 ZVP5 的 FastAPI + Oracle ADB 主线不对应。文中的旧仓库地址、接口清单仅作历史溯源参考，请勿据此对接。
+
 # 义工平台（ZVP5）代码笔记整理
 
 来源：生产平台 `activities` 接口的 `description` 字段（全量 380 条）。

@@ -1,7 +1,7 @@
 # ADR：API 全量归并到 /api/v1（v2/v3 退役）
 
 - 状态：已接受（2026-11-07），随本笔 reversioning 提交一并生效
-- 推翻：`docs/API_STRUCTURE.md` 旧裁定「路径归属……不要新增 v1 路径」；`docs/REFERENCE_TREES_ALIGNMENT.md:25-32`「拒绝 /api/v1 平行端点」（后者为历史裁定记录，冻结不改，以本 ADR 为准）
+- 推翻：`zvp5/docs/API_STRUCTURE.md` 旧裁定「路径归属……不要新增 v1 路径」；`zvp5/docs/REFERENCE_TREES_ALIGNMENT.md:25-32`「拒绝 /api/v1 平行端点」（后者为历史裁定记录，冻结不改，以本 ADR 为准）
 
 ## 背景与动机
 
@@ -38,7 +38,7 @@
 逐组依据：
 
 - **A 组**：现役 UI 能表头排序（`ZActivityList.vue` sortable 列 → v2 `sort/asc` 参数）。为不损失该能力，v3 获得可选 `sort`/`asc` 参数（独立白名单 name/type/status/date/_id，`_id`→oid，白名单外 400；不传维持原 oid DESC）；投影补齐 place/origin/appointee/approver 四字段（repo `_activity_doc` 本就返回，v3 handler 此前是裁剪）。前端 `getAllActivities` 迁 v3（参数映射 perpage→size、search→query、activity_type→type 单值），对外签名与返回形状不变（v3 响应无 page/perpage 回显，以入参回填）。
-- **B 组（对教条的反转）**：现役创建链 = `ZActivityCreate.vue` 表单（传 date/place/approver/origin）→ `api/activity/create.ts` → `POST /v2/activities`；v3 create 全仓零调用方，且请求体仅 {name,description,type}，丢失 date/place/approver/origin 与 name 校验——归并到 v3 等于功能回归。故保 v2 为 `/api/v1/activities` 的 POST 实现。本条显式推翻根 `README.md:290` 对「POST /api/v3/activities」的现役标注。
+- **B 组（对教条的反转）**：现役创建链 = `ZActivityCreate.vue` 表单（传 date/place/approver/origin）→ `api/activity/create.ts` → `POST /v2/activities`；v3 create 全仓零调用方，且请求体仅 {name,description,type}，丢失 date/place/approver/origin 与 name 校验——归并到 v3 等于功能回归。故保 v2 为 `/api/v1/activities` 的 POST 实现。本条显式推翻 `docs/history/DEVELOPMENT_LOG.md:290` 对「POST /api/v3/activities」的现役标注。
 - **C/D/E 组**：三组的 v2 前端函数全仓零调用方（`member.ts` reads、`member.ts` insert 的 `status==='ok'` 成功分支在 {id,count} 响应下永不成立、`group/reads.ts` users——`ZGroupUserList.vue` 用的是 users_v3），连同函数删除；v3 侧已被现役页面消费且能力更强。
 
 实现纪律：5 个败方仅摘 `@router` 装饰器行，**函数体保留**——`services/agent/tool_impl.py` 以 v2 成员 handler 为「同形」参考实现，保留函数体使 imports 全部有效、ruff F401 零新增；整体删除留待后续卫生项。
@@ -68,8 +68,8 @@ groups users 端点的 v2 语义为「自定义密码（≠学号）」、v3 语
 
 ## 关联文档
 
-- `docs/API_STRUCTURE.md`：路由归属表随本变更重写，其旧裁定由本 ADR 取代。
-- 根 `README.md:290/:849/:868`：v3 现役标注随本变更修正。
+- `zvp5/docs/API_STRUCTURE.md`：路由归属表随本变更重写，其旧裁定由本 ADR 取代。
+- `docs/history/DEVELOPMENT_LOG.md:290/:849/:868`：v3 现役标注随本变更修正。
 
 ## 追注（2026-11-19）：users / groups 全量收口 `/api/v1`
 

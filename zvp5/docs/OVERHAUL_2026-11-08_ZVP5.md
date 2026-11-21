@@ -8,7 +8,7 @@
 | commit | 内容 |
 |---|---|
 | `b1cc85a`（canary 侧 `74e5535`） | 目录更名：`zvms4-modified-main→zvp5`、`zvms4-frontend→zvp5-frontend`、`zvms4-backend-python→zvp5-backend-python`；同笔修正 wrangler.jsonc / preview-worker README / configure_runtime.py / ci.yml 路径引用；服务器路径与品牌文案按决策不动 |
-| `4944084` | API reversioning：后端 84 条 v2/v3 路由归并 `/api/v1`（未版本域 172 条与 `/api/ai/v1` 外部契约不动）；撞车 5 组裁决落地（见 ADR §3）；MCP 保留 `/api/v2/mcp` 兼容别名；前端 66+ 处调用点、hedgedGet 竞速正则、platformGuard 手工拼接同步；tests 234 处机械更新 + pwdm/privacy 语义改写 + 路由快照重冻结（257 条）；`docs/ADR_API_V1_REVERSIONING.md` 入库 |
+| `4944084` | API reversioning：后端 84 条 v2/v3 路由归并 `/api/v1`（未版本域 172 条与 `/api/ai/v1` 外部契约不动）；撞车 5 组裁决落地（见 ADR §3）；MCP 保留 `/api/v2/mcp` 兼容别名；前端 66+ 处调用点、hedgedGet 竞速正则、platformGuard 手工拼接同步；tests 234 处机械更新 + pwdm/privacy 语义改写 + 路由快照重冻结（257 条）；`zvp5/docs/ADR_API_V1_REVERSIONING.md` 入库 |
 | `78e2322` | DB 删除无用字段 `user_trash.restored_at`（471 列中唯一合格项，全生命周期只写 NULL 零读取）；新增 `db/oracle/ddl/V052__drop_user_trash_restored_at.sql`（幂等，只入库不自动执行）；V011 基线同步编辑 |
 | `02eed4a` | 后端逻辑优化七项：realtime 指标采集下线程、users_v3 绑定/设备单 session 事务（写与审计同生共死）、导出进度推送降频（1 万行 500 次→101 次）、时长计算/agent 班级名/提案失效三处 N+1 消除、活动状态变更时长缓存批量写 |
 | `1907117` | 前端性能：monaco 摘除首屏与全站 chunk 图（首屏 JS 5.33MB→1.94MB）、markdown-it/dompurify 出入口、chart.js 三条静态链懒加载、死资源清理（Ubuntu 字体/brand.jpeg/vant 依赖）、PWA precache 瘦身（~3.9MB→2.8MB） |

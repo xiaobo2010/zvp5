@@ -1,15 +1,18 @@
+> **归档说明**：本文件是 zvp → zvms4-modified 模块移植与安全审计的全过程记录（Part 1-12），
+> 原文位于 `zvp5/STATUS.md`。内容为历史审计留档，**当前实现以仓库根 `README.md` 与 `zvp5/docs/` 下的现行契约为准**。
+
 # STATUS — 模块移植与安全审计（zvp → zvms4-modified）
 
 > **2026-10-24：原 `zvp-latest/` 与 `zvp5-gitlab/` 已删除。** 学海 API 原文件曾归档在
 > 仓库根 `reference/xuehai/zvp-latest/`（2026-11-14 已移出仓库）；审核流/FAQ/资源/定向推送设计归档在
 > `reference/zvp5-gitlab/`。本文中的参考树路径均为删除前的历史记录，对账与处置
-> 结论见 `docs/REFERENCE_TREES_ALIGNMENT.md`。
+> 结论见 `zvp5/docs/REFERENCE_TREES_ALIGNMENT.md`。
 
 > **Part 1 · 义工管理** | 日期：2026-10-09
 > 任务：把现役 zvp（`~/zvp-build-test`，zvp-latest）的**义工管理**（创建义工 / 添加、修改义工成员）移植进本仓库，并对移植面做「外链 / 翻出平台」危险代码审计。
 > 审计方式：静态扫描（grep / AST）+ 全量人工读码 + 独立安全复核；未运行服务、未连接数据库。
 >
-> **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md` §三**，下文出现的 `DB_ALIGNMENT` / `DB_ALIGNMENT §N` 一律对应**根 README §三 / §三.N**。
+> **文件位置变更（2026-10-12）**：本目录原 `DB_ALIGNMENT.md`（数据库对齐 Ground Truth）已并入**仓库根 `README.md`（现 `docs/history/DEVELOPMENT_LOG.md`）§三**，下文出现的 `DB_ALIGNMENT` / `DB_ALIGNMENT §N` 一律对应**`docs/history/DEVELOPMENT_LOG.md` §三 / §三.N**。
 
 ---
 
@@ -42,7 +45,7 @@
 
 | # | zvp 原样 | 本仓适配 | 原因 |
 |---|---|---|---|
-| 1 | `date/createdAt/updatedAt` 写 **int 毫秒时间戳** | 写 `datetime.now()`（BSON Date） | 实库 `activities` 日期为 BSON `Date` 且零 null（根 README §三.2/§三.6），严格 typing `Activity.model_validate` 要求 |
+| 1 | `date/createdAt/updatedAt` 写 **int 毫秒时间戳** | 写 `datetime.now()`（BSON Date） | 实库 `activities` 日期为 BSON `Date` 且零 null（`docs/history/DEVELOPMENT_LOG.md` §三.2/§三.6），严格 typing `Activity.model_validate` 要求 |
 | 2 | v3 创建只插 7 个字段 | 补齐 `appointee=creator`、`approver=""`、`place=""`、`origin="activities"` | 实库全字段非空，缺字段会让 v2 读取路径 `model_validate` 崩 |
 | 3 | `user.require('admin','department')`（CurrentUser 对象） | `"admin"/"department" in user.get("per", [])`（本仓 dict 风格） | 两侧鉴权层不同，语义等价 |
 | 4 | `db.zvms_new.activities` 属性访问 | `db.zvms_new.get_collection("activities")` | 本仓集合访问惯例 |
@@ -107,7 +110,7 @@
 | `GET /api/v3/users/{user_id}` | zvp 无对应端点（其登录即返 profile） | 新增（`routers/users_v3_router.py`）：`zvms_new` 用户 profile（本人 / admin / department / secretary 同班可读），服务前端刷新与用户详情 | 新增适配端点 |
 | `PUT /api/v3/users/{user_id}/roles` | admin 改角色，`AllowedRole` 白名单，204 | 新增 | 已移植 |
 | `POST /api/v3/users` | 建用户：由服务端生成 12 位随机一次性初始密码（只存 bcrypt 哈希，明文仅在响应体返回一次）、roles 白名单、学号查重 409、班级存在性校验 | 新增；不写 `session_id`（zvp 同款写法） | 已移植 |
-| `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，根 README §三.2） | 已移植（适配） |
+| `GET /api/v2/groups` | 班级列表（admin/department） | 新增（`routers/groups_v2_router.py`）；**不投影 enrollYear**（实库 `zvms_new.groups` 仅 `name`，`docs/history/DEVELOPMENT_LOG.md` §三.2） | 已移植（适配） |
 | `GET /api/v2/groups/{group_id}` | 单班级（本人班级或 admin/department） | 新增；响应补合成字段 `type:"class"`（保前端既有判断语义） | 已移植（适配） |
 | `GET /api/v3/groups/{group_id}/users` | 班级成员分页（`zvms_new.users` by `class_id`） | 新增（`routers/groups_v3_router.py`）；扩展 `pwdm` 仅返回布尔（哈希经 pop 永不出响应） | 已移植（扩展） |
 | `POST /api/v3/groups` | 建班（admin） | 新增；**剔除 enrollYear**（实库无此字段） | 已移植（适配） |
@@ -117,7 +120,7 @@
 | v1 用户写端点（`POST ""`、`DELETE /{target}`、`PUT /{user_oid}`、`POST|DELETE /{user_oid}/group`） | zvp 全部 503 封堵（`_raise_exc`） | **同款 503 封堵**，杜绝前端静默写 legacy 库 | 已封堵（zvp parity） |
 | `GET /api/users/{user_oid}`（v1 详情） | zvp 同样无鉴权 | **加登录门**（偏离 zvp，收紧） | 已收紧 |
 | `GET /api/v2/groups/{id}/statistics/compliance` | — | 上游鉴权被注释 → **恢复**（admin/department/secretary 同班） | 已修复 |
-| v1 `PUT /api/users/{oid}/password` | zvp 改密走 `PUT /v2/users/{id}/password` | 上游端点保留（已切 `zvms_new`，根 README §三.5），为改密主路径；zvp 的 `DELETE /v2/users/{id}/password`（重置为初始密码）**未移植**——目标前端无对应入口，需要时再补 v3 端点 | 已存在 |
+| v1 `PUT /api/users/{oid}/password` | zvp 改密走 `PUT /v2/users/{id}/password` | 上游端点保留（已切 `zvms_new`，`docs/history/DEVELOPMENT_LOG.md` §三.5），为改密主路径；zvp 的 `DELETE /v2/users/{id}/password`（重置为初始密码）**未移植**——目标前端无对应入口，需要时再补 v3 端点 | 已存在 |
 
 ## 9. 前端接线（最小改动，UI 与模板未动）
 
@@ -478,7 +481,7 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 | # | 现象（用户原话摘要） | 已查事实 / 候选根因 | 修复方向 |
 |---|---|---|---|
 | 1 | **用户身份一栏空白** | 真实库 2466/2566 用户 `roles=[]`（学生身份靠缺省）；登录 profile.roles=[] → `stores/user.ts:37-46` `Array.isArray([])` 为 true → `position=[]` → 身份徽标无内容。zvp 现役同语义但需查其 UI 对空 position 的渲染差异 | 前端 store 对空 roles 兜底 `['student']`；或后端 profile 归一化。**先对照 zvp 线上 UI 行为**（zvp-latest frontend）避免引入新差异 |
-| 2 | **用户详细信息显示"班级不存在"，用户判断群组读取不对** | 候选 A：两库班级主键断裂——`zvms.groups`（40 个，legacy 独立 _id）vs `zvms_new.groups`（54 个，独立 _id，根 README §三.1/§三.2），详情链路若把 legacy `user.group` 的组 id 传给 v2/v3 班级端点必 404；候选 B：class_id=null 的 5 个用户被当"应有班级"查询 | 先定位具体视图与 404 的 API（浏览器复现/nginx 日志），再理顺班级解析链（详情应走 profile.class_id 直取，不经 legacy group） |
+| 2 | **用户详细信息显示"班级不存在"，用户判断群组读取不对** | 候选 A：两库班级主键断裂——`zvms.groups`（40 个，legacy 独立 _id）vs `zvms_new.groups`（54 个，独立 _id，`docs/history/DEVELOPMENT_LOG.md` §三.1/§三.2），详情链路若把 legacy `user.group` 的组 id 传给 v2/v3 班级端点必 404；候选 B：class_id=null 的 5 个用户被当"应有班级"查询 | 先定位具体视图与 404 的 API（浏览器复现/nginx 日志），再理顺班级解析链（详情应走 profile.class_id 直取，不经 legacy group） |
 | 3 | **logs 中未登录请求被记录成"无此用户"** | shield 写 security_alert 日志 `user=""`（main.py:83-94）；logs_router 行内 user_name 解析（zvms_new→legacy→"未知用户"）对空 user 落入"用户不存在"文案 | 后端对 `user==""` 返回"未登录"（区别于"未知用户"），或前端 ZLogCard 空 user 渲染"未登录" |
 | 4 | **删除完义工后应跳转回 /activities** | 删除成功后停留在已删除活动的详情页（delete 调用点 ZActivityDetails.vue:99 / api/activity/delete.ts:9） | 删除成功回调补 `router.push('/activities')` |
 
@@ -581,9 +584,9 @@ xh_router 任意 URL 代理（:159 urlopen + :46 硬编码签名 KEY）、登录
 
 ## 47. Part 12：CHANGELOG 数据库化——管理员可编辑历史版本（2026-10-12）
 
-> **主干剥离说明（2026-10-12）**：本节记录的是该提交在 `zvms4-adb-migration` 分支的原始形态。主干 `main` 合并时按「无 ADB」原则剥离了 Oracle 部分——`db/models.py`、`db/ddl_check.py`、`db/oracle/*`、`db/repos/oracle/*`、`docs/ADB_*.md` 以及 requirements / settings.example 的 ADB 项均**不进入主干**，`db/backends.py` 精简为 Mongo-only 工厂；changelog 功能本体（路由 / 仓储 / 前端）完整保留。详见根 `README.md` §7.4 与本节后的提交记录。
+> **主干剥离说明（2026-10-12）**：本节记录的是该提交在 `zvms4-adb-migration` 分支的原始形态。主干 `main` 合并时按「无 ADB」原则剥离了 Oracle 部分——`db/models.py`、`db/ddl_check.py`、`db/oracle/*`、`db/repos/oracle/*`、`docs/ADB_*.md` 以及 requirements / settings.example 的 ADB 项均**不进入主干**，`db/backends.py` 精简为 Mongo-only 工厂；changelog 功能本体（路由 / 仓储 / 前端）完整保留。详见 `docs/history/DEVELOPMENT_LOG.md` §7.4 与本节后的提交记录。
 >
-> **更新（2026-10-14）**：上述「无 ADB」剥离**已撤销**——`zvms4-adb-migration` 已整体并入 `main`，ADB 成为唯一数据后端，MongoDB 全量退役（`database.py`、`db/repos/mongo/*`、db/etl、bson/motor/pymongo 依赖与 `ORACLE_ENABLED` 开关均已移除）。本节数据结构的描述以 ADB 形态为准（`zvms_new.changelog` → ADB `CHANGELOG` 表，经 ETL 迁移）。见根 `README.md` §7.5 与 `docs/ADB_MIGRATION.md` §6.7。
+> **更新（2026-10-14）**：上述「无 ADB」剥离**已撤销**——`zvms4-adb-migration` 已整体并入 `main`，ADB 成为唯一数据后端，MongoDB 全量退役（`database.py`、`db/repos/mongo/*`、db/etl、bson/motor/pymongo 依赖与 `ORACLE_ENABLED` 开关均已移除）。本节数据结构的描述以 ADB 形态为准（`zvms_new.changelog` → ADB `CHANGELOG` 表，经 ETL 迁移）。见 `docs/history/DEVELOPMENT_LOG.md` §7.5 与 `zvp5/docs/ADB_MIGRATION.md` §6.7。
 
 - **目标**：`/changelog` 由前端硬编码（`src/data/changelog.ts`）改为数据库驱动；管理员可在页面新增版本、编辑任意历史版本、删除版本；版本号与发行注记入库，不再硬编码。
 - **数据结构**：新增 `zvms_new.changelog`——`version`（发布版本号，如 `v4.2.1-1`）、`release_date`（`YYYY-MM-DD` 字符串）、`items`（发行注记数组）、`updated_at`。Mongo + Oracle 双实现（`ORACLE_ENABLED=False` 时走 Mongo）。

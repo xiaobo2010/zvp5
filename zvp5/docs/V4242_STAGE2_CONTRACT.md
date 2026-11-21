@@ -1,7 +1,7 @@
 # v4.2.4-2 Stage 2 契约（冻结）
 
 > 唯一真相源。实现车道按此执行；任何偏离先在本文档改，再改代码。
-> 上游：`docs/V4242_FIXES_AND_OPS_DESIGN.md` §4（Stage 2 框架）。
+> 上游：`zvp5/docs/V4242_FIXES_AND_OPS_DESIGN.md` §4（Stage 2 框架）。
 
 ## 0. 已裁定与新增事实
 
