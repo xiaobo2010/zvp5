@@ -1650,12 +1650,17 @@ onBeforeUnmount(() => {
 
 @media (max-width: 767px) {
   .volunteer-page {
+    grid-template-columns: minmax(0, 1fr);
     padding: var(--space-5) var(--space-4) var(--space-9);
     gap: var(--space-4);
   }
 
   .page-header {
     padding: var(--space-5);
+  }
+
+  .page-header__content {
+    min-width: 0;
   }
 
   .activity-card {

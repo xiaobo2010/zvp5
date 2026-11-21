@@ -1672,7 +1672,7 @@ onUnmounted(() => {
 /* Work Lists */
 .work-lists {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-5);
   margin-bottom: var(--space-10);
   opacity: 0;
@@ -1747,6 +1747,7 @@ onUnmounted(() => {
   font-weight: 500;
   color: var(--color-text-primary);
   margin: 0 0 var(--space-1) 0;
+  overflow-wrap: anywhere;
 }
 
 .work-item__meta {
@@ -1986,12 +1987,14 @@ onUnmounted(() => {
   margin-bottom: var(--space-5);
 }
 
-/* Mobile: the parent panel already blurs, so the inner category cards can use a
-   smaller radius without losing the glass read. */
 @media (max-width: 767px) {
-  .hour-category {
-    -webkit-backdrop-filter: blur(8px) saturate(155%);
-    backdrop-filter: blur(8px) saturate(155%);
+  .work-list {
+    padding: var(--space-4);
+  }
+
+  .work-item {
+    gap: var(--space-2);
+    padding-inline: var(--space-2);
   }
 }
 
@@ -2006,7 +2009,7 @@ onUnmounted(() => {
   }
 
   .work-lists {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2033,7 +2036,7 @@ onUnmounted(() => {
   }
 
   .work-lists {
-    grid-template-columns: 7fr 5fr;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   }
 }
 
