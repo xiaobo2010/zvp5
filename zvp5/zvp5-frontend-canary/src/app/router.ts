@@ -101,7 +101,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'server/:section?',
         name: 'server',
-        component: () => import('@/pages/system/PlaceholderPage.vue'),
+        component: () => import('@/pages/system/ServerPage.vue'),
         meta: { titleKey: 'nav.server', roles: ['admin'] }
       },
       {

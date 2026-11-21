@@ -175,3 +175,158 @@ export interface MemberPage {
   members: ActivityMemberRow[]
   total: number
 }
+
+/* ------------------------------------------------------------------ */
+/* 运维（`/api/system/*`）：字段名与后端 db_monitor / system_state 一致。 */
+/* ------------------------------------------------------------------ */
+
+export interface MaintenanceState {
+  enabled: boolean
+  /** 秒级 epoch；仅开启时存在。 */
+  since: number | null
+  announcement: string | null
+  /** 维护期间给登录页/维护页的准入提示：当前 token 是否具备 admin。 */
+  admin?: boolean
+}
+
+export interface DatabaseTableItem {
+  name: string
+  estimated_rows: number | null
+  last_analyzed: string | null
+  table_bytes: number
+  index_bytes: number
+  lob_bytes: number
+  lob_index_bytes: number
+  total_bytes: number
+}
+
+export interface DatabaseTablespaceItem {
+  name: string
+  used_bytes: number | null
+  max_bytes: number | null
+  used_percent: number | null
+  is_application: boolean
+}
+
+export interface DatabasePool {
+  available?: boolean
+  scope?: string
+  size?: number
+  checked_out?: number
+  checkedout?: number
+  overflow?: number
+  capacity?: number
+  utilization_percent?: number | null
+  waited?: number
+  reason?: string
+}
+
+export interface DatabaseLoadMetric {
+  name: string
+  value: number | null
+  unit: string
+  begin_time: string
+  end_time: string
+  interval_centiseconds: number
+  group_id: number
+}
+
+export interface DatabaseStatus {
+  observed_at?: string
+  storage: {
+    available: boolean
+    tables: {
+      available: boolean
+      count: number | null
+      total_bytes: number | null
+      items: DatabaseTableItem[]
+      message?: string
+    }
+    tablespaces: {
+      available: boolean
+      items: DatabaseTablespaceItem[]
+      message?: string
+    }
+  }
+  load: {
+    available: boolean
+    source: string
+    metrics: DatabaseLoadMetric[]
+    connection_pool?: DatabasePool
+    assessment?: string
+    message?: string
+  }
+  cache?: { cached: boolean; age_seconds: number; ttl_seconds: number }
+  warnings?: string[]
+}
+
+export interface HostSnapshot {
+  host: {
+    cpu: {
+      user_pct: number | null
+      system_pct: number | null
+      idle_pct: number | null
+      iowait_pct: number | null
+    }
+    mem: { total_mb: number | null; used_mb: number | null; available_mb: number | null }
+    load: { '1m': number | null; '5m': number | null; '15m': number | null }
+    disk: { mount?: string; used_pct: number | null; free_gb: number | null }
+    net: { rx_kbps: number | null; tx_kbps: number | null }
+    diskio: { read_kbps: number | null; write_kbps: number | null }
+    proc: { rss_mb: number | null; uptime_hours: number | null }
+  }
+  pool: DatabasePool
+  api: {
+    window_seconds: number
+    items: Array<{
+      method: string
+      route: string
+      count: number
+      err_count: number
+      avg_ms: number
+      p95_ms: number
+      max_ms: number
+    }>
+  }
+}
+
+export interface RetentionProgressCell {
+  deleted: number
+  remaining: number
+}
+
+export interface RetentionProgress {
+  running: boolean
+  job_id: string | null
+  phase: string | null
+  started_at: string | null
+  finished_at: string | null
+  progress?: Partial<Record<string, RetentionProgressCell | number>>
+  result?: unknown
+  error?: string | null
+}
+
+export interface BackupSnapshot {
+  state: 'idle' | 'running' | 'ok' | 'failed'
+  started_at: string | null
+  finished_at: string | null
+  tables_total: number | null
+  tables_done: number
+  rows_loaded: number
+  current_table: string | null
+  elapsed_seconds: number | null
+  message: string
+}
+
+export interface RetentionPreviewRow {
+  cutoff: string
+  deletable: number | null
+}
+
+export interface RetentionPreview {
+  app_logs: RetentionPreviewRow
+  export_tasks: RetentionPreviewRow
+  ai_call_logs: RetentionPreviewRow
+  ai_prompt_audit: RetentionPreviewRow
+  ai_agent_events: RetentionPreviewRow
+}
