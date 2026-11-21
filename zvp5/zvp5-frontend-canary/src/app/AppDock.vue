@@ -6,14 +6,14 @@ import ZIcon from '@/shared/ui/ZIcon.vue'
 const { t } = useI18n()
 const navItems = useNavItems()
 
-// 移动端底栏最多放 5 个入口，其余入口从“我的”进入。
+// 移动端没有侧栏，底栏必须承载全部入口；角色多时横向滚动，不丢入口。
 const items = navItems
 </script>
 
 <template>
   <nav class="dock glass-strong" aria-label="移动端主导航">
     <RouterLink
-      v-for="item in items.slice(0, 5)"
+      v-for="item in items"
       :key="item.to"
       :to="item.to"
       class="dock-item"
@@ -39,9 +39,16 @@ const items = navItems
   border-radius: var(--radius-pill);
   transform: translateX(-50%);
   max-width: calc(100vw - 20px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dock::-webkit-scrollbar {
+  display: none;
 }
 
 .dock-item {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -79,9 +79,11 @@ onMounted(async () => {
           <ZBadge v-for="role in roles" :key="role" tone="accent">{{ t(`role.${role}`) }}</ZBadge>
         </div>
       </div>
-      <ZButton variant="ghost" size="sm" icon="logout" @click="confirmOpen = true">
-        {{ t('common.logout') }}
-      </ZButton>
+      <div class="identity-action">
+        <ZButton variant="ghost" size="sm" icon="logout" @click="confirmOpen = true">
+          {{ t('common.logout') }}
+        </ZButton>
+      </div>
     </section>
 
     <div class="grid">
@@ -214,6 +216,11 @@ onMounted(async () => {
   gap: 0.45rem;
   font-size: var(--text-sm);
   color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.identity-action {
+  flex: none;
 }
 
 .sep {
@@ -348,6 +355,10 @@ onMounted(async () => {
 
   .identity {
     flex-wrap: wrap;
+  }
+
+  .identity-body {
+    flex-basis: calc(100% - 76px - var(--space-5));
   }
 
   .about {
