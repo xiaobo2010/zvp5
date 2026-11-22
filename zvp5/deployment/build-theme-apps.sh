@@ -78,12 +78,13 @@ finalize_app() {
   rm -f "$target"/sw.js "$target"/sw.js.map "$target"/workbox-*.js "$target"/workbox-*.js.map
   shopt -u nullglob
 
-  ZVMS_API_BASE="$api_base" python3 - "$target/index.html" <<'PY'
+  ZVMS_API_BASE="$api_base" ZVMS_THEME_ID="$theme_id" python3 - "$target/index.html" <<'PY'
 import os
 import sys
 
 path = sys.argv[1]
 api_base = os.environ["ZVMS_API_BASE"]
+theme_id = os.environ["ZVMS_THEME_ID"]
 meta = '<meta name="zvms-api-base" content="%s">' % api_base
 script = '<script src="/theme-switcher.js" defer></script>'
 
@@ -98,6 +99,10 @@ if "theme-switcher.js" not in html:
     if "</body>" not in html:
         raise SystemExit("no </body> in %s" % path)
     html = html.replace("</body>", "  %s\n  </body>" % script, 1)
+
+# Vite 的 externalize-inline-scripts 插件写的是根绝对路径 /assets/boot-*.js；
+# 子应用必须改回自己的基路径，否则会加载根 canary 的同名 boot 脚本。
+html = html.replace('="/assets/', '="/t/%s/assets/' % theme_id)
 
 with open(path, "w", encoding="utf-8") as handle:
     handle.write(html)
