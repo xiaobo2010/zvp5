@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { login } from '@/api/canary'
+import { changePassword, login, loginWithTempPassword, validatePasswordStrength } from '@/api/canary'
 import type { CanaryApiError } from '@/api/canary'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
@@ -14,6 +14,24 @@ const loading = ref(false)
 const errorMessage = ref('')
 const studentIdTouched = ref(false)
 const showContent = ref(false)
+
+// A weak login returns a 5-minute password_change token instead of an access
+// token. Keep it only for the forced change step; never let it reach the router.
+const weakSession = ref<{ oid: string; token: string } | null>(null)
+const newPassword = ref('')
+const confirmPassword = ref('')
+const weakError = ref('')
+const changingPassword = ref(false)
+
+// 403 DEVICE_NOT_PRIMARY carries a one-time device challenge. The temp password
+// is issued out-of-band by a secretary/admin; exchanging it yields a 1h session.
+const deviceChallenge = ref('')
+const deviceNotice = ref('')
+const tempPassword = ref('')
+const tempPasswordError = ref('')
+const tempSessionLoading = ref(false)
+
+const passwordChangedNotice = computed(() => route.query.reason === 'password-changed')
 
 const currentTime = ref(new Date())
 const timeString = computed(() => {
@@ -40,27 +58,112 @@ const canSubmit = computed(() => {
   return isValidStudentId.value && password.value.length > 0 && !loading.value
 })
 
+const canSubmitWeak = computed(
+  () =>
+    !!weakSession.value &&
+    validatePasswordStrength(newPassword.value) &&
+    newPassword.value === confirmPassword.value &&
+    !changingPassword.value
+)
+
 let clockTimer: ReturnType<typeof setInterval> | null = null
+
+async function finishLogin() {
+  const rawRedirect = route.query.redirect
+  const redirect = typeof rawRedirect === 'string' ? rawRedirect : ''
+  const isLocal = redirect.startsWith('/') && !/^\/[\\/]/.test(redirect)
+  await router.replace(isLocal ? redirect : '/')
+}
 
 async function handleSubmit() {
   if (!canSubmit.value) return
 
   loading.value = true
   errorMessage.value = ''
+  weakError.value = ''
+  tempPasswordError.value = ''
+  deviceChallenge.value = ''
+  deviceNotice.value = ''
 
   try {
-    await login(studentId.value.trim(), password.value)
+    const result = await login(studentId.value.trim(), password.value)
 
-    const rawRedirect = route.query.redirect
-    const redirect = typeof rawRedirect === 'string' ? rawRedirect : ''
-    const isLocal = redirect.startsWith('/') && !/^\/[\\/]/.test(redirect)
-    await router.replace(isLocal ? redirect : '/')
+    if (result.weak_password) {
+      weakSession.value = { oid: result._id, token: result.token }
+      password.value = ''
+      newPassword.value = ''
+      confirmPassword.value = ''
+      return
+    }
+
+    await finishLogin()
   } catch (error) {
     const err = error as CanaryApiError
-    errorMessage.value = err.message || '登录失败，请检查学号和密码'
+    if (err.code === 'DEVICE_NOT_PRIMARY' && err.challenge) {
+      deviceChallenge.value = err.challenge
+      deviceNotice.value = err.message
+      tempPassword.value = ''
+      password.value = ''
+    } else {
+      errorMessage.value = err.message || '登录失败，请检查学号和密码'
+    }
   } finally {
     loading.value = false
   }
+}
+
+async function handleTempPasswordSubmit() {
+  if (!deviceChallenge.value || !tempPassword.value.trim() || tempSessionLoading.value) return
+
+  tempSessionLoading.value = true
+  tempPasswordError.value = ''
+  try {
+    await loginWithTempPassword(deviceChallenge.value, tempPassword.value.trim())
+    deviceChallenge.value = ''
+    tempPassword.value = ''
+    await finishLogin()
+  } catch (error) {
+    const err = error as CanaryApiError
+    tempPasswordError.value = err.message || '临时密码登录失败，请稍后重试。'
+    if (err.code === 'DEVICE_NOT_PRIMARY' && err.challenge) {
+      deviceChallenge.value = err.challenge
+    }
+  } finally {
+    tempSessionLoading.value = false
+  }
+}
+
+function cancelTempPasswordLogin() {
+  deviceChallenge.value = ''
+  deviceNotice.value = ''
+  tempPassword.value = ''
+  tempPasswordError.value = ''
+}
+
+async function handleWeakPasswordSubmit() {
+  if (!canSubmitWeak.value || !weakSession.value) return
+
+  changingPassword.value = true
+  weakError.value = ''
+  try {
+    await changePassword(weakSession.value.oid, newPassword.value, weakSession.value.token)
+    weakSession.value = null
+    newPassword.value = ''
+    confirmPassword.value = ''
+    await router.replace({ path: '/login', query: { reason: 'password-changed' } })
+  } catch (error) {
+    const err = error as CanaryApiError
+    weakError.value = err.message || '密码修改失败，请稍后重试。'
+  } finally {
+    changingPassword.value = false
+  }
+}
+
+function cancelWeakPasswordChange() {
+  weakSession.value = null
+  newPassword.value = ''
+  confirmPassword.value = ''
+  weakError.value = ''
 }
 
 onMounted(() => {
@@ -113,7 +216,147 @@ onUnmounted(() => {
           <p class="card-subtitle">使用学号和密码继续</p>
         </div>
 
-        <form @submit.prevent="handleSubmit" class="login-form">
+        <BubbleFeedback
+          v-if="passwordChangedNotice"
+          class="glass-feedback--success"
+          role="status"
+        >
+          密码已更新，请使用新密码重新登录。
+        </BubbleFeedback>
+
+        <form
+          v-if="deviceChallenge"
+          @submit.prevent="handleTempPasswordSubmit"
+          class="login-form"
+        >
+          <BubbleFeedback class="glass-feedback--warn" role="alert">
+            {{ deviceNotice || '本机不是该账号的主学海设备。请输入管理员签发的临时密码。' }}
+          </BubbleFeedback>
+
+          <div class="form-group">
+            <label for="temp-account" class="form-label">账号</label>
+            <input
+              id="temp-account"
+              :value="studentId"
+              type="text"
+              class="form-input"
+              readonly
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="temp-password" class="form-label">临时密码</label>
+            <input
+              id="temp-password"
+              v-model="tempPassword"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="8 位一次性临时密码"
+              maxlength="8"
+              :disabled="tempSessionLoading"
+              class="form-input"
+              required
+            />
+          </div>
+
+          <BubbleFeedback v-if="tempPasswordError" class="glass-feedback--error" role="alert">
+            {{ tempPasswordError }}
+          </BubbleFeedback>
+
+          <button
+            type="submit"
+            :disabled="tempSessionLoading || tempPassword.trim().length === 0"
+            class="submit-button"
+            :class="{ loading: tempSessionLoading }"
+          >
+            <span v-if="!tempSessionLoading" class="button-label">使用临时密码登录</span>
+            <span v-else class="button-spinner" role="status">正在验证…</span>
+          </button>
+
+          <button
+            type="button"
+            class="login-back liquid-btn liquid-btn--secondary"
+            :disabled="tempSessionLoading"
+            @click="cancelTempPasswordLogin"
+          >
+            返回密码登录
+          </button>
+        </form>
+
+        <form
+          v-else-if="weakSession"
+          @submit.prevent="handleWeakPasswordSubmit"
+          class="login-form"
+        >
+          <BubbleFeedback class="glass-feedback--warn" role="alert">
+            当前密码强度不足。请先设置一个符合要求的新密码，完成后重新登录。
+          </BubbleFeedback>
+
+          <div class="form-group">
+            <label for="weak-account" class="form-label">账号</label>
+            <input
+              id="weak-account"
+              :value="studentId"
+              type="text"
+              class="form-input"
+              readonly
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="weak-new-password" class="form-label">新密码</label>
+            <input
+              id="weak-new-password"
+              v-model="newPassword"
+              type="password"
+              autocomplete="new-password"
+              placeholder="8–14 位，至少包含 3 类字符"
+              :disabled="changingPassword"
+              class="form-input"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="weak-confirm-password" class="form-label">确认新密码</label>
+            <input
+              id="weak-confirm-password"
+              v-model="confirmPassword"
+              type="password"
+              autocomplete="new-password"
+              placeholder="再次输入新密码"
+              :disabled="changingPassword"
+              class="form-input"
+              required
+            />
+          </div>
+
+          <BubbleFeedback v-if="weakError" class="glass-feedback--error" role="alert">
+            {{ weakError }}
+          </BubbleFeedback>
+
+          <button
+            type="submit"
+            :disabled="!canSubmitWeak"
+            class="submit-button"
+            :class="{ loading: changingPassword }"
+          >
+            <span v-if="!changingPassword" class="button-label">设置新密码</span>
+            <span v-else class="button-spinner" role="status">正在保存…</span>
+          </button>
+
+          <button
+            type="button"
+            class="login-back liquid-btn liquid-btn--secondary"
+            :disabled="changingPassword"
+            @click="cancelWeakPasswordChange"
+          >
+            返回重新登录
+          </button>
+        </form>
+
+        <form v-else @submit.prevent="handleSubmit" class="login-form">
           <div class="form-group" :class="{ error: invalidStudentId }">
             <label for="student-id" class="form-label">学号</label>
             <input

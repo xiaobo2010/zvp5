@@ -642,10 +642,10 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   border-radius: var(--radius-md);
   background:
     radial-gradient(ellipse at 18% 0%, #ffffffd9, transparent 62%),
-    linear-gradient(148deg, #e8f4ff 0%, #bcdcf9 55%, #9fc8f4 100%);
-  border: 1px solid rgb(0 113 227 / 0.34);
+    var(--nav-highlight);
+  border: 1px solid color-mix(in srgb, var(--accent-ink) 32%, transparent);
   box-shadow:
-    0 6px 16px rgb(0 113 227 / 0.22),
+    0 6px 16px color-mix(in srgb, var(--accent-ink) 16%, transparent),
     0 1px 3px #1230521f,
     inset 0 1px 0 #ffffffe6;
   opacity: 0;
@@ -701,7 +701,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.68) 0%, rgba(248, 250, 252, 0.52) 100%);
+  background: var(--glass-floating-bg);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.84));
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
@@ -736,7 +736,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 }
 
 .site-nav__drawer-close:hover {
-  color: var(--color-brand);
+  color: var(--accent-ink);
   transform: scale(1.04);
   box-shadow:
     0 2px 6px rgba(18, 48, 82, 0.08),
@@ -769,7 +769,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, #ffffffb8, #f8fafc8f);
+  background: linear-gradient(135deg, #ffffffb8, color-mix(in srgb, var(--palette-edge, #d8eee6) 32%, #ffffff8f));
   box-shadow: var(--glass-rim), 0 1px 3px #1230520a;
   color: var(--color-text-primary);
   text-decoration: none;
@@ -815,7 +815,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 }
 
 .site-nav__drawer-link.is-selected {
-  color: #0f4a77;
+  color: var(--accent-ink);
   border-color: color-mix(in srgb, var(--color-brand) 38%, var(--glass-border));
 }
 
@@ -931,8 +931,8 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .site-nav__indicator {
-    background: #cfe5f8;
-    border-color: #175588;
+    background: color-mix(in srgb, white 38%, var(--palette-main, #cfe5f8));
+    border-color: var(--accent-ink);
     box-shadow: none;
   }
 

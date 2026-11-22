@@ -305,10 +305,10 @@ onBeforeUnmount(() => {
   left: 0;
   z-index: 0;
   border-radius: var(--radius-pill);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.52) 0%, rgba(240, 248, 255, 0.38) 100%);
+  background: var(--nav-highlight);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.72));
   box-shadow:
-    0 2px 6px rgba(0, 113, 227, 0.1),
+    0 2px 6px color-mix(in srgb, var(--accent-ink) 10%, transparent),
     0 0 0 0.5px rgba(255, 255, 255, 0.4),
     var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
   opacity: 0;
@@ -401,7 +401,7 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .animated-tabs__indicator {
-    background: #e3eef8;
+    background: color-mix(in srgb, white 38%, var(--palette-main, #cfe5f8));
     border-color: var(--accent-ink);
   }
 

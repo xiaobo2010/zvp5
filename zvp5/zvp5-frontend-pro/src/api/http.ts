@@ -41,7 +41,9 @@ export function currentUserId(): string {
 }
 
 function isEnvelope(value: unknown): value is { status?: unknown; data?: unknown; message?: unknown; code?: unknown } {
-  return !!value && typeof value === 'object' && 'status' in value
+  if (!value || typeof value !== 'object' || !('status' in value)) return false
+  return value.status === 'error' ||
+    ('data' in value && (value.status === 'ok' || value.status === 'success'))
 }
 
 function unwrap<T>(payload: unknown): T {
@@ -123,7 +125,9 @@ async function requestRaw(path: string, init: RequestInit = {}): Promise<{ paylo
 
   if (!response.ok) {
     if (response.status === 401) {
-      localStorage.removeItem('token')
+      if (value && headers.get('Authorization') === `Bearer ${value}` && authToken() === value) {
+        localStorage.removeItem('token')
+      }
       throw new ApiError('登录状态已失效，请重新登录。', 401, 'UNAUTHORIZED')
     }
     throw new ApiError(
@@ -158,7 +162,8 @@ export async function apiList<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export async function apiVoid(path: string, init: RequestInit = {}): Promise<void> {
-  await requestRaw(path, init)
+  const { payload } = await requestRaw(path, init)
+  unwrap<unknown>(payload)
 }
 
 export function jsonBody(value: unknown): RequestInit {

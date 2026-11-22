@@ -1174,8 +1174,8 @@ onUnmounted(() => {
 .total-hours {
   position: relative;
   background:
-    radial-gradient(ellipse at 12% 0%, #bfddf65c, transparent 55%),
-    radial-gradient(ellipse at 98% 100%, #fbe2c86b, transparent 48%),
+    radial-gradient(ellipse at 12% 0%, color-mix(in srgb, var(--palette-main) 54%, transparent), transparent 55%),
+    radial-gradient(ellipse at 98% 100%, color-mix(in srgb, var(--palette-low) 58%, transparent), transparent 48%),
     var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
@@ -1488,11 +1488,7 @@ onUnmounted(() => {
 .hour-category {
   position: relative;
   padding: var(--space-5);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.45) 0%,
-    rgba(255, 255, 255, 0.28) 100%
-  );
+  background: var(--surface-matte);
   border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: var(--radius-lg);
   box-shadow:
@@ -1526,19 +1522,16 @@ onUnmounted(() => {
 /* Type-specific color accents */
 .hour-category--type-0 {
   --hour-accent: 0, 122, 255;
-  background: linear-gradient(135deg, rgba(0, 122, 255, 0.11) 0%, rgba(255, 255, 255, 0.42) 72%);
   border-color: rgba(0, 122, 255, 0.2);
 }
 
 .hour-category--type-1 {
   --hour-accent: 13, 148, 136;
-  background: linear-gradient(135deg, rgba(20, 184, 166, 0.11) 0%, rgba(255, 255, 255, 0.42) 72%);
   border-color: rgba(20, 184, 166, 0.2);
 }
 
 .hour-category--type-2 {
   --hour-accent: 245, 158, 11;
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(255, 255, 255, 0.42) 72%);
   border-color: rgba(245, 158, 11, 0.22);
 }
 

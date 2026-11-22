@@ -13,7 +13,7 @@ function choose(value: PalettePreference) {
 <template>
   <fieldset id="appearance" class="appearance">
     <legend>外观设置</legend>
-    <p class="appearance__description">背景与界面强调色会立即更新，配色保存在此浏览器。</p>
+    <p class="appearance__description">背景、卡片和导航会随配色一起变化。选择保存在此浏览器。</p>
     <div class="appearance__options">
       <label
         v-for="palette in palettes"

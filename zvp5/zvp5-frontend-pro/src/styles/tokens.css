@@ -1,5 +1,29 @@
 /* ZVMS Pro Design Tokens */
 
+@property --palette-main {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #cfe5f8;
+}
+
+@property --palette-edge {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #d8eee6;
+}
+
+@property --palette-low {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #f7efdd;
+}
+
+@property --accent-ink {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #175588;
+}
+
 :root {
   /* Colors — ZVMS palette */
   --color-brand: #0071e3;
@@ -48,6 +72,7 @@
     #f8f5ffbd
   );
   --glass-floating-bg: linear-gradient(145deg, #fffdf9e8, #edf5fdc7 60%, #f6f4ffdb);
+  --nav-highlight: linear-gradient(148deg, #e8f4ff, #bcdcf9 55%, #9fc8f4);
   --glass-tint: rgb(42 106 170 / 0.06);
   --glass-border: rgb(255 255 255 / 0.83);
   --glass-rim: inset 0 1px 0 #fffffff0, inset 1px 0 0 #ffffff8a, inset 0 -1px 0 #587ea11c;
@@ -139,6 +164,43 @@
   --section-gap: clamp(80px, 12vw, 160px);
 }
 
+@supports (color: color-mix(in srgb, white, black)) {
+  .pro-app {
+    --surface-matte: linear-gradient(
+      148deg,
+      color-mix(in srgb, white 84%, var(--palette-main, #cfe5f8)),
+      color-mix(in srgb, white 65%, var(--palette-edge, #d8eee6)) 68%,
+      color-mix(in srgb, white 73%, var(--palette-low, #f7efdd))
+    );
+    --glass-bg: linear-gradient(
+      147deg,
+      #fffdf9e8,
+      color-mix(in srgb, var(--palette-main, #cfe5f8) 55%, #ffffffe0) 57%,
+      color-mix(in srgb, var(--palette-low, #f7efdd) 63%, #ffffffad)
+    );
+    --glass-floating-bg: linear-gradient(
+      145deg,
+      #fffffff0,
+      color-mix(in srgb, var(--palette-main, #cfe5f8) 45%, #ffffffbc) 60%,
+      color-mix(in srgb, var(--palette-low, #f7efdd) 46%, #ffffffe3)
+    );
+    --nav-highlight: linear-gradient(
+      148deg,
+      color-mix(in srgb, white 70%, var(--palette-main, #cfe5f8)),
+      color-mix(in srgb, white 24%, var(--palette-main, #cfe5f8)) 50%,
+      color-mix(in srgb, var(--accent-ink) 24%, var(--palette-low, #f7efdd))
+    );
+  }
+}
+
+.pro-app {
+  transition:
+    --palette-main 850ms var(--ease-smooth),
+    --palette-edge 850ms var(--ease-smooth),
+    --palette-low 850ms var(--ease-smooth),
+    --accent-ink 850ms var(--ease-smooth);
+}
+
 .palette-dawn {
   --palette-main: #fbddcd;
   --palette-edge: #d6e5f6;
@@ -177,20 +239,24 @@
     --duration-base: 10ms;
     --duration-slow: 10ms;
   }
+
+  .pro-app { transition: none; }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root {
+  :root,
+  .pro-app {
     --glass-bg: var(--surface-matte);
     --glass-floating-bg: var(--surface-matte);
   }
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :root {
-    --surface-matte: #f9fbfe;
-    --glass-bg: #f3f7fb;
-    --glass-floating-bg: #f3f7fb;
+  :root,
+  .pro-app {
+    --surface-matte: linear-gradient(150deg, white, var(--palette-edge, #f9fbfe));
+    --glass-bg: var(--surface-matte);
+    --glass-floating-bg: var(--surface-matte);
     --glass-blur: none;
     --glass-mobile-blur: none;
     --glass-border: #8c9fb2;

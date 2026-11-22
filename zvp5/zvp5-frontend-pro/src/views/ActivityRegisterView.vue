@@ -64,6 +64,7 @@ const selectedActivity = computed(
 
 const addRows = ref<AddRow[]>([])
 const editRows = ref<EditRow[]>([])
+const membersTotal = ref(0)
 const membersLoading = ref(false)
 const membersError = ref('')
 const submitting = ref(false)
@@ -83,6 +84,12 @@ const modeOptions = computed<RegistrationMode[]>(() => {
   }
   return ['on-campus', 'off-campus', 'social-practice']
 })
+
+// The v3 member list caps a page at 100 rows; make that limit explicit instead
+// of silently hiding the rest of a large activity.
+const membersTruncated = computed(
+  () => editRows.value.length >= 100 && membersTotal.value > editRows.value.length
+)
 
 let keySeed = 0
 function nextKey() {
@@ -157,7 +164,8 @@ async function loadMembers() {
   membersLoading.value = true
   membersError.value = ''
   try {
-    const result = await listActivityMembers(selectedActivity.value._id, '', 1, 200)
+    const result = await listActivityMembers(selectedActivity.value._id, '', 1, 100)
+    membersTotal.value = result.total
     editRows.value = result.members.map((member: ActivityMemberRow) => ({
       key: nextKey(),
       memberId: member._id,
@@ -227,6 +235,7 @@ function validateAddRows(): string {
     (row) => row.studentId.trim() || row.duration.trim()
   )
   if (!populated.length) return '至少填写一名成员。'
+  if (populated.length > 100) return '一次最多登记 100 名成员。'
   for (const row of populated) {
     if (!row.studentId.trim()) return '请填写成员学号。'
     if (!row.oid) return `学号 ${row.studentId} 尚未匹配到成员。`
@@ -359,6 +368,7 @@ onMounted(() => {
               class="field__input"
               type="search"
               placeholder="输入活动名称或地点"
+              maxlength="64"
               @keydown.enter.prevent="loadActivities"
             />
             <button class="glass-action" type="button" :disabled="activitiesLoading" @click="loadActivities">
@@ -502,6 +512,10 @@ onMounted(() => {
               </BubbleFeedback>
             </article>
           </div>
+
+          <BubbleFeedback v-if="membersTruncated" class="glass-feedback--warn" role="status">
+            成员较多，这里仅显示前 100 条记录（共 {{ membersTotal }} 条）；其余记录请在主站处理。
+          </BubbleFeedback>
 
           <div class="work-card__actions">
             <button class="primary-action" type="button" :disabled="submitting || membersLoading" @click="submitModify">

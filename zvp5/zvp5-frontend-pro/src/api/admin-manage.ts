@@ -177,11 +177,10 @@ export async function fetchGroupCount(): Promise<number> {
   return Number.isFinite(total) ? total : 0
 }
 
-// `/v1/activities` is the live list route (there is no `/v1/activities` on the
-// main backend). It returns `{ activities, total }`, not `metadata.size`.
+// The v3 GET route returns `{ activities, total }` and uses `size`.
 export async function fetchActivityCount(): Promise<number> {
   const data = await apiRequest<ActivityCountPage>(
-    `/v1/activities${buildQuery({ page: 1, perpage: 1 })}`
+    `/v1/activities${buildQuery({ page: 1, size: 1 })}`
   )
   const total = Number(data.total)
   return Number.isFinite(total) ? total : 0
@@ -226,21 +225,23 @@ export function fetchAdminNotifications(): Promise<AdminNotificationList> {
 
 export function createNotification(
   title: string,
-  content: string
+  content: string,
+  verificationToken: string
 ): Promise<AdminNotificationMutation> {
   return apiRequest<AdminNotificationMutation>(
     '/v1/notifications',
-    jsonBody({ title, content })
+    jsonBody({ title, content, verification_token: verificationToken })
   )
 }
 
 export function updateNotificationActive(
   id: string,
-  active: boolean
+  active: boolean,
+  verificationToken: string
 ): Promise<AdminNotificationMutation> {
   return apiRequest<AdminNotificationMutation>(
     `/v1/notifications/${encodeURIComponent(id)}`,
-    { method: 'PUT', body: JSON.stringify({ active }) }
+    { method: 'PUT', body: JSON.stringify({ active, verification_token: verificationToken }) }
   )
 }
 
@@ -266,11 +267,12 @@ export interface SettingUpdateItem {
 }
 
 export function saveSystemSettings(
-  items: SettingUpdateItem[]
+  items: SettingUpdateItem[],
+  verificationToken: string
 ): Promise<{ items?: AdminSettingItem[] }> {
   return apiRequest<{ items?: AdminSettingItem[] }>('/system/settings', {
     method: 'PUT',
-    body: JSON.stringify({ items })
+    body: JSON.stringify({ items, verification_token: verificationToken })
   })
 }
 

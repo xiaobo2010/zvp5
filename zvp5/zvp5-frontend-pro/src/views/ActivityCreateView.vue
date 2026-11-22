@@ -10,9 +10,17 @@ const router = useRouter()
 const activityName = ref('')
 const activityType = ref<CreateActivityInput['type']>('on-campus')
 const activityDescription = ref('')
+const activityPlace = ref('')
+const activityDate = ref(todayInputValue())
 const submitting = ref(false)
 const validationError = ref('')
 const successMessage = ref('')
+
+function todayInputValue(): string {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
 
 const activityTypes: Array<{ value: CreateActivityInput['type']; label: string }> = [
   { value: 'on-campus', label: '校内' },
@@ -48,6 +56,11 @@ function validateForm(): boolean {
     return false
   }
 
+  if (!activityDate.value) {
+    validationError.value = '请选择活动日期'
+    return false
+  }
+
   return true
 }
 
@@ -67,11 +80,15 @@ async function handleSubmit() {
     await createActivity({
       name: activityName.value.trim(),
       description: activityDescription.value.trim(),
-      type: activityType.value
+      type: activityType.value,
+      date: activityDate.value,
+      place: activityPlace.value.trim()
     })
     successMessage.value = '活动已提交，正在等待审核。'
     activityName.value = ''
     activityDescription.value = ''
+    activityPlace.value = ''
+    activityDate.value = todayInputValue()
   } catch (reason) {
     validationError.value =
       reason instanceof CanaryApiError ? reason.message : '提交失败，请稍后重试。'
@@ -150,6 +167,31 @@ async function handleSubmit() {
           </div>
 
           <div class="form-field">
+            <label for="activity-date" class="form-field__label">活动日期</label>
+            <input
+              id="activity-date"
+              v-model="activityDate"
+              type="date"
+              class="form-field__input"
+              required
+              :disabled="submitting"
+            />
+          </div>
+
+          <div class="form-field">
+            <label for="activity-place" class="form-field__label">活动地点（可选）</label>
+            <input
+              id="activity-place"
+              v-model="activityPlace"
+              type="text"
+              class="form-field__input"
+              placeholder="例如：镇海中学操场"
+              maxlength="256"
+              :disabled="submitting"
+            />
+          </div>
+
+          <div class="form-field">
             <label for="activity-description" class="form-field__label">活动说明</label>
             <textarea
               id="activity-description"
@@ -202,6 +244,7 @@ async function handleSubmit() {
             </p>
             <ul class="hint-card__list">
               <li>活动名称应简洁明了</li>
+              <li>活动日期与地点需准确</li>
               <li>活动类型需符合实际情况</li>
               <li>活动说明需详细描述内容</li>
             </ul>

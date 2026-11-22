@@ -8,11 +8,15 @@ const API_BASE = (
 
 export class CanaryApiError extends Error {
   readonly status: number
+  readonly code: string
+  readonly challenge: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = '', challenge = '') {
     super(message)
     this.name = 'CanaryApiError'
     this.status = status
+    this.code = code
+    this.challenge = challenge
   }
 }
 
@@ -86,6 +90,7 @@ export interface CanaryLoginResult {
   token: string
   _id: string
   weak_password?: boolean
+  binding_mismatch?: boolean
   profile?: {
     _id: string
     id: string
@@ -96,15 +101,26 @@ export interface CanaryLoginResult {
   }
 }
 
-interface LegacyResponse<T> {
-  status: 'ok' | 'error'
-  data: T
-  message?: string
-  code?: number | string
-}
-
 function token(): string {
   return localStorage.getItem('token') ?? ''
+}
+
+/**
+ * Xuehai device identity, mirrored from the canary client: the native browser
+ * bridge exposes the raw user id; the data-center App only has it in the UA.
+ * The backend uses this header as the device subject for login/device guards,
+ * so it must accompany every request (browser tabs without either source stay
+ * header-less, which the backend treats as a normal desktop client).
+ */
+function xuehaiId(): string {
+  const bridge = (
+    window as unknown as { xhBrowserJava?: { getUserId?: () => unknown } }
+  ).xhBrowserJava
+  const raw = bridge?.getUserId?.()
+  const id = Number(raw)
+  if (Number.isFinite(id) && id > 0) return String(id)
+  const match = /userId\/(\d+)/.exec(navigator.userAgent)
+  return match?.[1] ?? ''
 }
 
 // Decoding the JWT is pure and repeated by every request/auth check. Cache the
@@ -139,6 +155,9 @@ export function isLoggedIn(): boolean {
   if (!value) return false
   const payload = decodeTokenPayload(value)
   if (!payload) return false
+  // Verify/short-lived tokens (weak-password login, password re-verification)
+  // must never pass the route guard: they are not access tokens.
+  if (payload.scope !== 'access_token') return false
   const exp = typeof payload.exp === 'number' ? payload.exp : 0
   return exp === 0 || exp * 1000 > Date.now()
 }
@@ -158,36 +177,77 @@ export function clearSession(): void {
 
 function unwrap<T>(payload: unknown): T {
   if (payload && typeof payload === 'object' && 'status' in payload) {
-    const legacy = payload as LegacyResponse<T>
-    if (legacy.status === 'error') {
-      throw new CanaryApiError(legacy.message || '请求失败', 400)
+    const legacy = payload as {
+      status?: unknown
+      data?: unknown
+      message?: unknown
+      code?: unknown
     }
-    return legacy.data
+    if (legacy.status === 'error') {
+      const message = typeof legacy.message === 'string' ? legacy.message : '请求失败'
+      const code = typeof legacy.code === 'string' ? legacy.code : ''
+      throw new CanaryApiError(message, 400, code)
+    }
+    // Only `{status: ok|success, data}` is a legacy success envelope. A bare
+    // object that merely happens to have a `status` field (an activity row, a
+    // health/meta payload, `{status: 'ok'}` without data) must pass through
+    // unchanged instead of being flattened to `undefined`.
+    if (
+      (legacy.status === 'ok' || legacy.status === 'success') &&
+      'data' in legacy
+    ) {
+      return legacy.data as T
+    }
   }
   return payload as T
 }
 
-function errorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === 'object') {
-    const body = payload as { detail?: unknown; message?: unknown }
-    if (typeof body.detail === 'string') return body.detail
-    if (body.detail && typeof body.detail === 'object') {
-      const detail = body.detail as { message?: unknown }
-      if (typeof detail.message === 'string') return detail.message
-    }
-    if (typeof body.message === 'string') return body.message
-  }
-  return fallback
+interface ErrorMeta {
+  message: string
+  code: string
+  challenge: string
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+function errorMeta(payload: unknown, fallback: string): ErrorMeta {
+  const meta: ErrorMeta = { message: fallback, code: '', challenge: '' }
+  if (!payload || typeof payload !== 'object') return meta
+  const body = payload as { detail?: unknown; message?: unknown; code?: unknown }
+  if (typeof body.detail === 'string') {
+    meta.message = body.detail
+  } else if (body.detail && typeof body.detail === 'object') {
+    const detail = body.detail as { message?: unknown; code?: unknown; challenge?: unknown }
+    if (typeof detail.message === 'string') meta.message = detail.message
+    if (typeof detail.code === 'string') meta.code = detail.code
+    if (typeof detail.challenge === 'string') meta.challenge = detail.challenge
+  }
+  if (typeof body.message === 'string') meta.message = body.message
+  if (typeof body.code === 'string') meta.code = body.code
+  return meta
+}
+
+interface RequestOptions {
+  /** Explicit bearer token (password verification/change use a short token). */
+  token?: string
+  /** A rejected short token must not clear the long-lived session token. */
+  keepSessionOn401?: boolean
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  options: RequestOptions = {}
+): Promise<T> {
   const headers = new Headers(init.headers)
   if (!headers.has('Content-Type') && init.body) {
     headers.set('Content-Type', 'application/json')
   }
-  const value = token()
+  const value = options.token ?? token()
   if (value && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${value}`)
+  }
+  const device = xuehaiId()
+  if (device && !headers.has('Xuehai-Id')) {
+    headers.set('Xuehai-Id', device)
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
@@ -208,13 +268,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     if (response.status === 401) {
-      clearSession()
+      if (!options.keepSessionOn401) clearSession()
       throw new CanaryApiError('登录状态已失效，请重新登录。', 401)
     }
-    throw new CanaryApiError(
-      errorMessage(payload, `请求失败（${response.status}）`),
-      response.status
-    )
+    const meta = errorMeta(payload, `请求失败（${response.status}）`)
+    throw new CanaryApiError(meta.message, response.status, meta.code, meta.challenge)
   }
 
   return unwrap<T>(payload)
@@ -267,6 +325,9 @@ export interface CreateActivityInput {
   name: string
   description: string
   type: 'on-campus' | 'off-campus' | 'social-practice' | 'hybrid'
+  /** YYYY-MM-DD or an ISO timestamp. Defaults to now when omitted. */
+  date?: string
+  place?: string
 }
 
 export async function createActivity(input: CreateActivityInput): Promise<string> {
@@ -274,6 +335,10 @@ export async function createActivity(input: CreateActivityInput): Promise<string
   // 因此这里按 v2 的完整 Activity 契约提交，避免最小 v3 请求体被 v2 校验拒绝。
   const now = new Date().toISOString()
   const user = currentUserId()
+  const date =
+    input.date && /^\d{4}-\d{2}-\d{2}$/.test(input.date)
+      ? `${input.date}T00:00:00`
+      : input.date || now
   const result = await request<{ id?: string }>('/v1/activities', {
     method: 'POST',
     body: JSON.stringify({
@@ -281,14 +346,14 @@ export async function createActivity(input: CreateActivityInput): Promise<string
       type: input.type,
       name: input.name,
       description: input.description,
-      date: now,
+      date,
       createdAt: now,
       updatedAt: now,
       appointee: user,
       approver: 'authority',
       creator: user,
       status: 'pending',
-      place: '',
+      place: input.place?.trim() ?? '',
       origin: 'other'
     })
   })
@@ -361,10 +426,9 @@ export async function fetchActivities(
 
   return request<CanaryActivityPage>(
     `/v1/activities${query({
-      mode: 'campus',
       page,
-      perpage: size,
-      search,
+      size,
+      query: search,
       sort: '_id',
       asc: false
     })}`
@@ -410,10 +474,33 @@ async function encryptCredential(publicKey: string, password: string): Promise<s
   return bytesToHex(new Uint8Array(encrypted))
 }
 
-export async function login(id: string, password: string): Promise<CanaryLoginResult> {
+/**
+ * Mirror of the backend `pwd_strength` rule: 8-14 printable ASCII characters
+ * with at least three of lower/upper/digit/symbol. The backend treats anything
+ * weaker as a forced-password-change credential, so the UI must never submit it
+ * as a final password.
+ */
+export function validatePasswordStrength(password: string): boolean {
+  if (password.length < 8 || password.length > 14) return false
+  if (!/^[\x20-\x7e]+$/.test(password)) return false
+  let classes = 0
+  if (/[a-z]/.test(password)) classes += 1
+  if (/[A-Z]/.test(password)) classes += 1
+  if (/[0-9]/.test(password)) classes += 1
+  if (/[^a-zA-Z0-9]/.test(password)) classes += 1
+  return classes >= 3
+}
+
+async function encryptedCredential(password: string): Promise<string> {
   const publicKey = await request<string>('/cert?type=public&method=RSA')
-  const credential = await encryptCredential(publicKey, password)
-  const result = await request<CanaryLoginResult>('/v1/users/auth', {
+  return encryptCredential(publicKey, password)
+}
+
+export async function login(id: string, password: string): Promise<CanaryLoginResult> {
+  const credential = await encryptedCredential(password)
+  // Canonical auth route: `/api/users/auth` (the `/api/v1/users/auth` alias is
+  // not registered by the Pro backend).
+  const result = await request<CanaryLoginResult>('/users/auth', {
     method: 'POST',
     body: JSON.stringify({
       id,
@@ -423,6 +510,95 @@ export async function login(id: string, password: string): Promise<CanaryLoginRe
     })
   })
   if (!result?.token) throw new CanaryApiError('登录没有返回凭证。', 500)
+  if (result.weak_password) {
+    // Weak passwords mint a 5-minute password_change token, not an access
+    // token. Keep it in memory for the forced-change step and never arm the
+    // route guard with it.
+    clearSession()
+  } else {
+    localStorage.setItem('token', result.token)
+  }
+  return result
+}
+
+/**
+ * Device challenge exchange (`POST /api/users/auth/device`): the challenge is
+ * minted by a 403 `DEVICE_NOT_PRIMARY` login, the 8-digit temp password is
+ * issued by a secretary/admin. Both are one-time; the resulting session lasts
+ * one hour and is a real access token.
+ */
+export async function loginWithTempPassword(
+  challenge: string,
+  tempPassword: string
+): Promise<CanaryLoginResult> {
+  const result = await request<CanaryLoginResult>('/users/auth/device', {
+    method: 'POST',
+    body: JSON.stringify({
+      challenge,
+      temp_password: tempPassword
+    })
+  })
+  if (!result?.token) throw new CanaryApiError('临时密码登录没有返回凭证。', 500)
   localStorage.setItem('token', result.token)
   return result
+}
+
+/**
+ * Exchange the current password for a 5-minute `purpose=verify` token used by
+ * `PUT /users/{oid}/password`. Does not touch the stored session.
+ */
+export async function verifyPassword(id: string, password: string): Promise<string> {
+  const credential = await encryptedCredential(password)
+  const result = await request<CanaryLoginResult>(
+    '/users/auth',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        id,
+        credential,
+        mode: 'short',
+        purpose: 'verify'
+      })
+    },
+    { keepSessionOn401: true }
+  )
+  if (!result?.token) throw new CanaryApiError('密码验证没有返回凭证。', 500)
+  return result.token
+}
+
+/**
+ * `PUT /api/users/{oid}/password` with an explicit temporary token (either a
+ * verify token or the password_change token returned by a weak login).
+ */
+export async function changePassword(
+  userOid: string,
+  newPassword: string,
+  passwordToken: string
+): Promise<void> {
+  const credential = await encryptedCredential(newPassword)
+  await request<unknown>(
+    `/users/${encodeURIComponent(userOid)}/password`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ credential })
+    },
+    { token: passwordToken, keepSessionOn401: true }
+  )
+}
+
+/** Rotate the server-side session id, then always drop the local token. */
+export async function logout(): Promise<void> {
+  const value = token()
+  if (value) {
+    try {
+      await request<unknown>(
+        '/users/auth/logout',
+        { method: 'POST' },
+        { token: value, keepSessionOn401: true }
+      )
+    } catch {
+      // Expired/invalid tokens still get dropped locally.
+    }
+  }
+  clearSession()
 }

@@ -3,12 +3,16 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   CanaryApiError,
+  changePassword,
   clearSession,
   currentUserId,
   fetchGroupName,
   fetchNotices,
   fetchProfile,
-  isLoggedIn
+  isLoggedIn,
+  logout,
+  validatePasswordStrength,
+  verifyPassword
 } from '@/api/canary'
 import type { CanaryNotice, CanaryUser } from '@/api/canary'
 import { renderMarkdown } from '@/utils/markdown'
@@ -30,6 +34,23 @@ const actionMessage = ref('')
 const actionId = ref(0)
 const actionTone = ref<'success' | 'warn' | 'info'>('info')
 let actionTimer: ReturnType<typeof setTimeout> | null = null
+
+// Password change dialog: current password is exchanged for a 5-minute verify
+// token, then the new credential is written to the canonical users endpoint.
+const passwordDialogRef = ref<HTMLDialogElement | null>(null)
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const passwordError = ref('')
+const passwordBusy = ref(false)
+
+const canSubmitPassword = computed(
+  () =>
+    !!currentPassword.value &&
+    validatePasswordStrength(newPassword.value) &&
+    newPassword.value === confirmPassword.value &&
+    !passwordBusy.value
+)
 
 const ROLE_LABELS: Record<string, string> = {
   student: '学生',
@@ -145,12 +166,46 @@ function handleRetry() {
   void loadPage()
 }
 
-function handleChangePassword() {
-  announceAction('修改密码功能将在安全设置中提供。')
+function resetPasswordFields() {
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  passwordError.value = ''
 }
 
-function handleLogout() {
-  clearSession()
+function handleChangePassword() {
+  resetPasswordFields()
+  passwordDialogRef.value?.showModal()
+}
+
+function closePasswordDialog() {
+  passwordDialogRef.value?.close()
+}
+
+async function handlePasswordSubmit() {
+  if (!canSubmitPassword.value || !profile.value) return
+  passwordBusy.value = true
+  passwordError.value = ''
+  try {
+    const verifyToken = await verifyPassword(
+      String(profile.value.id),
+      currentPassword.value
+    )
+    await changePassword(profile.value._id, newPassword.value, verifyToken)
+    closePasswordDialog()
+    // The backend rotates session_id with the password write; the old access
+    // token is already invalid, so drop it locally and ask for a fresh login.
+    clearSession()
+    await router.replace({ path: '/login', query: { reason: 'password-changed' } })
+  } catch (reason) {
+    passwordError.value = readableError(reason, '密码修改失败，请稍后重试。')
+  } finally {
+    passwordBusy.value = false
+  }
+}
+
+async function handleLogout() {
+  await logout()
   void router.replace('/login')
 }
 
@@ -354,10 +409,117 @@ onUnmounted(() => {
         {{ actionMessage }}
       </BubbleFeedback>
     </div>
+
+    <dialog
+      ref="passwordDialogRef"
+      class="profile-password-dialog"
+      aria-labelledby="password-dialog-title"
+      @close="resetPasswordFields"
+    >
+      <form class="profile-password-dialog__form" @submit.prevent="handlePasswordSubmit">
+        <h2 id="password-dialog-title" class="profile-password-dialog__title">修改密码</h2>
+        <p class="profile-password-dialog__hint">
+          密码需为 8–14 位可见字符，且至少包含大写、小写、数字、符号中的 3 类。修改成功后需要重新登录。
+        </p>
+
+        <label class="profile-password-dialog__field">
+          <span class="profile-password-dialog__label">当前密码</span>
+          <input
+            v-model="currentPassword"
+            class="profile-password-dialog__input"
+            type="password"
+            autocomplete="current-password"
+            required
+            :disabled="passwordBusy"
+          />
+        </label>
+
+        <label class="profile-password-dialog__field">
+          <span class="profile-password-dialog__label">新密码</span>
+          <input
+            v-model="newPassword"
+            class="profile-password-dialog__input"
+            type="password"
+            autocomplete="new-password"
+            required
+            :disabled="passwordBusy"
+          />
+        </label>
+
+        <label class="profile-password-dialog__field">
+          <span class="profile-password-dialog__label">确认新密码</span>
+          <input
+            v-model="confirmPassword"
+            class="profile-password-dialog__input"
+            type="password"
+            autocomplete="new-password"
+            required
+            :disabled="passwordBusy"
+          />
+        </label>
+
+        <BubbleFeedback
+          v-if="confirmPassword && newPassword !== confirmPassword"
+          class="glass-feedback--error"
+          role="alert"
+        >
+          两次输入的新密码不一致。
+        </BubbleFeedback>
+        <BubbleFeedback v-if="passwordError" class="glass-feedback--error" role="alert">
+          {{ passwordError }}
+        </BubbleFeedback>
+
+        <div class="profile-password-dialog__actions">
+          <button
+            class="liquid-btn liquid-btn--secondary"
+            type="button"
+            :disabled="passwordBusy"
+            @click="closePasswordDialog"
+          >
+            取消
+          </button>
+          <button
+            class="liquid-btn liquid-btn--primary"
+            type="submit"
+            :disabled="!canSubmitPassword"
+          >
+            {{ passwordBusy ? '保存中…' : '保存新密码' }}
+          </button>
+        </div>
+      </form>
+    </dialog>
   </div>
 </template>
 
 <style scoped>
+.profile-password-dialog {
+  width: min(440px, calc(100% - 32px));
+  margin: auto;
+  padding: clamp(16px, 5vw, 28px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-matte);
+  color: var(--color-text-primary);
+  box-shadow: var(--glass-floating-shadow);
+}
+
+.profile-password-dialog::backdrop { background: rgb(16 27 50 / 42%); }
+.profile-password-dialog__form, .profile-password-dialog__field { display: grid; gap: var(--space-2); }
+.profile-password-dialog__form { gap: var(--space-3); }
+.profile-password-dialog__title { font-size: var(--font-size-headline); }
+.profile-password-dialog__hint { color: var(--color-text-secondary); font-size: var(--font-size-callout); }
+.profile-password-dialog__input {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-moderate);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: inherit;
+  font: inherit;
+}
+.profile-password-dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+
 .profile-page {
   min-height: 100vh;
   padding: var(--space-6) var(--content-padding) var(--space-10);

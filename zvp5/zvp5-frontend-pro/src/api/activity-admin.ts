@@ -39,8 +39,16 @@ export interface ActivityMemberPage {
 }
 
 export async function listAdminActivities(query = '', page = 1, size = 50): Promise<AdminActivity[]> {
+  // `get_activities_v2` has no route decorator in the current backend, so
+  // `GET /api/v1/activities` is the v3 list: page/size/query (not perpage/search).
   const result = await apiRequest<{ activities?: AdminActivity[]; total?: number }>(
-    `/v1/activities${buildQuery({ page, size, query })}`
+    `/v1/activities${buildQuery({
+      page,
+      size: Math.min(Math.max(size, 1), 1000),
+      query,
+      sort: '_id',
+      asc: false
+    })}`
   )
   return Array.isArray(result?.activities) ? result.activities : []
 }
@@ -51,8 +59,13 @@ export async function listActivityMembers(
   page = 1,
   size = 100
 ): Promise<ActivityMemberPage> {
+  // The v3 endpoint caps `size` at 100 (422 above that).
   const result = await apiRequest<ActivityMemberPage>(
-    `/v1/activities/${activityId}/members${buildQuery({ page, size, query })}`
+    `/v1/activities/${activityId}/members${buildQuery({
+      page,
+      size: Math.min(Math.max(size, 1), 100),
+      query
+    })}`
   )
   return {
     members: Array.isArray(result?.members) ? result.members : [],

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
+import AdminWriteVerification from '@/components/AdminWriteVerification.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   createNotification,
@@ -38,6 +39,12 @@ import { renderMarkdown } from '@/utils/markdown'
 import { currentRoles } from '@/api/permissions'
 
 const router = useRouter()
+const adminVerification = ref<InstanceType<typeof AdminWriteVerification>>()
+
+async function requestWriteProof() {
+  if (!isAdminUser) return null
+  return await adminVerification.value?.request() ?? null
+}
 
 const allTabs: AnimatedTabItem[] = [
   { value: 'overview', label: '概览', hint: '平台实时计数与近期动态' },
@@ -384,7 +391,9 @@ async function toggleNotificationActive(notice: AdminNotification) {
   notificationActionNotice.value = ''
   notificationActionError.value = ''
   try {
-    const result = await updateNotificationActive(notice.id, target)
+    const proof = await requestWriteProof()
+    if (!proof) return
+    const result = await updateNotificationActive(notice.id, target, proof)
     const updated = result.notification
     if (updated) {
       const index = notifications.value.findIndex((item) => item.id === notice.id)
@@ -426,9 +435,14 @@ async function submitNotification() {
 
   notificationCreating.value = true
   try {
+    const title = notificationForm.title.trim()
+    const content = notificationForm.content.trim()
+    const proof = await requestWriteProof()
+    if (!proof) return
     const result = await createNotification(
-      notificationForm.title.trim(),
-      notificationForm.content.trim()
+      title,
+      content,
+      proof
     )
     if (result.notification) {
       notifications.value = [result.notification, ...notifications.value]
@@ -759,7 +773,9 @@ async function saveSettings() {
 
   settingsSaving.value = true
   try {
-    await saveSystemSettings(items)
+    const proof = await requestWriteProof()
+    if (!proof) return
+    await saveSystemSettings(items, proof)
     settingsSaveNotice.value = `已保存 ${items.length} 项设置。`
     await loadSettings()
   } catch (reason) {
@@ -1055,6 +1071,7 @@ watch(activeTab, ensureTab, { immediate: true })
 </script>
 
 <template>
+  <AdminWriteVerification ref="adminVerification" />
   <div class="manage">
     <div class="manage__container">
       <header class="manage__header surface-enter" style="--i: 0">
@@ -1492,7 +1509,7 @@ watch(activeTab, ensureTab, { immediate: true })
                     {{ notificationCreateError }}
                   </BubbleFeedback>
                   <p class="panel__footnote">
-                    发布与启停属于高权限操作，后端可能要求密码复核；若被拒绝，错误信息会显示在下方。
+                     发布或启停通知前需要验证当前账号的密码。
                   </p>
 
                   <div class="form__actions">
