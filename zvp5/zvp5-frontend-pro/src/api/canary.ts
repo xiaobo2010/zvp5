@@ -498,9 +498,7 @@ async function encryptedCredential(password: string): Promise<string> {
 
 export async function login(id: string, password: string): Promise<CanaryLoginResult> {
   const credential = await encryptedCredential(password)
-  // Canonical auth route: `/api/users/auth` (the `/api/v1/users/auth` alias is
-  // not registered by the Pro backend).
-  const result = await request<CanaryLoginResult>('/users/auth', {
+  const result = await request<CanaryLoginResult>('/v1/users/auth', {
     method: 'POST',
     body: JSON.stringify({
       id,
@@ -522,7 +520,7 @@ export async function login(id: string, password: string): Promise<CanaryLoginRe
 }
 
 /**
- * Device challenge exchange (`POST /api/users/auth/device`): the challenge is
+ * Device challenge exchange (`POST /api/v1/users/auth/device`): the challenge is
  * minted by a 403 `DEVICE_NOT_PRIMARY` login, the 8-digit temp password is
  * issued by a secretary/admin. Both are one-time; the resulting session lasts
  * one hour and is a real access token.
@@ -531,7 +529,7 @@ export async function loginWithTempPassword(
   challenge: string,
   tempPassword: string
 ): Promise<CanaryLoginResult> {
-  const result = await request<CanaryLoginResult>('/users/auth/device', {
+  const result = await request<CanaryLoginResult>('/v1/users/auth/device', {
     method: 'POST',
     body: JSON.stringify({
       challenge,
@@ -545,12 +543,12 @@ export async function loginWithTempPassword(
 
 /**
  * Exchange the current password for a 5-minute `purpose=verify` token used by
- * `PUT /users/{oid}/password`. Does not touch the stored session.
+ * `PUT /v1/users/{oid}/password`. Does not touch the stored session.
  */
 export async function verifyPassword(id: string, password: string): Promise<string> {
   const credential = await encryptedCredential(password)
   const result = await request<CanaryLoginResult>(
-    '/users/auth',
+    '/v1/users/auth',
     {
       method: 'POST',
       body: JSON.stringify({
@@ -567,7 +565,7 @@ export async function verifyPassword(id: string, password: string): Promise<stri
 }
 
 /**
- * `PUT /api/users/{oid}/password` with an explicit temporary token (either a
+ * `PUT /api/v1/users/{oid}/password` with an explicit temporary token (either a
  * verify token or the password_change token returned by a weak login).
  */
 export async function changePassword(
@@ -577,7 +575,7 @@ export async function changePassword(
 ): Promise<void> {
   const credential = await encryptedCredential(newPassword)
   await request<unknown>(
-    `/users/${encodeURIComponent(userOid)}/password`,
+    `/v1/users/${encodeURIComponent(userOid)}/password`,
     {
       method: 'PUT',
       body: JSON.stringify({ credential })
@@ -592,7 +590,7 @@ export async function logout(): Promise<void> {
   if (value) {
     try {
       await request<unknown>(
-        '/users/auth/logout',
+        '/v1/users/auth/logout',
         { method: 'POST' },
         { token: value, keepSessionOn401: true }
       )
