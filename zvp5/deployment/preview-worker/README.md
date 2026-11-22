@@ -68,21 +68,14 @@ VITE_PAGE_BASE=https://canary.xiaobopisces.top/  # PWA start_url/scope 锚在预
 `source`（`git` 的 ref/path 或仓库内 `local` path）取 worktree，应用声明的
 `patch`，执行 `install` + `command`（自动追加 `--base=<base>`），产物并入
 `zvp5/zvp5-frontend/dist/themes/<id>/`，同时生成运行清单 `dist/themes.json`
-（`id/label/description/status/base`）。Worker 与前端切换器都只读这份运行清单。
+（`id/label/description/status/base`）。子应用的切换器读取这份运行清单。
 
 Worker 只对 `/themes/<slug>/...` 的 **HTML 导航请求**（`Accept` 含 `text/html`
 且末段无扩展名）改写成该子应用自己的 `index.html`，这样深链接不会落到根 canary
 的 index；静态资源仍按原路径取。Worker 里**没有**主题 id 列表——新增主题不需要
 改 Worker，只要清单里有、构建产物在 `dist/themes/<id>/`。根路径与 https 强制逻辑不变。
 
-新增主题的完整步骤（不需要改 Worker / CI / 前端映射）：
-
-1. `zvp5/themes/manifest.json` 的 `themes` 加一条（非根主题 `base` 必须是
-   `/themes/<id>/`，再给 `source` 与 `build`）；
-2. `zvp5/zvp5-backend-python/services/theme_registry.py` 的 `THEMES` 加同一条
-   （id/label/description/status 必须一致，`tests/test_theme_manifest.py` 会校验）；
-3. 源码放在 `source` 指向的分支/目录里；未来把主题搬进本仓库时改用
-   `source: {kind: "local", path: "..."}`，清单之外不用动。
+源码接入、清单示例、后端注册和上线验证见 [新主题接入指南](../../themes/README.md)。
 
 
 ## 步骤（手工应急）

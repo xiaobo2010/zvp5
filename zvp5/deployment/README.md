@@ -49,10 +49,7 @@ Cloudflare Worker 预览站，跨域直连正式 API。预览站的放行由 can
   前端 `/me` 下拉与子应用 `theme-switcher.js` 都读它；
 - Worker 只认通用前缀 `/themes/<slug>/`，不维护主题列表。
 
-新增主题 = 清单一条（`id/label/description/status/base`，非根主题再给
-`source` 与 `build`）+ 后端 `services/theme_registry.py` 一条；Worker、CI、前端
-都不需要改。`tests/test_theme_manifest.py` 守着清单与后端注册表不漂移。
-本地只校验清单：`node zvp5/deployment/build-theme-apps.mjs --validate`。
+源码要求、清单示例、后端注册和预览验收见 [新主题接入指南](../themes/README.md)。
 
 
 ## 首次部署
