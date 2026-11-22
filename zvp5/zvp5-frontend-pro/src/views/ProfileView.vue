@@ -20,6 +20,9 @@ import AppearanceSettings from '@/components/AppearanceSettings.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 const router = useRouter()
+const themePickerUrl = import.meta.env.BASE_URL === '/'
+  ? 'https://canary.xiaobopisces.top/themes/canary-pro/?choose-theme'
+  : '?choose-theme'
 
 const profile = ref<CanaryUser | null>(null)
 const className = ref('')
@@ -392,6 +395,9 @@ onUnmounted(() => {
 
       <!-- Account actions with frosted glass -->
       <section class="glass-card actions-card surface-enter" :style="{ '--i': 2 }">
+        <a class="liquid-btn liquid-btn--secondary liquid-btn--full" data-zvms-theme-picker :href="themePickerUrl">
+          切换站点主题
+        </a>
         <button class="liquid-btn liquid-btn--primary liquid-btn--full" type="button" @click="handleChangePassword">
           修改密码
         </button>
