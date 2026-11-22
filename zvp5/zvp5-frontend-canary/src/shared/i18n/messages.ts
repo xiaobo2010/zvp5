@@ -121,6 +121,17 @@ const zhCN = {
     empty: '暂时没有通知',
     unread: '未读',
     markRead: '标为已读'
+
+    compose: '发布通知',
+    composeHint: '支持 Markdown：标题、列表、表格、引用、代码与链接。',
+    composeTitle: '标题',
+    composeTitlePlaceholder: '一句话说明这条通知',
+    composeContentPlaceholder: '用 Markdown 撰写正文，例如：\n\n## 活动安排\n\n- 时间：本周六 09:00\n- 地点：**图书馆**一层\n\n> 请提前 10 分钟签到。',
+    charCount: '{n} / {max}',
+    required: '标题和正文都不能为空',
+    published: '通知已发布',
+    saveFailed: '发布失败，请稍后重试',
+    noPermission: '当前身份没有发布通知的权限。'
   },
   manage: {
     title: '管理中心',
@@ -226,6 +237,12 @@ const zhCN = {
       save: '保存',
       required: '标题、正文和密码都不能为空',
       verifyFailed: '密码验证失败'
+
+      editorHint: '支持 Markdown 语法，发布后按富文本显示。',
+      write: '编辑',
+      preview: '预览',
+      previewEmpty: '在左侧输入内容后，这里会显示发布效果',
+      charCount: '{n} / {max}'
     },
     logs: {
       title: '审计日志',
@@ -692,6 +709,17 @@ const enUS = {
     empty: 'No notifications yet',
     unread: 'Unread',
     markRead: 'Mark as read'
+
+    compose: 'Post notice',
+    composeHint: 'Markdown supported: headings, lists, tables, quotes, code and links.',
+    composeTitle: 'Title',
+    composeTitlePlaceholder: 'One line that sums up this notice',
+    composeContentPlaceholder: 'Write the body in Markdown, for example:\n\n## Schedule\n\n- Time: Saturday 09:00\n- Place: **Library**, 1F\n\n> Please check in 10 minutes early.',
+    charCount: '{n} / {max}',
+    required: 'Title and body are required',
+    published: 'Notice published',
+    saveFailed: 'Failed to publish, try again later',
+    noPermission: 'Your role cannot publish notices.'
   },
   manage: {
     title: 'Management',
@@ -797,6 +825,12 @@ const enUS = {
       save: 'Save',
       required: 'Title, body and password are required',
       verifyFailed: 'Password verification failed'
+
+      editorHint: 'Markdown is supported; it renders as rich text once published.',
+      write: 'Write',
+      preview: 'Preview',
+      previewEmpty: 'Type on the left to see how it will look when published',
+      charCount: '{n} / {max}'
     },
     logs: {
       title: 'Audit log',

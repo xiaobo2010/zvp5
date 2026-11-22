@@ -21,6 +21,7 @@ import ZField from '@/shared/ui/ZField.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZSegmented from '@/shared/ui/ZSegmented.vue'
 import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
+import MarkdownEditor from '@/shared/ui/markdown/MarkdownEditor.vue'
 import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
@@ -206,14 +207,9 @@ onMounted(load)
     >
       <div class="form">
         <ZField v-model="draftTitle" :label="t('manage.notify.titleLabel')" :disabled="saving" />
-        <label class="textarea-field">
+        <label class="editor-field">
           <span class="label">{{ t('manage.notify.contentLabel') }}</span>
-          <textarea
-            v-model="draftContent"
-            class="textarea"
-            rows="7"
-            :disabled="saving"
-          />
+          <MarkdownEditor v-model="draftContent" :disabled="saving" min-height="180px" />
         </label>
         <div class="state">
           <span class="label">{{ t('manage.notify.stateLabel') }}</span>
@@ -341,37 +337,11 @@ onMounted(load)
   color: var(--ink-soft);
 }
 
-.textarea-field,
+.editor-field,
 .state {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-}
-
-.textarea {
-  width: 100%;
-  min-height: 170px;
-  resize: vertical;
-  padding: 0.75rem 0.95rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--surface-raised);
-  color: var(--ink);
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  line-height: 1.7;
-  box-shadow: var(--shadow-xs);
-}
-
-.textarea:focus {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.textarea:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 @media (max-width: 680px) {

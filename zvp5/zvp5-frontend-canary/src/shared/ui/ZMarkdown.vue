@@ -11,6 +11,9 @@ const md = new MarkdownIt({
   breaks: true
 })
 
+// 通知正文常用表格排期，开启内置 table 规则（html 仍关闭，输出经 DOMPurify 消毒）
+md.enable('table')
+
 const html = computed(() => DOMPurify.sanitize(md.render(props.source || '')))
 </script>
 
@@ -77,5 +80,25 @@ const html = computed(() => DOMPurify.sanitize(md.render(props.source || '')))
 
 .markdown :deep(img) {
   border-radius: var(--radius-sm);
+}
+
+.markdown :deep(table) {
+  width: 100%;
+  margin: 0 0 0.7em;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.markdown :deep(th),
+.markdown :deep(td) {
+  padding: 0.4em 0.7em;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.markdown :deep(th) {
+  font-weight: 600;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 </style>

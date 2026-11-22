@@ -6,9 +6,12 @@ import {
   fetchNotifications,
   markNotificationRead
 } from '@/shared/api/domain'
+import { createNotification } from '@/shared/api/manage'
+import { verifyPassword } from '@/shared/api/auth'
 import type { NotificationItem } from '@/types/domain'
 import { ApiError } from '@/shared/http/errors'
 import { formatDateTime } from '@/shared/lib/format'
+import { useSessionStore } from '@/shared/stores/session'
 import ZButton from '@/shared/ui/ZButton.vue'
 import ZCard from '@/shared/ui/ZCard.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
@@ -17,10 +20,12 @@ import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZBadge from '@/shared/ui/ZBadge.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZMarkdown from '@/shared/ui/ZMarkdown.vue'
+import NotificationComposeForm from '@/shared/ui/notifications/NotificationComposeForm.vue'
 import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
 import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 
 const { t } = useI18n()
+const session = useSessionStore()
 
 const items = ref<NotificationItem[]>([])
 const reads = ref<Record<string, number>>({})
@@ -110,6 +115,42 @@ async function open(item: NotificationItem) {
   }
 }
 
+/* 发布：后端要求 notify.publish 权限且复核管理员密码，故表单带密码字段；无权限由后端拒绝 */
+const composeOpen = ref(false)
+const publishing = ref(false)
+const composeError = ref('')
+const composeRef = ref<InstanceType<typeof NotificationComposeForm> | null>(null)
+
+async function publish(payload: { title: string; content: string; password: string }) {
+  if (publishing.value) return
+  const owner = session.profile
+  if (!owner) return
+  publishing.value = true
+  composeError.value = ''
+  try {
+    const token = await verifyPassword(owner.id, payload.password)
+    const created = await createNotification({
+      title: payload.title,
+      content: payload.content,
+      verification_token: token
+    })
+    items.value = [created, ...items.value]
+    version.value += 1
+    page.value = 1
+    expanded.value = created.id
+    composeOpen.value = false
+    composeRef.value?.reset()
+  } catch (cause) {
+    if (cause instanceof ApiError && (cause.status === 403 || cause.status === 401)) {
+      composeError.value = t('manage.notify.verifyFailed')
+    } else {
+      composeError.value = cause instanceof ApiError ? cause.message : t('notifications.saveFailed')
+    }
+  } finally {
+    publishing.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -120,8 +161,23 @@ onMounted(load)
         <h1 class="title">{{ t('notifications.title') }}</h1>
         <p class="sub">{{ t('notifications.subtitle') }}</p>
       </div>
-      <span v-if="unread" class="unread num">{{ unread }} {{ t('notifications.unread') }}</span>
+      <div class="head-actions">
+        <span v-if="unread" class="unread num">{{ unread }} {{ t('notifications.unread') }}</span>
+        <ZButton size="sm" icon="plus" @click="composeOpen = !composeOpen">
+          {{ t('notifications.compose') }}
+        </ZButton>
+      </div>
     </header>
+
+    <ZCard v-if="composeOpen" class="compose-card">
+      <NotificationComposeForm
+        ref="composeRef"
+        require-password
+        :submitting="publishing"
+        :server-error="composeError"
+        @submit="publish"
+      />
+    </ZCard>
 
     <ZAlert v-if="error" tone="danger" :title="t('common.error')" :description="error">
       <div class="retry">
@@ -217,6 +273,31 @@ onMounted(load)
 .sub {
   margin-top: var(--space-2);
   color: var(--ink-muted);
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.compose-card {
+  animation: compose-in 260ms var(--ease-out) both;
+}
+
+@keyframes compose-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compose-card {
+    animation: none;
+  }
 }
 
 .unread {
