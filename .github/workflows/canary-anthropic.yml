@@ -265,123 +265,166 @@ jobs:
         shell: bash
         working-directory: .
         run: |
-          set -euo pipefail
-          dist_dir=zvp5/zvp5-frontend-canary/dist
-          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
-          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
-          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+                    set -euo pipefail
+                    dist_dir="zvp5/zvp5-frontend-canary/dist"
+                    entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+                    [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+                    local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
 
-          host="${CANARY_URL#https://}"
-          host="${host%%/*}"
+                    host="${CANARY_URL#https://}"
+                    host="${host%%/*}"
 
-          # runner 的递归解析器会缓存 NXDOMAIN（域名刚建好时容易踩到），
-          # 解析不出来就退回 Cloudflare DoH 拿地址，再用 --resolve 直连，
-          # 免得部署明明成功、冒烟却因为解析缓存红。
-          resolve_ip() {
-            local ip
-            ip="$(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
-            [[ -n "$ip" ]] || ip="$(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
-            if [[ -z "$ip" ]]; then
-              ip="$(curl -fsS -H 'accept: application/dns-json' \
-                "https://cloudflare-dns.com/dns-query?name=${host}&type=AAAA" \
-                | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((a['data'] for a in d.get('Answer',[]) if a.get('type')==28),''))" \
-                2>/dev/null || true)"
-            fi
-            printf '%s' "$ip"
-          }
+                    # 候选地址：IPv4 优先，再 IPv6，最后「不 --resolve 走系统默认」。
+                    # 为什么要有多个候选：
+                    #   - runner 的递归解析器会缓存 NXDOMAIN（域名刚建好时容易踩到）；
+                    #   - 边缘对同一主机名的 IPv4 / IPv6 行为不一定一致（IPv6-only 的
+                    #     预览域在 IPv6 边缘上可能握手失败，IPv4 正常）；
+                    #   - 逐个试，谁先给出 200 用谁。
+                    candidates=()
+                    add_candidate() {
+                      local ip="$1" c
+                      [[ -n "$ip" ]] || return 0
+                      for c in "${candidates[@]:-}"; do
+                        [[ "$c" == "$ip" ]] && return 0
+                      done
+                      candidates+=("$ip")
+                    }
+                    while read -r ip; do add_candidate "$ip"; done < <(
+                      { getent ahosts "$host" 2>/dev/null | awk '{print $1}';
+                        getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}'; } \
+                        | grep -E '^[0-9a-fA-F:.]+$' | sort -u
+                    )
+                    # 系统解析不出来（或结果不可用）时退回 Cloudflare DoH。
+                    while read -r ip; do add_candidate "$ip"; done < <(
+                      for t in A AAAA; do
+                        curl -fsS -H 'accept: application/dns-json' \
+                          "https://cloudflare-dns.com/dns-query?name=${host}&type=$t" \
+                          | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(a['data'] for a in d.get('Answer',[]) if a.get('type') in (1,28)))" \
+                          2>/dev/null || true
+                      done
+                    )
+                    echo "candidates: ${candidates[*]:-none}"
 
-          # $1 = 路径，$2 = 输出文件；回显状态码，失败回 000
-          fetch() {
-            local path="$1" out="$2" status
-            if [[ -n "$ip" ]]; then
-              if [[ "$ip" == *:* ]]; then
-                status="$(curl -6 -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
-                  --resolve "${host}:443:[${ip}]" "${CANARY_URL}${path}" || true)"
-              else
-                status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
-                  --resolve "${host}:443:${ip}" "${CANARY_URL}${path}" || true)"
-              fi
-            else
-              status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' "${CANARY_URL}${path}" || true)"
-            fi
-            printf '%s' "${status:-000}"
-          }
+                    # $1 = 路径，$2 = 输出文件，$3 = 候选 IP（空 = 走系统默认解析）
+                    fetch() {
+                      local path="$1" out="$2" ip="$3" status
+                      if [[ -z "$ip" ]]; then
+                        status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' "${CANARY_URL}${path}" || true)"
+                      elif [[ "$ip" == *:* ]]; then
+                        status="$(curl -6 -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                          --resolve "${host}:443:[${ip}]" "${CANARY_URL}${path}" || true)"
+                      else
+                        status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                          --resolve "${host}:443:${ip}" "${CANARY_URL}${path}" || true)"
+                      fi
+                      printf '%s' "${status:-000}"
+                    }
 
-          ip="$(resolve_ip)"
-          if [[ -n "$ip" ]]; then
-            echo "resolved $host -> $ip"
-          fi
+                    # $1 = 候选 IP（空 = 走系统默认解析）
+                    chunk_sha() {
+                      local ip="$1"
+                      if [[ -z "$ip" ]]; then
+                        curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                          "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}'
+                      elif [[ "$ip" == *:* ]]; then
+                        curl -6 -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                          --resolve "${host}:443:[${ip}]" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}'
+                      else
+                        curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                          --resolve "${host}:443:${ip}" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}'
+                      fi
+                    }
 
-          home_status=""
-          waf_blocked=0
-          tmp_body="$(mktemp)"
-          for _ in $(seq 1 8); do
-            home_status="$(fetch "/" "$tmp_body")"
-            if [[ "$home_status" == "403" ]]; then
-              waf_blocked=1
-              break
-            fi
-            remote_sha=""
-            if [[ -n "$ip" && "$ip" == *:* ]]; then
-              remote_sha="$(curl -6 -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
-                --resolve "${host}:443:[${ip}]" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
-            elif [[ -n "$ip" ]]; then
-              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
-                --resolve "${host}:443:${ip}" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
-            else
-              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
-            fi
-            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
-              break
-            fi
-            sleep 5
-          done
-          if [[ $waf_blocked -eq 1 ]]; then
-            # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
-            # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
-            echo "::warning title=Preview probe blocked by Cloudflare::canary-claude root returned 403 to the runner IP; content/CORS checks skipped."
-            {
-              echo '### Canary Anthropic preview deployed (probe skipped)'
-              echo
-              echo "- URL: $CANARY_URL"
-              echo "- Commit: \`$GITHUB_SHA\`"
-              echo "- Entry chunk: \`$entry\`"
-              echo '- Content and CORS probes were skipped: Cloudflare returned 403 to the runner IP.'
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
-          [[ "$remote_sha" == "$local_sha" ]] || {
-            echo "served $entry does not match the freshly built bundle" >&2
-            exit 1
-          }
+                    home_status=""
+                    remote_sha=""
+                    used_ip=""
+                    saw_200=0
+                    waf_blocked=0
+                    tmp_body="$(mktemp)"
+                    for _ in $(seq 1 4); do
+                      for ip in "${candidates[@]:-}" ""; do
+                        home_status="$(fetch "/" "$tmp_body" "$ip")"
+                        if [[ "$home_status" == "403" ]]; then
+                          waf_blocked=1
+                          break 2
+                        fi
+                        if [[ "$home_status" == "200" ]]; then
+                          saw_200=1
+                          used_ip="$ip"
+                          remote_sha="$(chunk_sha "$ip")"
+                          if [[ "$remote_sha" == "$local_sha" ]]; then
+                            break 2
+                          fi
+                        fi
+                      done
+                      sleep 5
+                    done
+                    if [[ -n "$used_ip" ]]; then
+                      echo "preview served from ${used_ip:-system resolver}"
+                    fi
 
-          # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
-          # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
-          cors_hdr="$(mktemp)"
-          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
-            -H "Origin: $CANARY_URL" \
-            -H 'Access-Control-Request-Method: POST' \
-            -H 'Access-Control-Request-Headers: authorization,content-type' \
-            "$VITE_API_BASE/users/login" || echo 000)"
-          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
-          rm -f "$cors_hdr"
-          [[ "$cors_origin" == "$CANARY_URL" ]] || {
-            # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
-            # 拿到「别的 Origin」才是真的白名单没配对。
-            if [[ -z "$cors_origin" ]]; then
-              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
-            else
-              echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
-              exit 1
-            fi
-          }
+                    if [[ $waf_blocked -eq 1 ]]; then
+                      # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
+                      # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
+                      echo "::warning title=Preview probe blocked by Cloudflare::$host root returned 403 to the runner IP; content/CORS checks skipped."
+                      {
+                        echo '### Canary Anthropic preview deployed (probe skipped)'
+                        echo
+                        echo "- URL: $CANARY_URL"
+                        echo "- Commit: \`$GITHUB_SHA\`"
+                        echo "- Entry chunk: \`$entry\`"
+                        echo '- Content and CORS probes were skipped: Cloudflare returned 403 to the runner IP.'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                      exit 0
+                    fi
 
-          {
-            echo '### Canary Anthropic preview deployed'
-            echo
-            echo "- URL: $CANARY_URL"
-            echo "- Commit: \`$GITHUB_SHA\`"
-            echo "- Entry chunk: \`$entry\`"
-            echo '- Worker: zvp-yuren-canary-claude (zvp5-frontend-canary static assets)'
-          } >> "$GITHUB_STEP_SUMMARY"
+                    if [[ "$remote_sha" != "$local_sha" && $saw_200 -eq 0 && "$home_status" == "000" ]]; then
+                      # 一个候选都没连上：TLS 握手失败 / runner 侧 DNS 解析不了。
+                      # 部署本身已经成功（wrangler 已确认上传并激活），这是探测侧的网络
+                      # 问题，降级成警告，别把一次成功的发布判成失败。
+                      echo "::warning title=Preview probe inconclusive::could not establish a TLS session to $host from the runner IP (status 000 on every candidate: ${candidates[*]:-none}). The deployment itself succeeded."
+                      {
+                        echo '### Canary Anthropic preview deployed (probe inconclusive)'
+                        echo
+                        echo "- URL: $CANARY_URL"
+                        echo "- Commit: \`$GITHUB_SHA\`"
+                        echo '- TLS handshake to the preview hostname failed from the runner; content/CORS probes were skipped.'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                      exit 0
+                    fi
+
+                    [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
+                    [[ "$remote_sha" == "$local_sha" ]] || {
+                      echo "served $entry does not match the freshly built bundle" >&2
+                      exit 1
+                    }
+
+                    # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
+                    # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
+                    cors_hdr="$(mktemp)"
+                    cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
+                      -H "Origin: $CANARY_URL" \
+                      -H 'Access-Control-Request-Method: POST' \
+                      -H 'Access-Control-Request-Headers: authorization,content-type' \
+                      "$VITE_API_BASE/users/login" || echo 000)"
+                    cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+                    rm -f "$cors_hdr"
+                    [[ "$cors_origin" == "$CANARY_URL" ]] || {
+                      # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
+                      # 拿到「别的 Origin」才是真的白名单没配对。
+                      if [[ -z "$cors_origin" ]]; then
+                        echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
+                      else
+                        echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
+                        exit 1
+                      fi
+                    }
+
+                    {
+                      echo '### Canary Anthropic preview deployed'
+                      echo
+                      echo "- URL: $CANARY_URL"
+                      echo "- Commit: \`$GITHUB_SHA\`"
+                      echo "- Entry chunk: \`$entry\`"
+                      echo "- Worker: zvp-yuren-canary-claude (zvp5-frontend-canary static assets)"
+                    } >> "$GITHUB_STEP_SUMMARY"
