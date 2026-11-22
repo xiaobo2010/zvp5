@@ -350,9 +350,14 @@ jobs:
             [[ "$actual" == "$expected" ]] || { echo "stale theme asset: $asset" >&2; exit 1; }
           done
           for base in $(node -p 'require("./zvp5/zvp5-frontend/dist/themes.json").themes.map(t => t.base).join(" ")'); do
-            actual="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL${base}me" | sha256sum)"
-            expected="$(sha256sum < "$dist_dir${base}index.html")"
-            [[ "$actual" == "$expected" ]] || { echo "wrong theme index at ${base}me" >&2; exit 1; }
+            # 边缘可能为 HTML 增添脚本，只比对构建产物的入口资源和主题引导引用。
+            expected_entry="$(grep -o 'src="[^" ]*/assets/[^" ]*\.js"' "$dist_dir${base}index.html" | head -n1)"
+            page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL${base}me")"
+            if [[ -z "$expected_entry" || "$page" != *"$expected_entry"* ||
+                  "$page" != *'src="/theme-switcher.js"'* || "$page" != *'href="/theme-switcher.css"'* ]]; then
+              echo "wrong theme index at ${base}me" >&2
+              exit 1
+            fi
           done
 
           # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
