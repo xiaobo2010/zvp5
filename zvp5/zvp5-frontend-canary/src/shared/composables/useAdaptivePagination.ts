@@ -1,7 +1,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useSessionStore } from '@/shared/stores/session'
+import { densityForSize, type CardDensity } from '@/shared/lib/density'
 
 export type PageColumns = 1 | 2
+export type { CardDensity }
 
 export interface AdaptivePaginationOptions {
   /** 列表唯一标识，用于隔离不同业务的偏好与缓存 key */
@@ -81,11 +83,18 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
   /** 实际参与计算的列数：容器过窄时即使选了双列也降级为单列 */
   const effectiveColumns = ref<PageColumns>(initialColumns)
   const size = ref(initialSize)
+  /** 由每页条数推导的卡片密度，供页面渲染不同密度的卡片布局 */
+  const density = computed<CardDensity>(() => densityForSize(size.value))
 
   let observer: ResizeObserver | null = null
   let frame = 0
   let timer: number | undefined
   let observedItem: HTMLElement | null = null
+  /** 收敛计数器：自动模式下密度↔数量互相校准的次数上限，防止边界档位无限抖动 */
+  let settleCount = 0
+  const resetSettle = () => {
+    settleCount = 0
+  }
 
   function persist() {
     try {
@@ -126,7 +135,12 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
 
     effectiveColumns.value = nextColumns
     const next = clamp(rows * nextColumns, min, max)
-    if (auto.value && next !== size.value) size.value = next
+    if (auto.value && next !== size.value) {
+      // 收敛保护：避免密度档位边界上 size 与卡片高度互相驱动造成无限抖动
+      if (settleCount > 6) return
+      settleCount++
+      size.value = next
+    }
   }
 
   /** rAF 合并 + 尾部防抖：窗口拖动时不会每帧触发数据请求 */
@@ -153,6 +167,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
 
   function setAuto(value: boolean) {
     if (!allowAuto) return
+    resetSettle()
     auto.value = value
     persist()
     if (value) recalc(true)
@@ -160,6 +175,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
 
   function setPageSize(value: number) {
     const next = clamp(Math.round(value) || min, min, max)
+    resetSettle()
     auto.value = false
     manualSize.value = next
     size.value = next
@@ -168,6 +184,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
 
   function setColumns(value: PageColumns) {
     if (!allowColumns) return
+    resetSettle()
     columns.value = value
     persist()
     recalc(true)
@@ -196,6 +213,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
   })
 
   function onWindowResize() {
+    resetSettle()
     recalc()
   }
 
@@ -216,6 +234,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
       manualSize.value = clamp(next.pageSize ?? options.defaultPageSize ?? 12, min, max)
       columns.value = allowColumns && next.columns === 2 ? 2 : 1
       size.value = manualSize.value
+      resetSettle()
       recalc(true)
     }
   )
@@ -223,6 +242,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
   return {
     size,
     auto,
+    density,
     columns,
     effectiveColumns,
     pageSizeOptions,
