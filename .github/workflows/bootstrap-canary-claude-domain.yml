@@ -19,11 +19,6 @@ on:
       - canary-anthropic
     paths:
       - ".github/workflows/bootstrap-canary-claude-domain.yml"
-  push:
-    branches:
-      - canary-anthropic
-    paths:
-      - ".github/workflows/bootstrap-canary-claude-domain.yml"
 
 permissions:
   contents: read
