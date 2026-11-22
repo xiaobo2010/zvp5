@@ -111,7 +111,10 @@ echo "::group::build canary2"
 canary2_src="$workdir/canary2/zvms4-modified-main/zvms4-frontend"
 (
   cd "$canary2_src"
-  pnpm install --frozen-lockfile
+  # canary2 的 lockfile 落后于 package.json（html2canvas/html2canvas-pro/lucide-vue-next），
+  # 分支上的 frozen install 会直接报 OUTDATED_LOCKFILE；主题子应用是预览构建，
+  # 按 package.json 解析依赖即可。
+  pnpm install --no-frozen-lockfile
   # 直接用 vite build：主题子应用不需要类型检查/PWA 重新生成，
   # base 决定它挂在根域名下的 /t/canary2/。
   VITE_API_BASE="$api_base" \
@@ -133,7 +136,7 @@ pro_src="$workdir/canary-pro/zvp5/zvp5-frontend-pro"
   # 否则 /t/canary-pro/ 之外的深链接会解析成根应用的路由。
   sed -i 's/createWebHistory()/createWebHistory(import.meta.env.BASE_URL)/' src/router/index.ts
   grep -q 'createWebHistory(import.meta.env.BASE_URL)' src/router/index.ts
-  pnpm install --frozen-lockfile
+  pnpm install --no-frozen-lockfile
   VITE_API_BASE="$api_base" pnpm exec vite build --base=/t/canary-pro/
 )
 rm -rf "${main_dist:?}/t/canary-pro"
