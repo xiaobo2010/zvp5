@@ -187,7 +187,7 @@ const end = computed(() => Math.min(props.total, props.page * props.pageSize))
     order: 1;
   }
 
-  .controls {
+  :deep(.pager) {
     order: 3;
     width: 100%;
     justify-content: space-between;

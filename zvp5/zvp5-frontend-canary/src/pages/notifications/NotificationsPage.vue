@@ -32,7 +32,7 @@ const expanded = ref<string | null>(null)
 const page = ref(1)
 const listRef = ref<HTMLElement | null>(null)
 
-const { size, auto, columns, effectiveColumns, pageSizeOptions, setAuto, setPageSize, setColumns } =
+const { size, auto, density, columns, effectiveColumns, pageSizeOptions, setAuto, setPageSize, setColumns } =
   useAdaptivePagination({
     listId: 'notifications',
     container: listRef,
@@ -130,7 +130,7 @@ onMounted(load)
     </ZAlert>
 
     <div ref="listRef" class="list-area">
-      <div v-if="loading" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+      <div v-if="loading" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'" :data-density="density">
         <ZCard v-for="index in 4" :key="index" class="notice">
           <ZSkeleton width="46%" height="1rem" />
           <div style="height: 0.6rem" />
@@ -138,7 +138,7 @@ onMounted(load)
         </ZCard>
       </div>
 
-      <div v-else-if="items.length" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+      <div v-else-if="items.length" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'" :data-density="density">
         <ZCard
           v-for="(item, index) in pagedItems"
           :key="item.id"
@@ -238,12 +238,44 @@ onMounted(load)
 .list {
   display: grid;
   grid-template-columns: 1fr;
-  gap: var(--space-3);
+  gap: var(--list-gap, var(--space-3));
   align-items: start;
 }
 
 .list.cols-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Adaptive Card Density：真实改变通知卡片内边距/间距/字号（非 transform: scale） */
+.list[data-density='comfortable'] {
+  --list-gap: 0.6rem;
+  --notice-pad-y: 0.7rem;
+  --notice-pad-x: 1rem;
+  --notice-gap: 0.6rem;
+  --notice-title-size: var(--text-sm);
+}
+
+.list[data-density='compact'] {
+  --list-gap: 0.45rem;
+  --notice-pad-y: 0.5rem;
+  --notice-pad-x: 0.85rem;
+  --notice-gap: 0.5rem;
+  --notice-title-size: var(--text-sm);
+  --notice-meta-size: 10px;
+}
+
+.list[data-density='ultra'] {
+  --list-gap: 0.35rem;
+  --notice-pad-y: 0.4rem;
+  --notice-pad-x: 0.75rem;
+  --notice-gap: 0.45rem;
+  --notice-title-size: 0.88rem;
+  --notice-meta-size: 10px;
+}
+
+/* 超紧凑：隐藏未读角标文字，左侧小圆点仍标识未读，避免拥挤 */
+.list[data-density='ultra'] .notice-head :deep(.z-badge) {
+  display: none;
 }
 
 .notice {
@@ -278,9 +310,9 @@ onMounted(load)
 .notice-head {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--notice-gap, var(--space-3));
   width: 100%;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--notice-pad-y, var(--space-4)) var(--notice-pad-x, var(--space-5));
   text-align: left;
 }
 
@@ -306,7 +338,7 @@ onMounted(load)
 }
 
 .notice-title strong {
-  font-size: var(--text-base);
+  font-size: var(--notice-title-size, var(--text-base));
   font-weight: 600;
   color: var(--ink);
   overflow: hidden;
@@ -315,7 +347,7 @@ onMounted(load)
 }
 
 .notice-title small {
-  font-size: var(--text-2xs);
+  font-size: var(--notice-meta-size, var(--text-2xs));
   color: var(--ink-faint);
 }
 

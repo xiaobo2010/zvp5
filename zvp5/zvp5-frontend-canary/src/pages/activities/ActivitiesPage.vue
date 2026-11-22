@@ -335,16 +335,16 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 
 /* 密度档位：真实改变卡片内边距、间距、字号与信息排布（非 transform: scale） */
 .grid[data-density='spacious'] {
-  --grid-gap: 1.25rem;
-  --card-pad: 1.4rem;
-  --card-gap: 0.85rem;
-  --title-size: 1.22rem;
+  --grid-gap: 1.15rem;
+  --card-pad: 1.15rem;
+  --card-gap: 0.7rem;
+  --title-size: 1.18rem;
   --desc-lines: 3;
-  --desc-min: 4.8em;
+  --desc-min: 3.2em;
   --meta-dir: column;
   --meta-gap: 0.3rem;
   --meta-size: var(--text-xs);
-  --foot-pad: 0.75rem;
+  --foot-pad: 0.7rem;
 }
 
 .grid[data-density='comfortable'] {
