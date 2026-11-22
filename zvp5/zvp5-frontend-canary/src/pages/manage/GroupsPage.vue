@@ -23,6 +23,8 @@ import ZField from '@/shared/ui/ZField.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
@@ -30,15 +32,27 @@ const session = useSessionStore()
 const ui = useUiStore()
 
 const page = ref(1)
-const size = 20
 const total = ref(0)
 const query = ref('')
 const rows = ref<GroupRow[]>([])
 const loading = ref(true)
 const error = ref('')
+const listRef = ref<HTMLElement | null>(null)
+
+const { size, auto, pageSizeOptions, setAuto, setPageSize } = useAdaptivePagination({
+  listId: 'manage-groups',
+  container: listRef,
+  itemSelector: '.row',
+  defaultPageSize: 20,
+  gap: 0,
+  min: 8,
+  reserve: 96,
+  fallbackItemHeight: 66,
+  max: 80
+})
 
 const isAdmin = computed(() => session.isAdmin)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 
 const createOpen = ref(false)
 const createName = ref('')
@@ -54,7 +68,6 @@ const memberGroup = ref<GroupRow | null>(null)
 const members = ref<GroupMemberRow[]>([])
 const memberTotal = ref(0)
 const memberPage = ref(1)
-const memberSize = 12
 const memberQuery = ref('')
 const memberLoading = ref(false)
 const memberBusy = ref<string | null>(null)
@@ -64,7 +77,18 @@ const addQuery = ref('')
 const candidates = ref<AdminUserRow[]>([])
 const addLoading = ref(false)
 
-const memberPages = computed(() => Math.max(1, Math.ceil(memberTotal.value / memberSize)))
+const {
+  size: memberSize,
+  pageSizeOptions: memberSizeOptions,
+  setPageSize: setMemberPageSize
+} = useAdaptivePagination({
+  listId: 'group-members',
+  allowAuto: false,
+  allowColumns: false,
+  defaultPageSize: 12,
+  min: 5,
+  max: 100
+})
 const isPermissionGroup = computed(() => memberGroup.value?.type === 'permission')
 const canEditMembers = computed(() => isAdmin.value && !isPermissionGroup.value)
 
@@ -72,7 +96,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const result = await fetchGroups({ page: page.value, size, query: query.value.trim() })
+    const result = await fetchGroups({ page: page.value, size: size.value, query: query.value.trim() })
     rows.value = result.data
     total.value = result.total
     if (page.value > totalPages.value) page.value = totalPages.value
@@ -147,11 +171,13 @@ async function loadMembers() {
     const result = await fetchGroupMembers(
       group._id,
       memberPage.value,
-      memberSize,
+      memberSize.value,
       memberQuery.value.trim()
     )
     members.value = result.data
     memberTotal.value = result.total
+    const maxPage = Math.max(1, Math.ceil(result.total / memberSize.value))
+    if (memberPage.value > maxPage) memberPage.value = maxPage
   } catch {
     members.value = []
     memberTotal.value = 0
@@ -249,6 +275,20 @@ watch(addQuery, () => {
 watch(page, () => void load())
 watch(query, scheduleLoad)
 watch(memberPage, () => void loadMembers())
+watch(size, () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  void load()
+})
+watch(memberSize, () => {
+  if (memberPage.value !== 1) {
+    memberPage.value = 1
+    return
+  }
+  if (memberOpen.value) void loadMembers()
+})
 
 onMounted(load)
 onBeforeUnmount(() => {
@@ -290,14 +330,14 @@ onBeforeUnmount(() => {
     </ZAlert>
 
     <ZCard padding="none">
-      <div v-if="loading" class="rows">
+      <div v-if="loading && !rows.length" ref="listRef" class="rows">
         <div v-for="index in 5" :key="index" class="row">
           <ZSkeleton width="28%" height="0.95rem" />
           <ZSkeleton width="4rem" height="0.75rem" />
         </div>
       </div>
 
-      <ul v-else-if="rows.length" class="rows">
+      <ul v-else-if="rows.length" ref="listRef" class="rows">
         <li v-for="row in rows" :key="row._id" class="row">
           <button type="button" class="main" @click="openMembers(row)">
             <strong>{{ row.name }}</strong>
@@ -320,21 +360,17 @@ onBeforeUnmount(() => {
       <ZEmpty v-else-if="!error" compact icon="users" :title="t('manage.groups.empty')" />
     </ZCard>
 
-    <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-      <ZButton variant="ghost" size="sm" icon="chevron-left" :disabled="page <= 1 || loading" @click="page -= 1">
-        {{ t('common.back') }}
-      </ZButton>
-      <span class="page-num num">{{ page }} / {{ totalPages }}</span>
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon-right="chevron-right"
-        :disabled="page >= totalPages || loading"
-        @click="page += 1"
-      >
-        {{ t('home.viewAll') }}
-      </ZButton>
-    </nav>
+    <AdaptivePagination
+      :page="page"
+      :page-size="size"
+      :total="total"
+      :auto="auto"
+      :page-size-options="pageSizeOptions"
+      :disabled="loading"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+    />
 
     <ZModal v-model="createOpen" :title="t('manage.groups.createTitle')" size="sm">
       <ZField
@@ -447,27 +483,17 @@ onBeforeUnmount(() => {
 
         <ZEmpty v-else compact icon="users" :title="t('manage.groups.memberEmpty')" />
 
-        <nav v-if="memberPages > 1" class="pager" aria-label="分页">
-          <ZButton
-            variant="ghost"
-            size="sm"
-            icon="chevron-left"
-            :disabled="memberPage <= 1 || memberLoading"
-            @click="memberPage -= 1"
-          >
-            {{ t('common.back') }}
-          </ZButton>
-          <span class="page-num num">{{ memberPage }} / {{ memberPages }}</span>
-          <ZButton
-            variant="ghost"
-            size="sm"
-            icon-right="chevron-right"
-            :disabled="memberPage >= memberPages || memberLoading"
-            @click="memberPage += 1"
-          >
-            {{ t('home.viewAll') }}
-          </ZButton>
-        </nav>
+        <AdaptivePagination
+          :page="memberPage"
+          :page-size="memberSize"
+          :total="memberTotal"
+          :auto="false"
+          :allow-auto="false"
+          :page-size-options="memberSizeOptions"
+          :disabled="memberLoading"
+          @update:page="memberPage = $event"
+          @update:page-size="setMemberPageSize"
+        />
       </div>
 
       <template #footer>
@@ -557,163 +583,5 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
-.retry {
-  margin-top: var(--space-3);
-}
-
-.member-sheet {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.block-hint {
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-  line-height: 1.55;
-}
-
-.add-box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.candidates {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.candidates li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
-}
-
-.candidate-name {
-  font-size: var(--text-sm);
-  font-weight: 550;
-}
-
-.candidate-meta {
-  flex: 1;
-  font-size: var(--text-2xs);
-  color: var(--ink-faint);
-}
-
-.member-name {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1;
-  min-width: 0;
-}
-
-.avatar {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: 50%;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: #fffdf8;
-  background: linear-gradient(150deg, var(--accent), var(--accent-ink));
-}
-
-.member-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.member-text strong {
-  font-size: var(--text-sm);
-  font-weight: 550;
-}
-
-.member-text small {
-  font-size: var(--text-2xs);
-  color: var(--ink-faint);
-}
-
-.member-roles {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  flex: none;
-}
-
-.remove {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border-radius: 50%;
-  color: var(--ink-faint);
-  border: 1px solid color-mix(in srgb, var(--glass-border) 65%, transparent);
-  background:
-    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 26%, transparent), transparent 55%),
-    var(--glass-flat);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-micro) var(--spring-snappy);
-}
-
-.remove:hover {
-  background-color: color-mix(in srgb, var(--c-danger) 14%, transparent);
-  color: var(--c-danger);
-  transform: scale(1.06);
-}
-
-.remove:active {
-  transform: scale(0.9);
-}
-
-.remove:disabled {
-  opacity: 0.45;
-}
-
-@media (max-width: 680px) {
-  .row {
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-  }
-
-  .main {
-    flex-basis: calc(100% - 6rem);
-  }
-
-  .search {
-    max-width: none;
-  }
-
-  .member-roles {
-    flex-basis: 100%;
-  }
 }
 </style>

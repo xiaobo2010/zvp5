@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   fetchNotificationReads,
@@ -17,6 +17,8 @@ import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZBadge from '@/shared/ui/ZBadge.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZMarkdown from '@/shared/ui/ZMarkdown.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 
 const { t } = useI18n()
 
@@ -27,6 +29,37 @@ const version = ref(0)
 const loading = ref(true)
 const error = ref('')
 const expanded = ref<string | null>(null)
+const page = ref(1)
+const listRef = ref<HTMLElement | null>(null)
+
+const { size, auto, columns, effectiveColumns, pageSizeOptions, setAuto, setPageSize, setColumns } =
+  useAdaptivePagination({
+    listId: 'notifications',
+    container: listRef,
+    itemSelector: '.notice:not(.is-open)',
+    defaultPageSize: 6,
+    allowColumns: true,
+    defaultColumns: 1,
+    gap: 12,
+    min: 4,
+    fallbackItemHeight: 78,
+    reserve: 96
+  })
+
+const total = computed(() => items.value.length)
+const pagedItems = computed(() => {
+  const start = (page.value - 1) * size.value
+  return items.value.slice(start, start + size.value)
+})
+
+watch(size, () => {
+  if (page.value !== 1) page.value = 1
+})
+
+watch(total, () => {
+  const maxPage = Math.max(1, Math.ceil(total.value / size.value))
+  if (page.value > maxPage) page.value = maxPage
+})
 
 const isUnread = (item: NotificationItem) => readsReady.value && !reads.value[item.id]
 
@@ -95,49 +128,67 @@ onMounted(load)
       </div>
     </ZAlert>
 
-    <div v-if="loading" class="list">
-      <ZCard v-for="index in 4" :key="index">
-        <ZSkeleton width="46%" height="1rem" />
-        <div style="height: 0.6rem" />
-        <ZSkeleton width="24%" height="0.7rem" />
-      </ZCard>
+    <div ref="listRef" class="list-area">
+      <div v-if="loading" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+        <ZCard v-for="index in 4" :key="index" class="notice">
+          <ZSkeleton width="46%" height="1rem" />
+          <div style="height: 0.6rem" />
+          <ZSkeleton width="24%" height="0.7rem" />
+        </ZCard>
+      </div>
+
+      <div v-else-if="items.length" class="list" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+        <ZCard
+          v-for="(item, index) in pagedItems"
+          :key="item.id"
+          padding="none"
+          class="notice"
+          :class="{ 'is-unread': isUnread(item), 'is-open': expanded === item.id }"
+          :style="{ '--i': index }"
+        >
+          <button type="button" class="notice-head" @click="open(item)">
+            <span class="dot" :class="{ unread: isUnread(item) }" aria-hidden="true" />
+            <span class="notice-title">
+              <strong>{{ item.title }}</strong>
+              <small>
+                {{ item.author_name || '—' }}
+                <template v-if="item.updated_at"> · {{ formatDateTime(item.updated_at) }}</template>
+              </small>
+            </span>
+            <ZBadge v-if="isUnread(item)" tone="accent" size="sm">{{ t('notifications.unread') }}</ZBadge>
+            <ZIcon
+              name="chevron-down"
+              :size="17"
+              class="chevron"
+              :class="{ rotated: expanded === item.id }"
+            />
+          </button>
+          <Transition name="expand">
+            <div v-if="expanded === item.id" class="notice-body">
+              <ZMarkdown :source="item.content" />
+              <p class="version-tag">v{{ item.version }}</p>
+            </div>
+          </Transition>
+        </ZCard>
+      </div>
+
+      <ZEmpty v-else-if="!error" icon="bell" :title="t('notifications.empty')" />
     </div>
 
-    <div v-else-if="items.length" class="list">
-      <ZCard
-        v-for="item in items"
-        :key="item.id"
-        padding="none"
-        class="notice"
-        :class="{ 'is-unread': isUnread(item), 'is-open': expanded === item.id }"
-      >
-        <button type="button" class="notice-head" @click="open(item)">
-          <span class="dot" :class="{ unread: isUnread(item) }" aria-hidden="true" />
-          <span class="notice-title">
-            <strong>{{ item.title }}</strong>
-            <small>
-              {{ item.author_name || '—' }}
-              <template v-if="item.updated_at"> · {{ formatDateTime(item.updated_at) }}</template>
-            </small>
-          </span>
-          <ZBadge v-if="isUnread(item)" tone="accent" size="sm">{{ t('notifications.unread') }}</ZBadge>
-          <ZIcon
-            name="chevron-down"
-            :size="17"
-            class="chevron"
-            :class="{ rotated: expanded === item.id }"
-          />
-        </button>
-        <Transition name="expand">
-          <div v-if="expanded === item.id" class="notice-body">
-            <ZMarkdown :source="item.content" />
-            <p class="version-tag">v{{ item.version }}</p>
-          </div>
-        </Transition>
-      </ZCard>
-    </div>
-
-    <ZEmpty v-else-if="!error" icon="bell" :title="t('notifications.empty')" />
+    <AdaptivePagination
+      :page="page"
+      :page-size="size"
+      :total="total"
+      :auto="auto"
+      :columns="effectiveColumns"
+      :allow-auto="true"
+      :allow-layout="true"
+      :page-size-options="pageSizeOptions"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+      @update:columns="setColumns"
+    />
   </div>
 </template>
 
@@ -177,15 +228,46 @@ onMounted(load)
   white-space: nowrap;
 }
 
-.list {
+.list-area {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+}
+
+.list {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: var(--space-3);
+  align-items: start;
+}
+
+.list.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .notice {
   overflow: hidden;
+  animation: notice-in 320ms var(--spring-soft) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 26ms);
   transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice {
+    animation: none;
+  }
 }
 
 .notice.is-unread {
@@ -283,6 +365,12 @@ onMounted(load)
 
 .retry {
   margin-top: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .list.cols-2 {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {

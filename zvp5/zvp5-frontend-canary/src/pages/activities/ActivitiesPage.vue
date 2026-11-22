@@ -14,6 +14,8 @@ import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 
 const { t } = useI18n()
 
@@ -21,11 +23,24 @@ const type = ref('all')
 const status = ref('all')
 const search = ref('')
 const page = ref(1)
-const size = 12
+const listRef = ref<HTMLElement | null>(null)
 const total = ref(0)
 const items = ref<Activity[]>([])
 const loading = ref(true)
 const error = ref('')
+
+const { size, auto, columns, effectiveColumns, pageSizeOptions, setAuto, setPageSize, setColumns } =
+  useAdaptivePagination({
+    listId: 'activities',
+    container: listRef,
+    itemSelector: '.card',
+    defaultPageSize: 12,
+    allowColumns: true,
+    defaultColumns: 2,
+    min: 4,
+    gap: 16,
+    reserve: 96
+  })
 
 const typeOptions = computed(() => [
   { value: 'all', label: t('common.all') },
@@ -41,11 +56,11 @@ const statusOptions = computed(() => [
   { value: 'refused', label: t('activities.status.refused') }
 ])
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 const rangeLabel = computed(() => {
   if (!total.value) return '0'
-  const start = (page.value - 1) * size + 1
-  const end = Math.min(total.value, page.value * size)
+  const start = (page.value - 1) * size.value + 1
+  const end = Math.min(total.value, page.value * size.value)
   return `${start}–${end} / ${total.value}`
 })
 
@@ -55,7 +70,7 @@ async function load() {
   try {
     const result = await fetchActivities({
       page: page.value,
-      size,
+      size: size.value,
       query: search.value.trim(),
       type: type.value === 'all' ? '' : type.value,
       status: status.value === 'all' ? '' : status.value
@@ -87,6 +102,13 @@ watch([type, status], () => {
 })
 watch(search, scheduleLoad)
 watch(page, () => void load())
+watch(size, () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  void load()
+})
 
 onMounted(load)
 onBeforeUnmount(() => window.clearTimeout(timer))
@@ -121,69 +143,66 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       </div>
     </ZAlert>
 
-    <div v-if="loading" class="grid">
-      <ZCard v-for="index in 6" :key="index" class="card">
-        <ZSkeleton width="30%" height="0.75rem" />
-        <div style="height: 1rem" />
-        <ZSkeleton width="82%" height="1.4rem" />
-        <div style="height: 0.75rem" />
-        <ZSkeleton width="60%" height="0.8rem" />
-        <div style="height: 1.4rem" />
-        <ZSkeleton height="0.7rem" />
-      </ZCard>
-    </div>
-
-    <div v-else-if="items.length" class="grid">
-      <RouterLink
-        v-for="activity in items"
-        :key="activity._id"
-        :to="`/activities/${activity._id}`"
-        class="card-link"
-      >
-        <ZCard hover class="card">
-          <div class="card-top">
-            <span class="date num">{{ formatDate(activity.date) }}</span>
-            <ZBadge :tone="activity.status === 'effective' ? 'success' : activity.status === 'pending' ? 'warning' : 'danger'">
-              {{ t(`activities.status.${activity.status}`) }}
-            </ZBadge>
-          </div>
-          <h2 class="card-title">{{ activity.name }}</h2>
-          <p class="card-desc">{{ activity.description || '—' }}</p>
-          <div class="card-meta">
-            <span><ZIcon name="pin" :size="14" />{{ activity.place || '—' }}</span>
-            <span><ZIcon name="user" :size="14" />{{ activity.creator_name || '—' }}</span>
-          </div>
-          <div class="card-foot">
-            <ZBadge tone="accent">{{ t(`activities.type.${activity.type}`) }}</ZBadge>
-            <ZIcon name="arrow-up-right" :size="16" class="arrow" />
-          </div>
+    <div ref="listRef" class="list-area">
+      <div v-if="loading && !items.length" class="grid" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+        <ZCard v-for="index in 6" :key="index" class="card">
+          <ZSkeleton width="30%" height="0.75rem" />
+          <div style="height: 1rem" />
+          <ZSkeleton width="82%" height="1.4rem" />
+          <div style="height: 0.75rem" />
+          <ZSkeleton width="60%" height="0.8rem" />
+          <div style="height: 1.4rem" />
+          <ZSkeleton height="0.7rem" />
         </ZCard>
-      </RouterLink>
+      </div>
+
+      <div v-else-if="items.length" class="grid" :class="columns === 2 ? 'cols-2' : 'cols-1'">
+        <RouterLink
+          v-for="(activity, index) in items"
+          :key="activity._id"
+          :to="`/activities/${activity._id}`"
+          class="card-link"
+          :style="{ '--i': index }"
+        >
+          <ZCard hover class="card">
+            <div class="card-top">
+              <span class="date num">{{ formatDate(activity.date) }}</span>
+              <ZBadge :tone="activity.status === 'effective' ? 'success' : activity.status === 'pending' ? 'warning' : 'danger'">
+                {{ t(`activities.status.${activity.status}`) }}
+              </ZBadge>
+            </div>
+            <h2 class="card-title">{{ activity.name }}</h2>
+            <p class="card-desc">{{ activity.description || '—' }}</p>
+            <div class="card-meta">
+              <span><ZIcon name="pin" :size="14" />{{ activity.place || '—' }}</span>
+              <span><ZIcon name="user" :size="14" />{{ activity.creator_name || '—' }}</span>
+            </div>
+            <div class="card-foot">
+              <ZBadge tone="accent">{{ t(`activities.type.${activity.type}`) }}</ZBadge>
+              <ZIcon name="arrow-up-right" :size="16" class="arrow" />
+            </div>
+          </ZCard>
+        </RouterLink>
+      </div>
+
+      <ZEmpty v-else-if="!error" icon="compass" :title="t('activities.empty')" />
     </div>
 
-    <ZEmpty v-else-if="!error" icon="compass" :title="t('activities.empty')" />
-
-    <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon="chevron-left"
-        :disabled="page <= 1 || loading"
-        @click="page -= 1"
-      >
-        {{ t('common.back') }}
-      </ZButton>
-      <span class="page-num num">{{ page }} / {{ totalPages }}</span>
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon-right="chevron-right"
-        :disabled="page >= totalPages || loading"
-        @click="page += 1"
-      >
-        {{ t('home.viewAll') }}
-      </ZButton>
-    </nav>
+    <AdaptivePagination
+      :page="page"
+      :page-size="size"
+      :total="total"
+      :auto="auto"
+      :columns="effectiveColumns"
+      :allow-auto="true"
+      :allow-layout="true"
+      :page-size-options="pageSizeOptions"
+      :disabled="loading"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+      @update:columns="setColumns"
+    />
   </div>
 </template>
 
@@ -231,15 +250,39 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   margin-left: auto;
 }
 
+.list-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: var(--space-4);
+}
+
+.grid.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .card-link {
   color: inherit;
   text-decoration: none;
+  animation: card-in 340ms var(--spring-soft) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 26ms);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
 }
 
 .card {
@@ -320,31 +363,24 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   transform: translate(2px, -2px);
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  padding-top: var(--space-2);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
 .retry {
   margin-top: var(--space-3);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .card-link {
+    animation: none;
+  }
+}
+
 @media (max-width: 1080px) {
-  .grid {
+  .grid.cols-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 680px) {
-  .grid {
+@media (max-width: 760px) {
+  .grid.cols-2 {
     grid-template-columns: 1fr;
   }
 

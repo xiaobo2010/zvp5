@@ -23,6 +23,8 @@ import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZField from '@/shared/ui/ZField.vue'
 import ZSegmented from '@/shared/ui/ZSegmented.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -33,13 +35,24 @@ const activity = ref<Activity | null>(null)
 const members = ref<ActivityMemberRow[]>([])
 const memberTotal = ref(0)
 const memberPage = ref(1)
-const memberSize = 20
 const loading = ref(true)
 const memberLoading = ref(false)
 const error = ref('')
 
+const {
+  size: memberSize,
+  pageSizeOptions: memberSizeOptions,
+  setPageSize: setMemberPageSize
+} = useAdaptivePagination({
+  listId: 'activity-members',
+  allowAuto: false,
+  allowColumns: false,
+  defaultPageSize: 20,
+  min: 5,
+  max: 100
+})
+
 const id = computed(() => String(route.params.id ?? ''))
-const totalPages = computed(() => Math.max(1, Math.ceil(memberTotal.value / memberSize)))
 
 const names = ref<Record<string, string>>({})
 const isOid = (value: string) => /^[0-9a-f]{24}$/i.test(value)
@@ -170,9 +183,11 @@ async function loadMembers() {
   if (!id.value) return
   memberLoading.value = true
   try {
-    const result = await fetchActivityMembers(id.value, memberPage.value, memberSize)
+    const result = await fetchActivityMembers(id.value, memberPage.value, memberSize.value)
     members.value = result.members
     memberTotal.value = result.total
+    const maxPage = Math.max(1, Math.ceil(result.total / memberSize.value))
+    if (memberPage.value > maxPage) memberPage.value = maxPage
   } catch {
     members.value = []
     memberTotal.value = 0
@@ -200,6 +215,13 @@ async function load() {
 }
 
 watch(memberPage, () => void loadMembers())
+watch(memberSize, () => {
+  if (memberPage.value !== 1) {
+    memberPage.value = 1
+    return
+  }
+  void loadMembers()
+})
 onMounted(load)
 </script>
 
@@ -329,27 +351,17 @@ onMounted(load)
           <ZEmpty v-else compact icon="users" :title="t('activities.noMembers')" />
         </ZCard>
 
-        <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-          <ZButton
-            variant="ghost"
-            size="sm"
-            icon="chevron-left"
-            :disabled="memberPage <= 1 || memberLoading"
-            @click="memberPage -= 1"
-          >
-            {{ t('common.back') }}
-          </ZButton>
-          <span class="page-num num">{{ memberPage }} / {{ totalPages }}</span>
-          <ZButton
-            variant="ghost"
-            size="sm"
-            icon-right="chevron-right"
-            :disabled="memberPage >= totalPages || memberLoading"
-            @click="memberPage += 1"
-          >
-            {{ t('home.viewAll') }}
-          </ZButton>
-        </nav>
+        <AdaptivePagination
+          :page="memberPage"
+          :page-size="memberSize"
+          :total="memberTotal"
+          :auto="false"
+          :allow-auto="false"
+          :page-size-options="memberSizeOptions"
+          :disabled="memberLoading"
+          @update:page="memberPage = $event"
+          @update:page-size="setMemberPageSize"
+        />
       </section>
 
       <footer class="stamp">
@@ -566,113 +578,6 @@ onMounted(load)
   color: var(--ink-soft);
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-}
-
-.review-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-6);
-  padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
-}
-
-.review-label {
-  flex: 1;
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.member-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  flex: none;
-}
-
-.mini {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  color: var(--ink-faint);
-  border: 1px solid color-mix(in srgb, var(--glass-border) 70%, transparent);
-  background:
-    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 30%, transparent), transparent 55%),
-    var(--glass-flat);
-  box-shadow: inset 0 1px 0 var(--glass-hi);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-micro) var(--spring-snappy);
-}
-
-.mini:hover {
-  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent-ink);
-  transform: translateY(-1px) scale(1.06);
-}
-
-.mini:active {
-  transform: scale(0.9);
-}
-
-.mini:disabled {
-  opacity: 0.45;
-}
-
-.edit-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.edit-mode {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.edit-label {
-  font-size: var(--text-xs);
-  font-weight: 550;
-  color: var(--ink-soft);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
-.stamp {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--text-2xs);
-  color: var(--ink-faint);
-}
-
-.dot {
-  opacity: 0.6;
-}
-
-.retry {
-  margin-top: var(--space-3);
-}
-
-@media (max-width: 820px) {
-  .meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 520px) {

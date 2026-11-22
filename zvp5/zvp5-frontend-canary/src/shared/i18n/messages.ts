@@ -22,6 +22,21 @@ const zhCN = {
     soon: '建设中',
     hours: '小时'
   },
+  pagination: {
+    label: '分页',
+    prev: '上一页',
+    next: '下一页',
+    rows: '条',
+    perPage: '每页',
+    auto: '自动适屏',
+    single: '单列显示',
+    double: '双列显示',
+    layout: '列表布局',
+    jumpTo: '跳转',
+    jump: '前往',
+    goPage: '第 {page} 页',
+    all: '查看全部'
+  },
   nav: {
     home: '首页',
     activities: '活动',
@@ -577,6 +592,21 @@ const enUS = {
     error: 'Something went wrong',
     soon: 'In progress',
     hours: 'hrs'
+  },
+  pagination: {
+    label: 'Pagination',
+    prev: 'Previous',
+    next: 'Next',
+    rows: 'rows',
+    perPage: 'Per page',
+    auto: 'Auto-fit',
+    single: 'Single column',
+    double: 'Two columns',
+    layout: 'List layout',
+    jumpTo: 'Jump to',
+    jump: 'Go',
+    goPage: 'Page {page}',
+    all: 'View all'
   },
   nav: {
     home: 'Home',

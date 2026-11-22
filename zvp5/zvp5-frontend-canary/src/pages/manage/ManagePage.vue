@@ -17,6 +17,8 @@ import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
 import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
@@ -29,15 +31,27 @@ const tab = ref<Tab>('queue')
 const status = ref('all')
 const search = ref('')
 const page = ref(1)
-const size = 20
 const total = ref(0)
 const items = ref<Activity[]>([])
 const loading = ref(true)
 const error = ref('')
 const acting = ref<string | null>(null)
+const listRef = ref<HTMLElement | null>(null)
+
+const { size, auto, pageSizeOptions, setAuto, setPageSize } = useAdaptivePagination({
+  listId: 'manage-queue',
+  container: listRef,
+  itemSelector: '.row',
+  defaultPageSize: 20,
+  gap: 0,
+  min: 8,
+  reserve: 96,
+  fallbackItemHeight: 66,
+  max: 80
+})
 
 const canReview = computed(() => session.isManager)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 
 const tabOptions = computed(() => [
   { value: 'queue', label: t('manage.queue') },
@@ -62,7 +76,7 @@ async function load() {
   try {
     const result = await fetchActivities({
       page: page.value,
-      size,
+      size: size.value,
       query: search.value.trim(),
       type: '',
       status: queryStatus.value,
@@ -127,6 +141,13 @@ watch(status, () => {
 })
 watch(search, scheduleLoad)
 watch(page, () => void load())
+watch(size, () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  void load()
+})
 
 onMounted(load)
 onBeforeUnmount(() => window.clearTimeout(timer))
@@ -172,7 +193,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
     </ZAlert>
 
     <ZCard padding="none">
-      <div v-if="loading" class="rows">
+      <div v-if="loading && !items.length" ref="listRef" class="rows">
         <div v-for="index in 5" :key="index" class="row">
           <ZSkeleton width="4.2rem" height="0.8rem" />
           <ZSkeleton width="42%" height="0.95rem" />
@@ -180,7 +201,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
         </div>
       </div>
 
-      <ul v-else-if="items.length" class="rows">
+      <ul v-else-if="items.length" ref="listRef" class="rows">
         <li v-for="activity in items" :key="activity._id" class="row">
           <span class="date num">{{ formatDate(activity.date).slice(5) }}</span>
 
@@ -233,27 +254,17 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 
     <p class="hint">{{ t('manage.memberHint') }}</p>
 
-    <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon="chevron-left"
-        :disabled="page <= 1 || loading"
-        @click="page -= 1"
-      >
-        {{ t('common.back') }}
-      </ZButton>
-      <span class="page-num num">{{ page }} / {{ totalPages }}</span>
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon-right="chevron-right"
-        :disabled="page >= totalPages || loading"
-        @click="page += 1"
-      >
-        {{ t('home.viewAll') }}
-      </ZButton>
-    </nav>
+    <AdaptivePagination
+      :page="page"
+      :page-size="size"
+      :total="total"
+      :auto="auto"
+      :page-size-options="pageSizeOptions"
+      :disabled="loading"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+    />
   </div>
 </template>
 
@@ -377,40 +388,5 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   color: var(--ink-faint);
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
-.retry {
-  margin-top: var(--space-3);
-}
-
-@media (max-width: 680px) {
-  .row {
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-  }
-
-  .main {
-    flex-basis: calc(100% - 5rem);
-  }
-
-  .actions {
-    margin-left: auto;
-  }
-
-  .search {
-    max-width: none;
-    margin-left: 0;
-    width: 100%;
-  }
 }
 </style>

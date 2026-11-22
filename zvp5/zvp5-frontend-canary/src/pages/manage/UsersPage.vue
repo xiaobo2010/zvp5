@@ -17,6 +17,8 @@ import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZSegmented from '@/shared/ui/ZSegmented.vue'
 import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
@@ -24,7 +26,6 @@ const session = useSessionStore()
 const ui = useUiStore()
 
 const page = ref(1)
-const size = 20
 const total = ref(0)
 const query = ref('')
 const role = ref('')
@@ -32,9 +33,22 @@ const rows = ref<AdminUserRow[]>([])
 const loading = ref(true)
 const error = ref('')
 const saving = ref(false)
+const listRef = ref<HTMLElement | null>(null)
+
+const { size, auto, pageSizeOptions, setAuto, setPageSize } = useAdaptivePagination({
+  listId: 'manage-users',
+  container: listRef,
+  itemSelector: '.row',
+  defaultPageSize: 20,
+  gap: 0,
+  min: 8,
+  reserve: 96,
+  fallbackItemHeight: 62,
+  max: 80
+})
 
 const isAdmin = computed(() => session.isAdmin)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 
 const roleOptions = computed(() => [
   { value: '', label: t('common.all') },
@@ -71,7 +85,7 @@ async function load() {
   try {
     const result = await fetchUsers({
       page: page.value,
-      size,
+      size: size.value,
       query: query.value.trim(),
       role: isAdmin.value ? role.value : ''
     })
@@ -182,6 +196,13 @@ watch(role, () => {
   void load()
 })
 watch(page, () => void load())
+watch(size, () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  void load()
+})
 
 onMounted(load)
 onBeforeUnmount(() => window.clearTimeout(timer))
@@ -226,7 +247,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
     </ZAlert>
 
     <ZCard padding="none">
-      <div v-if="loading" class="rows">
+      <div v-if="loading && !rows.length" ref="listRef" class="rows">
         <div v-for="index in 6" :key="index" class="row">
           <ZSkeleton circle width="38px" height="38px" />
           <ZSkeleton width="32%" height="0.9rem" />
@@ -234,7 +255,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
         </div>
       </div>
 
-      <ul v-else-if="rows.length" class="rows">
+      <ul v-else-if="rows.length" ref="listRef" class="rows">
         <li v-for="row in rows" :key="row._id" class="row">
           <ZAvatar :name="row.name" :size="38" :tone="row.banned ? 'ink' : 'warm'" />
 
@@ -264,21 +285,17 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       <ZEmpty v-else-if="!error" compact icon="users" :title="t('manage.users.empty')" />
     </ZCard>
 
-    <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-      <ZButton variant="ghost" size="sm" icon="chevron-left" :disabled="page <= 1 || loading" @click="page -= 1">
-        {{ t('common.back') }}
-      </ZButton>
-      <span class="page-num num">{{ page }} / {{ totalPages }}</span>
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon-right="chevron-right"
-        :disabled="page >= totalPages || loading"
-        @click="page += 1"
-      >
-        {{ t('home.viewAll') }}
-      </ZButton>
-    </nav>
+    <AdaptivePagination
+      :page="page"
+      :page-size="size"
+      :total="total"
+      :auto="auto"
+      :page-size-options="pageSizeOptions"
+      :disabled="loading"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+    />
 
     <ZModal v-model="editOpen" :title="t('manage.users.editTitle')" size="md">
       <div v-if="target" class="sheet">
@@ -494,153 +511,5 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   transform: scale(0.9);
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
-.retry {
-  margin-top: var(--space-3);
-}
-
-.sheet {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.identity {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.identity-name {
-  font-size: var(--text-lg);
-  font-weight: 600;
-}
-
-.identity-meta {
-  margin-top: 0.2rem;
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-}
-
-.block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
-}
-
-.block-label {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.block-hint {
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-  line-height: 1.55;
-}
-
-.role-picks {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.8rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  font-size: var(--text-sm);
-  color: var(--ink-muted);
-  background:
-    linear-gradient(160deg, color-mix(in srgb, var(--glass-hi) 22%, transparent), transparent 58%),
-    var(--surface-raised);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 55%, transparent);
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-micro) var(--spring-snappy);
-}
-
-.pick:hover:not(:disabled) {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
-  transform: translateY(-1px);
-}
-
-.pick:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.pick.is-on {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised));
-  color: var(--accent-ink);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 70%, transparent),
-    0 6px 16px -12px color-mix(in srgb, var(--accent) 70%, transparent);
-}
-
-.pick:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.save-roles {
-  align-self: flex-start;
-}
-
-.ban-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-@media (max-width: 680px) {
-  .row {
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-  }
-
-  .main {
-    flex-basis: calc(100% - 6rem);
-  }
-
-  .roles {
-    order: 3;
-    flex-basis: 100%;
-  }
-
-  .search {
-    max-width: none;
-    margin-left: 0;
-  }
-
-  .ban-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 </style>

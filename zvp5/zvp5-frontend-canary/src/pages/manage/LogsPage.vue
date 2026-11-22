@@ -13,6 +13,8 @@ import ZEmpty from '@/shared/ui/ZEmpty.vue'
 import ZField from '@/shared/ui/ZField.vue'
 import ZSegmented from '@/shared/ui/ZSegmented.vue'
 import ZSkeleton from '@/shared/ui/ZSkeleton.vue'
+import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
+import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
 import ManageTabs from './ManageTabs.vue'
 
 const { t } = useI18n()
@@ -26,7 +28,6 @@ const typeMap: Record<string, string> = {
 }
 
 const page = ref(1)
-const perpage = 20
 const total = ref(0)
 const query = ref('')
 const group = ref('all')
@@ -34,8 +35,27 @@ const level = ref('all')
 const rows = ref<AuditLogRow[]>([])
 const loading = ref(true)
 const error = ref('')
+const listRef = ref<HTMLElement | null>(null)
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perpage)))
+const {
+  size: perpage,
+  auto,
+  pageSizeOptions,
+  setAuto,
+  setPageSize
+} = useAdaptivePagination({
+  listId: 'manage-logs',
+  container: listRef,
+  itemSelector: '.row',
+  defaultPageSize: 20,
+  gap: 0,
+  min: 8,
+  reserve: 96,
+  fallbackItemHeight: 68,
+  max: 80
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perpage.value)))
 
 const groupOptions = computed(() => [
   { value: 'all', label: t('manage.logs.groups.all') },
@@ -76,7 +96,7 @@ async function load() {
   try {
     const result = await fetchLogs({
       page: page.value,
-      perpage,
+      perpage: perpage.value,
       query: query.value.trim(),
       type: typeMap[group.value] ?? '',
       level: level.value === 'all' ? '' : level.value
@@ -112,6 +132,13 @@ watch(level, () => {
   void load()
 })
 watch(page, () => void load())
+watch(perpage, () => {
+  if (page.value !== 1) {
+    page.value = 1
+    return
+  }
+  void load()
+})
 
 onMounted(load)
 onBeforeUnmount(() => window.clearTimeout(timer))
@@ -149,14 +176,14 @@ onBeforeUnmount(() => window.clearTimeout(timer))
     </ZAlert>
 
     <ZCard padding="none">
-      <div v-if="loading" class="rows">
+      <div v-if="loading && !rows.length" ref="listRef" class="rows">
         <div v-for="index in 6" :key="index" class="row">
           <ZSkeleton width="7rem" height="0.8rem" />
           <ZSkeleton width="45%" height="0.9rem" />
         </div>
       </div>
 
-      <ul v-else-if="rows.length" class="rows">
+      <ul v-else-if="rows.length" ref="listRef" class="rows">
         <li v-for="row in rows" :key="row._id" class="row">
           <div class="stamp">
             <span class="time num">{{ timeOf(row.timestamp) }}</span>
@@ -177,21 +204,17 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       <ZEmpty v-else-if="!error" compact icon="book" :title="t('manage.logs.empty')" />
     </ZCard>
 
-    <nav v-if="totalPages > 1" class="pager" aria-label="分页">
-      <ZButton variant="ghost" size="sm" icon="chevron-left" :disabled="page <= 1 || loading" @click="page -= 1">
-        {{ t('common.back') }}
-      </ZButton>
-      <span class="page-num num">{{ page }} / {{ totalPages }}</span>
-      <ZButton
-        variant="ghost"
-        size="sm"
-        icon-right="chevron-right"
-        :disabled="page >= totalPages || loading"
-        @click="page += 1"
-      >
-        {{ t('home.viewAll') }}
-      </ZButton>
-    </nav>
+    <AdaptivePagination
+      :page="page"
+      :page-size="perpage"
+      :total="total"
+      :auto="auto"
+      :page-size-options="pageSizeOptions"
+      :disabled="loading"
+      @update:page="page = $event"
+      @update:page-size="setPageSize"
+      @update:auto="setAuto"
+    />
   </div>
 </template>
 
@@ -301,43 +324,5 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   word-break: break-all;
 }
 
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-}
-
-.page-num {
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-}
-
-.retry {
-  margin-top: var(--space-3);
-}
-
-@media (max-width: 680px) {
-  .row {
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-  }
-
-  .stamp {
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-2);
-    width: auto;
-  }
-
-  .main {
-    flex-basis: 100%;
-    order: 3;
-  }
-
-  .search {
-    max-width: none;
-    margin-left: 0;
-  }
 }
 </style>
