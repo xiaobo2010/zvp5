@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zvp-yuren-canary-claude",
+  "main": "src/index.js",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "../../zvp5-frontend-canary/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    {
+      "pattern": "canary-claude.xiaoboisces.top",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

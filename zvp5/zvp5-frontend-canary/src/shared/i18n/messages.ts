@@ -120,7 +120,7 @@ const zhCN = {
     subtitle: '来自平台的最新消息。',
     empty: '暂时没有通知',
     unread: '未读',
-    markRead: '标为已读'
+    markRead: '标为已读',
 
     compose: '发布通知',
     composeHint: '支持 Markdown：标题、列表、表格、引用、代码与链接。',
@@ -236,7 +236,7 @@ const zhCN = {
       version: '版本',
       save: '保存',
       required: '标题、正文和密码都不能为空',
-      verifyFailed: '密码验证失败'
+      verifyFailed: '密码验证失败',
 
       editorHint: '支持 Markdown 语法，发布后按富文本显示。',
       write: '编辑',
@@ -708,7 +708,7 @@ const enUS = {
     subtitle: 'The latest from the platform.',
     empty: 'No notifications yet',
     unread: 'Unread',
-    markRead: 'Mark as read'
+    markRead: 'Mark as read',
 
     compose: 'Post notice',
     composeHint: 'Markdown supported: headings, lists, tables, quotes, code and links.',
@@ -824,7 +824,7 @@ const enUS = {
       version: 'Version',
       save: 'Save',
       required: 'Title, body and password are required',
-      verifyFailed: 'Password verification failed'
+      verifyFailed: 'Password verification failed',
 
       editorHint: 'Markdown is supported; it renders as rich text once published.',
       write: 'Write',
