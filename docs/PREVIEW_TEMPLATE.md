@@ -96,17 +96,20 @@ Worker 目录（`src/index.js` + `wrangler.jsonc`）照抄
 **两个坑**：
 
 1. **custom domain 权限**：能建 Worker custom domain 的令牌才能让边缘给该主机名
-   签证书。`POST /accounts/{id}/workers/domains` 返回 10405
-   Method not allowed for this authentication scheme，说明令牌没有这个权限。
-   这种情况只能走 **zone route**（`POST /zones/{z}/workers/routes`，pattern
-   `canary-mybranch.xiaobopisces.top/*`），但**边缘不会为 zone route 签证书**，
-   TLS 握手会时好时坏，页面偶尔能开。流水线里的冒烟会把这种情况降级成
-   warning，不会卡住发布。要稳定可用，请在 CF 控制台手工加 custom domain，或给
-   令牌补权限。
-2. **DNS 记录要用相对名**：创建记录时 name 传 `canary-mybranch`，不要传完整域名
+   单独签证书。`POST /accounts/{id}/workers/domains` 返回 10405
+   Method not allowed for this authentication scheme，说明令牌没有这个权限
+   （`PUT` 同路径会返回 200，但不会真的建立绑定，别被它骗了）。这种情况只能走
+   **zone route**（`POST /zones/{z}/workers/routes`，pattern
+   `canary-mybranch.xiaobopisces.top/*`）。
+2. **zone route 的 DNS 形态**：记 `CNAME canary-mybranch → <worker>.nblilychen.workers.dev`
+   （橙云），跟 `hellomc.xiaobopisces.top` 一个路子。**不要用 `AAAA 100::`**——
+   那是 custom domain 用的占位记录，走 zone route 时边缘不认，握手直接失败
+   （`SSL: SSLV3_ALERT_HANDSHAKE_FAILURE`）。
+3. **DNS 记录要用相对名**：创建记录时 name 传 `canary-mybranch`，不要传完整域名
    `canary-mybranch.xiaobopisces.top`——后者会被 Cloudflare 再拼一次 zone，变成
-   `…xiaobopisces.top.xiaobopisces.top`，解析直接 NXDOMAIN。记录形态照既有预览域
-   用 `AAAA 100::`（橙云）。
+   `…xiaobopisces.top.xiaobopisces.top`，解析直接 NXDOMAIN。
+4. 若令牌后来补上了 custom domain 权限，可以在 CF 控制台给 Worker 加 custom
+   domain（更规范），加好之后 zone route 那条 CNAME 才能删。
 
 ## 4. 后端 CORS
 
