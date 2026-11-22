@@ -7,7 +7,7 @@ name: Canary Anthropic preview (frontend-canary → Worker)
 # 门禁 job（backend / frontend-e2e / workflow-security / dependency-security）
 # 与 canary.yml 同构；预览 job 只换前端目录、构建断言与 Worker。
 #
-# 预览域：canary-claude.xiaoboisces.top（Worker: zvp-yuren-canary-claude）。
+# 预览域：canary-claude.xiaobopisces.top（Worker: zvp-yuren-canary-claude）。
 # 只发静态文件，不反代 API、不 SSH 任何主机、不碰数据库。
 #
 # 必需：canary-anthropic / canary-anthropic-auto environment 里的 secret
@@ -198,13 +198,13 @@ jobs:
       name: ${{ (github.ref == 'refs/heads/canary-anthropic' && (github.actor == 'wzxundesigned' || github.actor == 'xiaobo2010' || github.actor == 'neiworldfirst1314-cell')) && 'canary-anthropic-auto' || 'canary-anthropic' }}
     env:
       WRANGLER_VERSION: "4.162.0"
-      CANARY_URL: https://canary-claude.xiaoboisces.top
+      CANARY_URL: https://canary-claude.xiaobopisces.top
       # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
       PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary-claude 域。
       # frontend-canary 没有 race/content 两套基址，只有 VITE_API_BASE。
-      VITE_API_BASE: ${{ vars.CANARY_API_BASE || 'https://zvp.xiaoboisces.top/api' }}
+      VITE_API_BASE: ${{ vars.CANARY_API_BASE || 'https://zvp.xiaobopisces.top/api' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -217,13 +217,24 @@ jobs:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
           cache-dependency-path: zvp5/zvp5-frontend-canary/pnpm-lock.yaml
-      - name: Verify preview frontend directory
+      - name: Verify preview inputs
         working-directory: .
         run: |
+          set -euo pipefail
           [[ -d zvp5/zvp5-frontend-canary ]] || {
             echo "zvp5/zvp5-frontend-canary is missing on $(git rev-parse --abbrev-ref HEAD); this workflow only applies to the canary-anthropic branch" >&2
             exit 1
           }
+          # 少一个字母就把域名指到别人家去了（xiaoboisces.top vs xiaobopisces.top）：
+          # 症状是冒烟一直报 could not resolve host，线上产物还会去调一个不存在的 API。
+          case "$CANARY_URL" in
+            *xiaobopisces.top) ;;
+            *) echo "preview host spelling looks wrong: $CANARY_URL" >&2; exit 1 ;;
+          esac
+          case "$VITE_API_BASE" in
+            *xiaobopisces.top*) ;;
+            *) echo "api base spelling looks wrong: $VITE_API_BASE" >&2; exit 1 ;;
+          esac
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Unit tests
@@ -245,6 +256,13 @@ jobs:
           # 预览域下会被 SPA fallback 接走（200 + index.html），前端直接炸。
           grep -R -F -q "$VITE_API_BASE" dist/assets || {
             echo "built bundle does not contain the absolute API base $VITE_API_BASE" >&2
+            exit 1
+          }
+          # 域名拼写护栏：少个字母的 xiaoboisces.top / xiaobopolisces.top 是真踩过的
+          # 坑——线上产物因此指向一个不存在的域名，页面能开但所有 API 全挂。
+          bad_hosts="$(grep -R -o -h 'xiaobo[a-z]*\.top' dist/assets | sort -u | grep -v '^xiaobopisces\.top$' || true)"
+          [[ -z "$bad_hosts" ]] || {
+            echo "built bundle contains misspelled domain(s): $bad_hosts" >&2
             exit 1
           }
       - name: Deploy to Cloudflare Worker
