@@ -3,7 +3,7 @@ import { isLoggedIn } from '@/api/canary'
 import { hasAnyRole } from '@/api/permissions'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
