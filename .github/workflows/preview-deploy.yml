@@ -1,0 +1,456 @@
+name: Preview deploy (reusable)
+
+# 分支预览通道的通用流水线（reusable workflow）。
+#
+# 目的：以后再开预览分支时，不用再复制一份 300 多行的 canary.yml——写一个
+# 十几行的 wrapper 调用本文件即可。已落地的实例：
+#   - canary-anthropic 分支 → 预览域 canary-claude.xiaobopisces.top
+#     （wrapper: .github/workflows/canary-anthropic.yml）
+#   - v5-canary / v5-canary-pro / v5-canary2 三条老通道暂未迁移，保持原样。
+#
+# 用法（在新分支上）：
+#   1. 从 main 取本文件：`git checkout main -- .github/workflows/preview-deploy.yml`
+#   2. 写 wrapper（示例见 docs/PREVIEW_TEMPLATE.md）：
+#
+#        name: My branch preview
+#        on:
+#          push:
+#            branches: [my-branch]
+#        jobs:
+#          preview:
+#            uses: ./.github/workflows/preview-deploy.yml
+#            with:
+#              slug: canary-mybranch
+#              branch: my-branch
+#              worker_name: zvp-yuren-canary-mybranch
+#              host: canary-mybranch.xiaobopisces.top
+#              frontend_dir: zvp5/zvp5-frontend
+#              wrangler_config: zvp5/deployment/preview-worker-canary-mybranch/wrangler.jsonc
+#              environment_auto: preview-canary-mybranch-auto
+#              environment_gated: preview-canary-mybranch
+#              auto_actors: myaccount
+#            secrets: inherit
+#
+#   3. 建两个 environment（分支策略都只放这个分支）：
+#        - <slug>-auto：挂 CLOUDFLARE_API_TOKEN + 变量 CLOUDFLARE_ACCOUNT_ID
+#        - <slug>     ：只挂 CLOUDFLARE_ACCOUNT_ID，**刻意不挂令牌**
+#      令牌可用性本身就是审批闸：不在免审核名单里的推送，部署步骤必然失败，
+#      等仓库所有者手动 workflow_dispatch 放行。
+#
+# 门禁与 canary 通道同构：后端 pytest/Ruff、前端 Cypress E2E、workflow+密钥
+# 扫描、依赖漏洞扫描、前端单测/lint/类型/构建，全绿才发布。
+
+on:
+  workflow_call:
+    inputs:
+      slug:
+        description: "预览通道标识（如 canary-claude），用于 environment 命名与摘要"
+        required: true
+        type: string
+      branch:
+        description: "允许部署的分支；environment 的分支策略必须与之一致"
+        required: true
+        type: string
+      worker_name:
+        description: "Cloudflare Worker 名"
+        required: true
+        type: string
+      host:
+        description: "预览域名（不含 scheme）"
+        required: true
+        type: string
+      frontend_dir:
+        description: "被发布的前端目录（相对仓库根）"
+        required: true
+        type: string
+      wrangler_config:
+        description: "wrangler 配置文件路径（相对仓库根）"
+        required: true
+        type: string
+      api_base:
+        description: "注入前端产物的 API 基址（必须是绝对地址）"
+        required: false
+        type: string
+        default: https://zvp.xiaobopisces.top/api
+      e2e_dir:
+        description: "跑 Cypress E2E 的前端目录"
+        required: false
+        type: string
+        default: zvp5/zvp5-frontend
+      environment_auto:
+        description: "免审核 environment 名（挂 Cloudflare 令牌）"
+        required: false
+        type: string
+        default: ""
+      environment_gated:
+        description: "人工放行 environment 名（刻意不挂令牌）"
+        required: false
+        type: string
+        default: ""
+      auto_actors:
+        description: "逗号分隔的免审核账号（github.actor，推送者身份）"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
+  PNPM_VERSION: "10.34.5"
+
+jobs:
+  backend:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-backend-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff==0.17.4
+      - name: Generate local test keys
+        run: python tools/setup_local.py
+      - name: Ruff dead-code and undefined-name checks
+        run: |
+          python -m ruff check --select F821 .
+          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
+      - name: Run backend tests
+        run: python -m pytest -q
+      - name: Compile backend
+        run: python -m compileall -q routers services util db typings tasks
+
+  frontend-e2e:
+    name: Frontend Cypress E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ${{ inputs.e2e_dir }}
+    env:
+      VITE_API_BASE: https://ci.invalid/api
+      VITE_API_RACE_BASE: https://race.ci.invalid/api
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.e2e_dir }}/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Cypress binary
+        run: pnpm exec cypress install
+      - name: Build bundle for E2E
+        run: pnpm run build
+      - name: Run Cypress
+        run: pnpm run test:e2e
+
+  workflow-security:
+    name: Workflow and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck deployment scripts
+        run: >-
+          shellcheck -x
+          zvp5/deployment/github-actions/zvp5-deploy
+          zvp5/deployment/github-actions/*.sh
+      - name: Test deployment backup and rollback paths
+        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+      - name: Scan working tree for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+          --redact --verbose --exit-code=1
+      - name: Scan test fixtures for high-confidence credential formats
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
+          --enable-rule=private-key --enable-rule=aws-access-token
+          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
+          --enable-rule=github-oauth --enable-rule=github-pat
+          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
+          --enable-rule=gitlab-oauth-app-secret
+          --enable-rule=gitlab-runner-authentication-token
+          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
+          --enable-rule=slack-app-token --enable-rule=slack-bot-token
+          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
+          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
+          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
+          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
+          --redact --verbose --exit-code=1
+
+  dependency-security:
+    name: Dependency vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Audit preview frontend production dependencies
+        working-directory: ${{ inputs.frontend_dir }}
+        run: pnpm audit --prod --audit-level high
+      - name: Scan repository dependencies for high and critical findings
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          aquasec/trivy:0.76.2 fs
+          --scanners vuln --severity HIGH,CRITICAL
+          --exit-code 1 --no-progress .
+
+  preview:
+    name: Frontend gates and Worker preview
+    needs:
+      - backend
+      - frontend-e2e
+      - workflow-security
+      - dependency-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.frontend_dir }}
+    # environment 判定只看 **github.actor（推送者身份）**，不是提交里的 author：
+    # author 是提交内容的一部分，任何人都能写别人的邮箱；actor 由 GitHub 认证，
+    # 骗不了。workflow_dispatch 与 push 同规则——所有者手动重跑就是「人工放行」
+    # 那条路，所以不能按 event_name 区分。
+    #
+    # 免审核名单之外的推送一律落到 gated environment，而那里刻意不挂 Cloudflare
+    # 令牌：部署步骤必然失败，等仓库所有者手动 workflow_dispatch 放行。
+    environment:
+      name: ${{ github.ref == format('refs/heads/{0}', inputs.branch) && contains(format(',{0},', inputs.auto_actors), format(',{0},', github.actor)) && inputs.environment_auto || inputs.environment_gated }}
+    env:
+      WRANGLER_VERSION: "4.162.0"
+      CANARY_URL: https://${{ inputs.host }}
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # 预览站跨域直连正式 API：后端 CORS 白名单里必须已有该预览域。
+      VITE_API_BASE: ${{ inputs.api_base }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.frontend_dir }}/pnpm-lock.yaml
+      - name: Verify preview frontend directory
+        working-directory: .
+        run: |
+          [[ -d "${{ inputs.frontend_dir }}" ]] || {
+            echo "${{ inputs.frontend_dir }} is missing on $(git rev-parse --abbrev-ref HEAD)" >&2
+            exit 1
+          }
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm exec vitest run --reporter=dot
+      - name: Lint
+        run: pnpm run lint
+      - name: Build preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          # build = vue-tsc --noEmit && vite build，类型检查与产物在同一步完成。
+          pnpm run build
+          # 入口 chunk 必须真的产出了，避免只留下一个空壳 index.html。
+          entry="$(grep -o 'src="/assets/[^"]*"' dist/index.html | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          [[ -f "dist$entry" ]] || { echo "entry chunk $entry missing" >&2; exit 1; }
+          # API 基址必须落成绝对地址：前端默认回退到相对 '/api'，预览域下会被
+          # SPA fallback 接走（200 + index.html），前端直接炸。
+          grep -R -F -q "$VITE_API_BASE" dist/assets || {
+            echo "built bundle does not contain the absolute API base $VITE_API_BASE" >&2
+            exit 1
+          }
+      - name: Deploy to Cloudflare Worker
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 免审核 environment 挂着令牌；人工放行 environment 刻意不挂——拿不到
+          # 令牌就发不出去，这就是本通道的审批闸。
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is not available in this environment; ask the repo owner to approve this deployment (workflow_dispatch) or to push again from an allow-listed account}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config "${{ inputs.wrangler_config }}"
+      - name: Smoke test the deployed preview
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dist_dir="${{ inputs.frontend_dir }}/dist"
+          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+
+          host="${{ inputs.host }}"
+
+          # runner 的递归解析器会缓存 NXDOMAIN（域名刚建好时容易踩到），
+          # 解析不出来就退回 Cloudflare DoH 拿地址，再用 --resolve 直连，
+          # 免得部署明明成功、冒烟却因为解析缓存红。
+          resolve_ip() {
+            local ip
+            ip="$(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
+            [[ -n "$ip" ]] || ip="$(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
+            if [[ -z "$ip" ]]; then
+              ip="$(curl -fsS -H 'accept: application/dns-json' \
+                "https://cloudflare-dns.com/dns-query?name=${host}&type=AAAA" \
+                | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((a['data'] for a in d.get('Answer',[]) if a.get('type')==28),''))" \
+                2>/dev/null || true)"
+            fi
+            printf '%s' "$ip"
+          }
+
+          ip="$(resolve_ip)"
+          if [[ -n "$ip" ]]; then
+            echo "resolved $host -> $ip"
+          fi
+
+          # $1 = 路径，$2 = 输出文件；回显状态码，失败回 000
+          fetch() {
+            local path="$1" out="$2" status
+            if [[ -n "$ip" ]]; then
+              if [[ "$ip" == *:* ]]; then
+                status="$(curl -6 -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                  --resolve "${host}:443:[${ip}]" "${CANARY_URL}${path}" || true)"
+              else
+                status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                  --resolve "${host}:443:${ip}" "${CANARY_URL}${path}" || true)"
+              fi
+            else
+              status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' "${CANARY_URL}${path}" || true)"
+            fi
+            printf '%s' "${status:-000}"
+          }
+
+          home_status=""
+          waf_blocked=0
+          tmp_body="$(mktemp)"
+          for _ in $(seq 1 8); do
+            home_status="$(fetch "/" "$tmp_body")"
+            if [[ "$home_status" == "403" ]]; then
+              waf_blocked=1
+              break
+            fi
+            remote_sha=""
+            if [[ -n "$ip" && "$ip" == *:* ]]; then
+              remote_sha="$(curl -6 -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                --resolve "${host}:443:[${ip}]" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            elif [[ -n "$ip" ]]; then
+              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                --resolve "${host}:443:${ip}" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            else
+              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            fi
+            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ $waf_blocked -eq 1 ]]; then
+            # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
+            # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
+            echo "::warning title=Preview probe blocked by Cloudflare::$host root returned 403 to the runner IP; content/CORS checks skipped."
+            {
+              echo '### Preview deployed (probe skipped)'
+              echo
+              echo "- URL: $CANARY_URL"
+              echo "- Commit: \`$GITHUB_SHA\`"
+              echo "- Entry chunk: \`$entry\`"
+              echo '- Content and CORS probes were skipped: Cloudflare returned 403 to the runner IP.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          [[ "$home_status" == "200" ]] || {
+            # 000 = 连不上（TLS 握手失败 / 解析失败）。zone route 方式下边缘不给
+            # 该主机名签证书，握手会时好时坏，属已知限制，降级成警告。
+            if [[ "$home_status" == "000" ]]; then
+              echo "::warning title=Preview probe inconclusive::could not establish a TLS session to $host (status 000). This usually means the preview hostname has no edge certificate yet (add it as a Worker custom domain)."
+              {
+                echo '### Preview deployed (probe inconclusive)'
+                echo
+                echo "- URL: $CANARY_URL"
+                echo "- Commit: \`$GITHUB_SHA\`"
+                echo '- TLS handshake to the preview hostname failed; content/CORS probes were skipped.'
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "preview root returned $home_status" >&2
+            exit 1
+          }
+          [[ "$remote_sha" == "$local_sha" ]] || {
+            echo "served $entry does not match the freshly built bundle" >&2
+            exit 1
+          }
+
+          # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
+          # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
+          cors_hdr="$(mktemp)"
+          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
+            -H "Origin: $CANARY_URL" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type' \
+            "$VITE_API_BASE/users/login" || echo 000)"
+          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+          rm -f "$cors_hdr"
+          [[ "$cors_origin" == "$CANARY_URL" ]] || {
+            # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
+            # 拿到「别的 Origin」才是真的白名单没配对。
+            if [[ -z "$cors_origin" ]]; then
+              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
+            else
+              echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
+              exit 1
+            fi
+          }
+
+          {
+            echo '### Preview deployed'
+            echo
+            echo "- URL: $CANARY_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Entry chunk: \`$entry\`"
+            echo "- Worker: ${{ inputs.worker_name }}"
+          } >> "$GITHUB_STEP_SUMMARY"
