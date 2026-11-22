@@ -8,6 +8,7 @@ import {
   isLoggedIn
 } from '@/api/canary'
 import type { ActivityScope, CanaryActivity } from '@/api/canary'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 type ActivityStatus = 'draft' | 'pending' | 'refused' | 'effective'
 type ActivityType = CanaryActivity['type']
@@ -15,16 +16,10 @@ type ActivityType = CanaryActivity['type']
 interface Activity {
   id: string
   name: string
-  date: string
-  dateDay: string
-  dateMonth: string
-  dateWeekday: string
   detailDate: string
   place: string
   type: string
-  typeKey: CanaryActivity['type']
   typeClass: string
-  status: ActivityStatus
   statusLabel: string
   statusClass: string
   duration: number
@@ -66,7 +61,6 @@ const visiblePages = computed(() => {
 })
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
 
-// Bottom page selector: one measured glass thumb that springs between pages.
 const pagerTrackRef = ref<HTMLElement | null>(null)
 const pagerThumbRef = ref<HTMLElement | null>(null)
 const pagerThumbState = ref({ left: 0, width: 0, ready: false })
@@ -79,9 +73,6 @@ let pagerStartX = 0
 let pagerMoved = false
 let pagerSuppressClick = false
 
-// Inline `:ref` callbacks run on every patch. They must stay side-effect free:
-// measuring here would write `pagerThumbState`, schedule another render and
-// re-enter this callback forever (the "click 校园活动 and freeze" bug).
 function setPagerPageRef(page: number, el: unknown) {
   if (el instanceof HTMLElement) {
     pagerPages.set(page, el)
@@ -121,7 +112,6 @@ function measurePager() {
   const left = activeRect.left - hostRect.left + host.scrollLeft
   const width = activeRect.width
   const previous = pagerThumbState.value
-  // Skip identical writes: a fresh object identity would retrigger rendering.
   if (
     previous.ready &&
     Math.abs(previous.left - left) < 0.5 &&
@@ -178,8 +168,6 @@ function onPagerPointerUp(event: PointerEvent) {
     }
   }
 
-  // Pointer capture can retarget the click to the track, so resolve the page
-  // under the pointer on pointerup whether or not the user dragged.
   const target = document
     .elementFromPoint(event.clientX, event.clientY)
     ?.closest<HTMLElement>('.pagination-page')
@@ -206,9 +194,6 @@ watch(
   () => visiblePages.value.join(','),
   () => void syncPager(false)
 )
-// The pager is v-if'd on these flags. Re-measure whenever it (re)appears, e.g.
-// after a refresh with an unchanged page count, when the refs are new nodes;
-// when it disappears, syncPager also clears `ready` and the observer.
 watch(
   () => totalPages.value > 1 && !loading.value && !error.value && !unauthenticated.value && !needsClass.value,
   () => void syncPager(false)
@@ -239,20 +224,13 @@ function mapActivity(activity: CanaryActivity): Activity {
   const mine = activity.mine
   const status = normalizeStatus(mine?.status ?? activity.status)
   const date = activity.date || ''
-  const parts = formatDate(date)
   return {
     id: activity._id,
     name: activity.name || '未命名活动',
-    date,
-    dateDay: parts.day,
-    dateMonth: parts.month,
-    dateWeekday: parts.weekday,
     detailDate: formatDetailDate(date),
     place: activity.place || '',
     type: TYPE_LABELS[activity.type] ?? activity.type ?? '活动',
-    typeKey: activity.type,
     typeClass: `activity-type--${activity.type}`,
-    status,
     statusLabel: getStatusLabel(status),
     statusClass: getStatusClass(status),
     duration: typeof mine?.duration === 'number' ? mine.duration : 0,
@@ -290,9 +268,6 @@ async function loadActivities() {
   listLoading.value = true
   error.value = ''
   try {
-    // A page jump can leave us past the last page (e.g. switching scopes while
-    // on page 3). Correct it with at most one extra request in a bounded loop
-    // instead of recursing, so a stale `total` can never loop forever.
     let targetPage = activePage.value
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await fetchActivities(
@@ -315,8 +290,6 @@ async function loadActivities() {
       totalActivities.value = total
       break
     }
-    // If the total shrank again between the two attempts, clamp silently
-    // instead of issuing another request (never re-fetch in a loop).
     const pageCount = Math.ceil(totalActivities.value / pageSize)
     if (pageCount > 0 && activePage.value > pageCount) {
       activePage.value = pageCount
@@ -394,28 +367,11 @@ function handlePageChange(page: number) {
   activePage.value = page
   selectedActivity.value = null
   void loadActivities()
-  // Keep the reader's scroll position: the pagination itself plays the
-  // transition instead of jumping the whole page to the top.
 }
 
 function handleRetry() {
   if (loading.value) return
   void bootstrap()
-}
-
-function formatDate(date: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
-  const parsed = match
-    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-    : new Date(date)
-  if (!date || Number.isNaN(parsed.getTime())) {
-    return { day: '--', month: '--', weekday: '--' }
-  }
-  return {
-    day: String(parsed.getDate()).padStart(2, '0'),
-    month: `${parsed.getMonth() + 1}月`,
-    weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][parsed.getDay()]
-  }
 }
 
 function formatDetailDate(date: string) {
@@ -445,11 +401,19 @@ function getStatusClass(status: ActivityStatus) {
 }
 
 function openActivity(activity: Activity) {
-  selectedActivity.value = activity
+  selectedActivity.value = selectedActivity.value?.id === activity.id ? null : activity
 }
 
-function closeActivity() {
+function closeActivity(card: Element | null) {
   selectedActivity.value = null
+  card?.querySelector<HTMLButtonElement>('.stack-card__header')?.focus()
+}
+
+function handleKeydown(event: KeyboardEvent, activity: Activity) {
+  if (event.key === 'Escape' && selectedActivity.value?.id === activity.id) {
+    event.stopPropagation()
+    closeActivity(event.currentTarget as Element)
+  }
 }
 
 onMounted(() => {
@@ -470,7 +434,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="volunteer-page">
-    <!-- Page header with frosted glass -->
     <header class="page-header glass-card surface-enter" :style="{ '--i': 0 }">
       <div class="page-header__lead">
         <button class="back-btn" type="button" aria-label="返回首页" @click="router.push('/')">
@@ -496,7 +459,6 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <!-- Scope tabs with frosted glass -->
     <nav class="scope-tabs glass-card surface-enter" :style="{ '--i': 1 }" role="tablist" aria-label="活动范围">
       <button
         class="scope-tab"
@@ -528,7 +490,6 @@ onBeforeUnmount(() => {
       <span class="scope-indicator" aria-hidden="true" />
     </nav>
 
-    <!-- Search bar with frosted glass -->
     <div class="search-bar glass-card surface-enter" :style="{ '--i': 2 }">
       <svg class="search-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
@@ -555,10 +516,11 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- Activities list with frosted glass cards -->
     <div v-if="unauthenticated" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <p class="empty-title">需要登录</p>
-      <p class="empty-description">登录后即可查看你的义工记录。</p>
+      <BubbleFeedback class="glass-feedback--warn">
+        登录后即可查看你的义工记录。
+      </BubbleFeedback>
       <RouterLink
         class="liquid-btn liquid-btn--primary liquid-btn--sm"
         to="/login?redirect=/volunteers"
@@ -569,7 +531,9 @@ onBeforeUnmount(() => {
 
     <div v-else-if="error" class="empty-state glass-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <p class="empty-title">活动加载失败</p>
-      <p class="empty-description">{{ error }}</p>
+      <BubbleFeedback class="glass-feedback--error">
+        {{ error }}
+      </BubbleFeedback>
       <button
         class="liquid-btn liquid-btn--secondary liquid-btn--sm"
         type="button"
@@ -586,9 +550,9 @@ onBeforeUnmount(() => {
         <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       </svg>
       <p class="empty-title">尚未绑定班级</p>
-      <p class="empty-description">
-        绑定班级后即可查看班级活动；你也可以先浏览“我的活动”或“校园活动”。
-      </p>
+      <BubbleFeedback>
+        绑定班级后即可查看班级活动；你也可以先浏览"我的活动"或"校园活动"。
+      </BubbleFeedback>
     </div>
 
     <div
@@ -599,12 +563,7 @@ onBeforeUnmount(() => {
       aria-label="正在加载活动"
     >
       <div v-for="n in 6" :key="n" class="activity-skeleton glass-card">
-        <div class="skeleton-date"></div>
-        <div class="skeleton-content">
-          <div class="skeleton-line skeleton-line--sm"></div>
-          <div class="skeleton-line skeleton-line--lg"></div>
-          <div class="skeleton-line skeleton-line--xs"></div>
-        </div>
+        <div class="skeleton-line skeleton-line--title"></div>
       </div>
     </div>
 
@@ -614,87 +573,86 @@ onBeforeUnmount(() => {
         <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       </svg>
       <p class="empty-title">没有找到相关项目</p>
-      <p class="empty-description">
+      <BubbleFeedback>
         {{ appliedSearch ? '尝试使用其他关键词搜索' : '暂时没有活动记录' }}
-      </p>
+      </BubbleFeedback>
     </div>
 
     <div
       v-else
-      class="activities-list"
+      class="activities-stack"
       :class="{ 'is-refreshing': listLoading }"
       :aria-busy="listLoading"
+      role="list"
     >
-      <button
-        v-for="(activity, index) in activities"
+      <article
+        v-for="activity in activities"
         :key="activity.id"
-        class="activity-card glass-card surface-enter"
-        :style="{ '--i': index }"
-        type="button"
-        @click="openActivity(activity)"
+        class="stack-card glass-card"
+        :class="{ 'is-expanded': selectedActivity?.id === activity.id }"
+        role="listitem"
+        @keydown="handleKeydown($event, activity)"
       >
-        <div class="activity-date">
-          <span class="activity-day">{{ activity.dateDay }}</span>
-          <span class="activity-month">{{ activity.dateMonth }}</span>
-          <span class="activity-weekday">{{ activity.dateWeekday }}</span>
-        </div>
+        <h2>
+          <button
+            class="stack-card__header"
+            type="button"
+            :aria-expanded="selectedActivity?.id === activity.id"
+            :aria-controls="`activity-${activity.id}`"
+            @click="openActivity(activity)"
+          >
+            <span class="stack-card__title">{{ activity.name }}</span>
+            <svg class="stack-card__chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M7 8L10 11L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </h2>
 
-        <div class="activity-content">
-          <div class="activity-kicker">
-            <span class="activity-type" :class="activity.typeClass">{{ activity.type }}</span>
-            <span v-if="activity.place" class="activity-place">{{ activity.place }}</span>
-          </div>
-          <h3 class="activity-name">{{ activity.name }}</h3>
-          <div class="activity-meta">
-            <span class="activity-status" :class="activity.statusClass">
-              {{ activity.statusLabel }}
-            </span>
-            <span class="activity-duration">{{ activity.duration }}h</span>
+        <div v-show="selectedActivity?.id === activity.id" :id="`activity-${activity.id}`" class="stack-card__body">
+          <dl class="stack-card__info">
+            <div class="stack-card__info-row">
+              <dt>日期</dt>
+              <dd>{{ activity.detailDate }}</dd>
+            </div>
+            <div class="stack-card__info-row">
+              <dt>地点</dt>
+              <dd>{{ activity.place || '—' }}</dd>
+            </div>
+            <div class="stack-card__info-row">
+              <dt>类型</dt>
+              <dd><span class="stack-card__type" :class="activity.typeClass">{{ activity.type }}</span></dd>
+            </div>
+            <div v-if="activity.creator" class="stack-card__info-row">
+              <dt>创建者</dt>
+              <dd>{{ activity.creator }}</dd>
+            </div>
+            <div class="stack-card__info-row">
+              <dt>状态</dt>
+              <dd>
+                <span class="stack-card__status" :class="activity.statusClass">
+                  {{ activity.statusLabel }}
+                </span>
+              </dd>
+            </div>
+            <div class="stack-card__info-row">
+              <dt>时长</dt>
+              <dd>{{ activity.duration }}h</dd>
+            </div>
+          </dl>
+
+          <div class="stack-card__actions">
+            <button
+              class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+              type="button"
+              @click="closeActivity(($event.currentTarget as HTMLElement).closest('.stack-card'))"
+            >
+              收起
+            </button>
           </div>
         </div>
-      </button>
+      </article>
     </div>
 
-    <Transition name="activity-detail">
-      <section v-if="selectedActivity" class="glass-card activity-detail surface-enter" :style="{ '--i': 0 }" aria-live="polite">
-        <header class="activity-detail__head">
-          <div>
-            <p class="activity-detail__eyebrow">活动详情</p>
-            <h2 class="activity-detail__title">{{ selectedActivity.name }}</h2>
-          </div>
-          <button
-            class="liquid-btn liquid-btn--secondary liquid-btn--sm"
-            type="button"
-            @click="closeActivity"
-          >
-            关闭
-          </button>
-        </header>
-
-        <dl class="activity-detail__kv">
-          <dt>日期</dt>
-          <dd>{{ selectedActivity.detailDate }}</dd>
-          <dt>地点</dt>
-          <dd>{{ selectedActivity.place || '—' }}</dd>
-          <dt>类型</dt>
-          <dd>{{ selectedActivity.type }}</dd>
-          <template v-if="selectedActivity.creator">
-            <dt>创建者</dt>
-            <dd>{{ selectedActivity.creator }}</dd>
-          </template>
-          <dt>状态</dt>
-          <dd>
-            <span class="activity-status" :class="selectedActivity.statusClass">
-              {{ selectedActivity.statusLabel }}
-            </span>
-          </dd>
-          <dt>时长</dt>
-          <dd>{{ selectedActivity.duration }}h</dd>
-        </dl>
-      </section>
-    </Transition>
-
-    <!-- Pagination with liquid glass buttons -->
     <nav
       v-if="totalPages > 1 && !loading && !error && !unauthenticated && !needsClass"
       class="pagination glass-card surface-enter"
@@ -763,7 +721,6 @@ onBeforeUnmount(() => {
   gap: var(--space-5);
 }
 
-/* Frosted glass card base */
 .glass-card {
   position: relative;
   background: var(--surface-matte);
@@ -788,7 +745,6 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-/* Page header */
 .page-header {
   padding: var(--space-6);
   display: flex;
@@ -819,79 +775,44 @@ onBeforeUnmount(() => {
   width: 40px;
   height: 40px;
   padding: 0;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.74) 0%,
-    rgba(232, 242, 252, 0.54) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.86);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.74) 0%, rgba(232, 242, 252, 0.54) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(12px) saturate(180%));
+  backdrop-filter: var(--glass-blur, blur(12px) saturate(180%));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.86));
   border-radius: 50%;
   box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.85),
-    inset 0 -0.5px 0 rgba(0, 0, 0, 0.08),
-    0 0 8px rgba(18, 48, 82, 0.06);
+    0 0 8px rgba(18, 48, 82, 0.06),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.85));
   color: var(--color-text-secondary);
   cursor: pointer;
   overflow: hidden;
   isolation: isolate;
   flex-shrink: 0;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    box-shadow var(--duration-fast) var(--ease-smooth),
-    color var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .back-btn::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(
-    circle at 50% 40%,
-    rgba(255, 255, 255, 0.35) 0%,
-    transparent 70%
-  );
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.35) 0%, transparent 70%);
   border-radius: 50%;
-  pointer-events: none;
-}
-
-.back-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    rgba(255, 255, 255, 0) 22%,
-    rgba(255, 255, 255, 0.65) 46%,
-    rgba(255, 255, 255, 0.08) 56%,
-    rgba(255, 255, 255, 0) 72%
-  );
-  border-radius: 50%;
-  opacity: 0;
-  transform: translateX(-100%);
-  transition:
-    opacity var(--duration-base) var(--ease-smooth),
-    transform var(--duration-base) var(--ease-smooth);
   pointer-events: none;
 }
 
 .back-btn:hover {
   color: var(--color-text-primary);
-  transform: scale(1.05);
+  transform: scale(1.04);
   box-shadow:
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -0.5px 0 rgba(0, 0, 0, 0.1),
-    0 0 14px rgba(18, 48, 82, 0.1);
-}
-
-.back-btn:hover::after {
-  opacity: 1;
-  transform: translateX(100%);
+    0 0 14px rgba(18, 48, 82, 0.1),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
 }
 
 .back-btn:active {
-  transform: scale(0.92);
+  transform: scale(0.96);
 }
 
 .back-btn:focus-visible {
@@ -934,7 +855,6 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-/* Scope tabs */
 .scope-tabs {
   padding: 6px;
   display: flex;
@@ -945,26 +865,22 @@ onBeforeUnmount(() => {
 .scope-tab {
   flex: 1;
   padding: var(--space-3) var(--space-4);
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.68) 0%,
-    rgba(232, 242, 252, 0.46) 100%
-  );
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.68) 0%, rgba(232, 242, 252, 0.46) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
+  backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.82));
   border-radius: var(--radius-pill);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 2px 6px rgba(18, 48, 82, 0.04);
+    0 2px 6px rgba(18, 48, 82, 0.04),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.92));
   font-size: var(--font-size-callout);
   font-weight: 600;
   color: var(--color-text-secondary);
   cursor: pointer;
   transition:
-    color var(--duration-fast) var(--ease-smooth),
-    background var(--duration-fast) var(--ease-smooth),
-    border-color var(--duration-fast) var(--ease-smooth);
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    background 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   z-index: 1;
   min-height: 40px;
@@ -1000,7 +916,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-pill);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 8px rgba(14, 165, 233, 0.25);
   pointer-events: none;
-  transition: transform var(--duration-base) var(--ease-spring);
+  transition: transform 420ms cubic-bezier(0.34, 1.12, 0.64, 1);
 }
 
 .scope-tab:nth-child(2).is-active ~ .scope-indicator {
@@ -1011,7 +927,6 @@ onBeforeUnmount(() => {
   transform: translateX(calc(200% + 8px));
 }
 
-/* Search bar */
 .search-bar {
   padding: var(--space-4);
   display: flex;
@@ -1037,7 +952,6 @@ onBeforeUnmount(() => {
   color: var(--color-text-tertiary);
 }
 
-/* The browser's native search clear control duplicates our own glass X. */
 .search-input::-webkit-search-cancel-button,
 .search-input::-webkit-search-decoration {
   display: none;
@@ -1052,23 +966,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.74) 0%,
-    rgba(232, 242, 252, 0.5) 100%
-  );
-  -webkit-backdrop-filter: blur(10px) saturate(170%);
-  backdrop-filter: blur(10px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.84);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.74) 0%, rgba(232, 242, 252, 0.5) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
+  backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.84));
   border-radius: 50%;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    0 1px 4px rgba(18, 48, 82, 0.05);
+    0 1px 4px rgba(18, 48, 82, 0.05),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.94));
   color: var(--color-text-secondary);
   cursor: pointer;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    background-color var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
 }
 
@@ -1081,137 +991,94 @@ onBeforeUnmount(() => {
   transform: scale(0.9);
 }
 
-/* Activities list */
-.activities-list {
+.activities-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 720px);
+  margin-inline: auto;
+  isolation: isolate;
+  transition: opacity var(--duration-fast) var(--ease-settle);
+}
+
+.activities-stack.is-refreshing {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.stack-card {
+  padding: 0 0 8px;
+  margin-inline: 5px;
+  background: var(--surface-matte);
+  box-shadow: var(--glass-rim), 0 5px 14px #203d5c22;
+  transition: translate 300ms var(--ease-settle), box-shadow 300ms var(--ease-settle);
+}
+
+.stack-card:nth-child(even) { margin-inline: 9px; }
+.stack-card + .stack-card { margin-top: -8px; }
+
+.stack-card.is-expanded {
+  z-index: 2;
+  translate: 0 -4px;
+  margin-bottom: 8px;
+  background: var(--glass-floating-bg);
+  box-shadow: var(--glass-floating-shadow);
+}
+
+.stack-card__header:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: -4px;
+}
+
+.stack-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-3) var(--space-5);
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.stack-card__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.stack-card__chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform 380ms cubic-bezier(0.34, 1.18, 0.64, 1);
+}
+
+.stack-card.is-expanded .stack-card__chevron {
+  transform: rotate(180deg);
+}
+
+.stack-card.is-expanded .stack-card__title { white-space: normal; overflow-wrap: anywhere; }
+
+.stack-card__body {
   display: grid;
   gap: var(--space-4);
-  transition:
-    opacity var(--duration-fast) var(--ease-smooth),
-    filter var(--duration-fast) var(--ease-smooth);
-}
-
-.activities-list.is-refreshing {
-  opacity: 0.55;
-  filter: saturate(0.8);
-  pointer-events: none;
-}
-
-.activity-card {
   padding: var(--space-5);
-  display: flex;
-  gap: var(--space-5);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  cursor: pointer;
-  transition:
-    transform var(--duration-fast) var(--ease-spring),
-    box-shadow var(--duration-fast) var(--ease-smooth);
-  text-align: left;
+  border-top: 1px solid var(--color-border-moderate);
+  animation: surface-enter-keyframes 260ms var(--ease-settle) backwards;
 }
 
-.activity-card:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    var(--glass-shadow),
-    0 8px 24px rgba(0, 113, 227, 0.12);
-}
-
-.activity-card:active {
-  transform: translateY(0);
-}
-
-.activity-card:focus-visible {
-  outline: 2px solid var(--color-brand);
-  outline-offset: 2px;
-}
-
-.activity-date {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-width: 54px;
-  padding: var(--space-2) 10px;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.62) 0%,
-    rgba(226, 240, 252, 0.44) 100%
-  );
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  border-radius: 12px;
-  -webkit-backdrop-filter: blur(8px) saturate(170%);
-  backdrop-filter: blur(8px) saturate(170%);
-  flex-shrink: 0;
-  position: relative;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 1px 3px rgba(18, 48, 82, 0.05);
-  transition:
-    background-color var(--duration-fast) var(--ease-smooth),
-    border-color var(--duration-fast) var(--ease-smooth);
-}
-
-.activity-date::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10px;
-  right: 10px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: var(--radius-pill);
-  pointer-events: none;
-}
-
-.activity-date:hover {
-  background: rgba(255, 255, 255, 0.74);
-  border-color: rgba(255, 255, 255, 0.94);
-}
-
-@supports not (backdrop-filter: blur(8px)) {
-  .activity-date {
-    background: rgba(240, 245, 251, 0.92);
-    border-color: rgba(0, 113, 227, 0.18);
-  }
-}
-
-.activity-day {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--color-brand);
-  line-height: 1;
-  letter-spacing: var(--letter-spacing-tight);
-}
-
-.activity-month {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.activity-weekday {
-  font-size: var(--font-size-caption);
-  color: var(--color-text-tertiary);
-}
-
-.activity-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.activity-kicker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-caption);
-  color: var(--color-text-tertiary);
-}
-
-.activity-type {
+.stack-card__type {
   padding: 4px 8px;
   border: 1px solid;
   border-radius: var(--radius-xs);
@@ -1242,33 +1109,13 @@ onBeforeUnmount(() => {
   border-color: rgba(175, 82, 222, 0.2);
 }
 
-.activity-place {
-  font-weight: 500;
-}
-
-.activity-name {
-  font-size: var(--font-size-body);
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.activity-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-caption);
-}
-
-.activity-status {
+.stack-card__status {
   padding: 4px 10px;
   border-radius: var(--radius-pill);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  font-size: var(--font-size-caption);
 }
 
 .status-effective {
@@ -1291,59 +1138,62 @@ onBeforeUnmount(() => {
   color: rgb(153, 27, 27);
 }
 
-.activity-duration {
-  font-weight: 600;
-  color: var(--color-text-secondary);
+.stack-card__info {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
-/* Skeleton states */
+.stack-card__info-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.stack-card__info-row dt {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-callout);
+  font-weight: 500;
+}
+
+.stack-card__info-row dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-callout);
+  overflow-wrap: anywhere;
+}
+
+.stack-card__actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
 .activities-skeleton {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .activity-skeleton {
-  padding: var(--space-5);
-  display: flex;
-  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   opacity: 0.6;
 }
 
-.skeleton-date {
-  min-width: 64px;
-  height: 72px;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.08) 0%, rgba(0, 0, 0, 0.12) 50%, rgba(0, 0, 0, 0.08) 100%);
-  background-size: 200% 100%;
-  border-radius: var(--radius-md);
-  animation: skeleton-pulse 2s ease-in-out infinite;
-}
-
-.skeleton-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
 .skeleton-line {
-  height: 12px;
+  height: 16px;
   background: linear-gradient(90deg, rgba(0, 0, 0, 0.08) 0%, rgba(0, 0, 0, 0.12) 50%, rgba(0, 0, 0, 0.08) 100%);
   background-size: 200% 100%;
   border-radius: var(--radius-xs);
   animation: skeleton-pulse 2s ease-in-out infinite;
 }
 
-.skeleton-line--xs {
-  width: 30%;
-}
-
-.skeleton-line--sm {
-  width: 42%;
-}
-
-.skeleton-line--lg {
-  width: 72%;
-  height: 16px;
+.skeleton-line--title {
+  width: 60%;
 }
 
 @keyframes skeleton-pulse {
@@ -1355,7 +1205,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Empty state */
 .empty-state {
   padding: var(--space-10) var(--space-6);
   text-align: center;
@@ -1377,13 +1226,6 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.empty-description {
-  font-size: var(--font-size-callout);
-  color: var(--color-text-tertiary);
-  margin: 0;
-}
-
-/* Pagination */
 .pagination {
   padding: var(--space-4);
   display: flex;
@@ -1413,16 +1255,16 @@ onBeforeUnmount(() => {
   height: calc(100% - 6px);
   border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.9));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    0 2px 8px rgba(18, 48, 82, 0.08);
+    0 2px 8px rgba(18, 48, 82, 0.08),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.95));
   opacity: 0;
   pointer-events: none;
   transition:
     transform 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
     width 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
-    opacity 180ms var(--ease-smooth);
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 0;
 }
 
@@ -1433,8 +1275,8 @@ onBeforeUnmount(() => {
 .pagination-pages.is-dragging .pagination-thumb {
   transition:
     transform 120ms linear,
-    width 180ms var(--ease-out),
-    opacity 180ms var(--ease-smooth);
+    width 180ms cubic-bezier(0.4, 0, 0.6, 1),
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .pagination-page {
@@ -1455,9 +1297,9 @@ onBeforeUnmount(() => {
   color: var(--color-text-secondary);
   cursor: pointer;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    background-color var(--duration-fast) var(--ease-smooth),
-    border-color var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .pagination-page:hover {
@@ -1477,7 +1319,6 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
-/* Liquid glass buttons */
 .liquid-btn {
   position: relative;
   display: inline-flex;
@@ -1490,8 +1331,8 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition:
-    transform var(--duration-fast) var(--ease-spring),
-    box-shadow var(--duration-fast) var(--ease-smooth);
+    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
   isolation: isolate;
   overflow: hidden;
   border: 1px solid;
@@ -1511,25 +1352,6 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
-.liquid-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--glass-sheen);
-  border-radius: var(--radius-pill);
-  opacity: 0;
-  transform: translateX(-100%);
-  transition:
-    opacity var(--duration-base) var(--ease-smooth),
-    transform var(--duration-base) var(--ease-smooth);
-  pointer-events: none;
-}
-
-.liquid-btn:hover::after {
-  opacity: 1;
-  transform: translateX(100%);
-}
-
 .liquid-btn:active {
   transform: scale(0.96);
 }
@@ -1537,10 +1359,6 @@ onBeforeUnmount(() => {
 .liquid-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.liquid-btn:disabled:hover::after {
-  opacity: 0;
 }
 
 .liquid-btn:focus-visible {
@@ -1555,32 +1373,33 @@ onBeforeUnmount(() => {
   border-color: rgba(255, 255, 255, 0.82);
   color: white;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    0 4px 14px rgba(0, 113, 227, 0.28);
+    0 4px 14px rgba(0, 113, 227, 0.28),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.55));
 }
 
 .liquid-btn--primary:hover:not(:disabled) {
   background: linear-gradient(135deg, rgba(0, 119, 237, 0.98) 0%, rgba(0, 119, 237, 0.88) 100%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.62),
-    0 6px 18px rgba(0, 113, 227, 0.36);
+    0 6px 18px rgba(0, 113, 227, 0.36),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.62));
   transform: scale(1.02);
 }
 
 .liquid-btn--secondary {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(232, 242, 252, 0.56) 100%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  backdrop-filter: blur(12px) saturate(180%);
-  border-color: rgba(255, 255, 255, 0.88);
+  background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(232, 242, 252, 0.56) 100%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(12px) saturate(180%));
+  backdrop-filter: var(--glass-blur, blur(12px) saturate(180%));
+  border-color: var(--glass-border, rgba(255, 255, 255, 0.88));
   color: var(--color-text-primary);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-    0 3px 10px rgba(18, 48, 82, 0.08);
+    0 3px 10px rgba(18, 48, 82, 0.08),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.96));
 }
 
 .liquid-btn--secondary:hover:not(:disabled) {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 -1px 0 rgba(0, 0, 0, 0.1), 0 4px 12px rgba(18, 48, 82, 0.1);
+  box-shadow:
+    0 4px 12px rgba(18, 48, 82, 0.1),
+    var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.92));
   transform: scale(1.02);
 }
 
@@ -1588,64 +1407,6 @@ onBeforeUnmount(() => {
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-caption);
   min-height: 36px;
-}
-
-.activity-detail {
-  padding: var(--space-5);
-  display: grid;
-  gap: var(--space-5);
-}
-
-.activity-detail__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.activity-detail__eyebrow {
-  margin: 0 0 var(--space-1);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  letter-spacing: var(--letter-spacing-wide);
-  text-transform: uppercase;
-}
-
-.activity-detail__title {
-  margin: 0;
-  font-size: var(--font-size-headline);
-  color: var(--color-text-primary);
-}
-
-.activity-detail__kv {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: var(--space-2) var(--space-4);
-  margin: 0;
-}
-
-.activity-detail__kv dt {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-callout);
-}
-
-.activity-detail__kv dd {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-callout);
-}
-
-.activity-detail-enter-active,
-.activity-detail-leave-active {
-  transition: opacity var(--duration-base) var(--ease-smooth),
-    transform var(--duration-base) var(--ease-spring);
-}
-
-.activity-detail-enter-from,
-.activity-detail-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
 }
 
 @media (max-width: 767px) {
@@ -1661,25 +1422,6 @@ onBeforeUnmount(() => {
 
   .page-header__content {
     min-width: 0;
-  }
-
-  .activity-card {
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-
-  .activity-date {
-    flex-direction: row;
-    width: fit-content;
-    min-width: 96px;
-    align-self: flex-start;
-    justify-content: center;
-    gap: 6px;
-    padding: 6px 10px;
-  }
-
-  .activity-day {
-    font-size: 24px;
   }
 
   .pagination {
@@ -1704,35 +1446,53 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-width: 374px) {
+  .stack-card__header {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .stack-card__body {
+    padding: var(--space-4);
+  }
+
+  .stack-card__info-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pagination-thumb {
     transition: none;
   }
 
-  .liquid-btn::after {
-    display: none;
-  }
-
   .liquid-btn:active,
-  .search-clear:active {
+  .search-clear:active,
+  .back-btn:active {
     transform: none;
   }
 
-  .activity-card:hover {
-    transform: none;
+  .stack-card {
+    transition: none;
   }
 
-  .activity-card:active {
-    transform: none;
+  .stack-card.is-expanded {
+    translate: none;
   }
 
-  .activity-date:hover {
-    transform: none;
-  }
-
-  .skeleton-line,
-  .skeleton-date {
+  .stack-card__body {
     animation: none;
+  }
+
+  .stack-card__chevron {
+    transition: none;
+  }
+
+  .skeleton-line {
+    animation: none;
+  }
+
+  .scope-indicator {
+    transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
 </style>

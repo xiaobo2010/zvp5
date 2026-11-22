@@ -88,7 +88,7 @@ const router = createRouter({
       redirect: '/404'
     }
   ],
-  scrollBehavior: () => ({ top: 0 })
+  scrollBehavior: (to) => to.hash ? { el: to.hash, top: 16 } : { top: 0 }
 })
 
 router.beforeEach((to) => {

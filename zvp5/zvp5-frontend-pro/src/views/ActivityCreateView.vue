@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CanaryApiError, createActivity, isLoggedIn } from '@/api/canary'
@@ -165,13 +166,13 @@ async function handleSubmit() {
             </div>
           </div>
 
-          <div v-if="validationError" class="form-validation" role="alert">
+          <BubbleFeedback v-if="validationError" class="glass-feedback--error" role="alert">
             {{ validationError }}
-          </div>
+          </BubbleFeedback>
 
-          <div v-if="successMessage" class="form-success" role="status">
+          <BubbleFeedback v-if="successMessage" class="glass-feedback--success" role="status">
             {{ successMessage }}
-          </div>
+          </BubbleFeedback>
 
           <div class="form-actions">
             <button
@@ -456,30 +457,6 @@ async function handleSubmit() {
 .radio-option:has(.radio-option__input:checked) .radio-option__label {
   color: var(--color-brand);
   font-weight: 600;
-}
-
-.form-validation {
-  padding: var(--space-3) var(--space-4);
-  background: var(--tone-rose-bg);
-  border: 1px solid var(--tone-rose);
-  border-radius: var(--radius-md);
-  color: var(--tone-rose);
-  font-size: var(--font-size-callout);
-  font-weight: 500;
-  position: relative;
-  z-index: 1;
-}
-
-.form-success {
-  padding: var(--space-3) var(--space-4);
-  background: var(--tone-green-bg);
-  border: 1px solid rgb(52 199 89 / 0.34);
-  border-radius: var(--radius-md);
-  color: rgb(6, 95, 70);
-  font-size: var(--font-size-callout);
-  font-weight: 500;
-  position: relative;
-  z-index: 1;
 }
 
 .form-actions {

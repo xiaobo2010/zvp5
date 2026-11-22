@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
   createChatCompletion,
@@ -256,8 +257,8 @@ onUnmounted(() => {
     </div>
 
     <!-- Error state -->
-    <div v-if="modelsError && !modelsLoading" class="error-banner glass-feedback glass-feedback--error" role="alert">
-      <span>{{ modelsError }}</span>
+    <div v-if="modelsError && !modelsLoading" class="error-banner">
+      <BubbleFeedback class="glass-feedback--error" role="alert">{{ modelsError }}</BubbleFeedback>
       <button type="button" class="ghost-button ghost-button--small" @click="loadModels">
         重试
       </button>
@@ -311,10 +312,10 @@ onUnmounted(() => {
         <div class="turn-content">
           <p v-if="!turn.content && turn.status === 'pending'" class="turn-placeholder">…</p>
           <p v-else class="turn-text">{{ turn.content }}</p>
-          <div v-if="turn.status === 'error' && turn.errorMessage" class="turn-error glass-feedback glass-feedback--error">
+          <BubbleFeedback v-if="turn.status === 'error' && turn.errorMessage" class="turn-error glass-feedback--error">
             {{ turn.errorMessage }}
             <span v-if="turn.errorCode" class="error-code">({{ turn.errorCode }})</span>
-          </div>
+          </BubbleFeedback>
         </div>
       </div>
     </div>

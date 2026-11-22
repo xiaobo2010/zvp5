@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { CanaryApiError, fetchNotices, isLoggedIn } from '@/api/canary'
 import type { CanaryNotice } from '@/api/canary'
 import { renderMarkdown } from '@/utils/markdown'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 const router = useRouter()
 
@@ -12,6 +13,7 @@ const loading = ref(true)
 const error = ref('')
 const unauthenticated = ref(false)
 const expandedId = ref('')
+const refreshed = ref(false)
 
 function readableError(reason: unknown, fallback: string): string {
   return reason instanceof CanaryApiError ? reason.message : fallback
@@ -26,7 +28,8 @@ function isAuthError(reason: unknown): boolean {
   return false
 }
 
-async function loadNotices() {
+async function loadNotices(showFeedback = false) {
+  refreshed.value = false
   if (!isLoggedIn()) {
     unauthenticated.value = true
     loading.value = false
@@ -41,6 +44,7 @@ async function loadNotices() {
     if (expandedId.value && !notices.value.some((notice) => notice.id === expandedId.value)) {
       expandedId.value = ''
     }
+    refreshed.value = showFeedback
   } catch (reason) {
     if (!isAuthError(reason)) {
       notices.value = []
@@ -65,7 +69,7 @@ function toggleNotice(id: string) {
 
 function handleRefresh() {
   if (loading.value) return
-  void loadNotices()
+  void loadNotices(true)
 }
 
 onMounted(() => {
@@ -103,6 +107,10 @@ onMounted(() => {
       </div>
     </header>
 
+    <div class="refresh-feedback" aria-live="polite">
+      <BubbleFeedback v-if="refreshed" class="glass-feedback--success">通知已刷新。</BubbleFeedback>
+    </div>
+
     <!-- Notices list with frosted glass -->
     <div
       v-if="unauthenticated"
@@ -111,7 +119,7 @@ onMounted(() => {
       role="alert"
     >
       <p class="empty-title">需要登录</p>
-      <p class="empty-description">登录后即可查看站内通知。</p>
+      <BubbleFeedback class="glass-feedback--warn">登录后即可查看站内通知。</BubbleFeedback>
       <RouterLink
         class="liquid-btn liquid-btn--primary liquid-btn--sm"
         to="/login?redirect=/notifications"
@@ -127,7 +135,7 @@ onMounted(() => {
       role="alert"
     >
       <p class="empty-title">通知加载失败</p>
-      <p class="empty-description">{{ error }}</p>
+      <BubbleFeedback class="glass-feedback--error">{{ error }}</BubbleFeedback>
       <button
         class="liquid-btn liquid-btn--secondary liquid-btn--sm"
         type="button"
@@ -155,7 +163,7 @@ onMounted(() => {
         <path d="M32 20V34M32 42V44" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       </svg>
       <p class="empty-title">暂时没有新通知</p>
-      <p class="empty-description">有新的公告或提醒时会出现在这里</p>
+      <BubbleFeedback>有新的公告或提醒时会出现在这里。</BubbleFeedback>
     </div>
 
     <div v-else class="notices-list">
@@ -213,6 +221,10 @@ onMounted(() => {
   display: grid;
   gap: var(--space-5);
   align-content: start;
+}
+
+.refresh-feedback:not(:has(> *)) {
+  position: absolute;
 }
 
 /* Frosted glass card base */

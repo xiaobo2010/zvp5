@@ -10,6 +10,7 @@ import {
   isLoggedIn
 } from '@/api/canary'
 import type { CanaryActivity, CanaryTime, CanaryUser } from '@/api/canary'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 type HourKey = keyof CanaryTime
 
@@ -72,6 +73,13 @@ const loading = ref(initiallySignedIn)
 const unauthenticated = ref(!initiallySignedIn)
 const error = ref('')
 const hoursRefreshing = ref(false)
+const refreshFeedback = ref<{ text: string; tone: 'success' | 'error' | 'warn' } | null>(null)
+
+const shortcuts = [
+  { path: '/volunteers', label: '义工列表', description: '查看活动与登记记录' },
+  { path: '/notifications', label: '站内通知', description: '查看公告与提醒' },
+  { path: '/me#appearance', label: '外观设置', description: '切换界面配色' },
+]
 
 const greetingVisible = ref(false)
 const sectionsVisible = ref<Record<string, boolean>>({
@@ -462,7 +470,7 @@ async function handleHoursRefresh() {
   }
 
   hoursRefreshing.value = true
-  error.value = ''
+  refreshFeedback.value = null
 
   try {
     const [timeResult, activitiesResult] = await Promise.allSettled([
@@ -483,7 +491,10 @@ async function handleHoursRefresh() {
     }
 
     if (timeResult.status === 'rejected') {
-      error.value = readableError(timeResult.reason, '时长刷新失败，请稍后重试。')
+      refreshFeedback.value = {
+        text: readableError(timeResult.reason, '时长刷新失败，请稍后重试。'),
+        tone: 'error',
+      }
       return
     }
 
@@ -491,6 +502,9 @@ async function handleHoursRefresh() {
     if (activitiesResult.status === 'fulfilled') {
       activities.value = activitiesResult.value.activities ?? []
     }
+    refreshFeedback.value = activitiesResult.status === 'fulfilled'
+      ? { text: '义工时长与活动记录已更新。', tone: 'success' }
+      : { text: '义工时长已更新，活动记录暂未刷新。', tone: 'warn' }
 
     await nextTick()
     if (!disposed) await playRefreshAnimation()
@@ -537,13 +551,16 @@ onUnmounted(() => {
   <div id="home" ref="homeRef" class="home">
     <!-- Greeting -->
     <section class="greeting" :class="{ visible: greetingVisible }">
-      <h1 class="greeting__title">
-        <template v-if="displayName">{{ greetingText }}，{{ displayName }}。</template>
-        <template v-else-if="loading">
-          {{ greetingText }}，<span class="greeting__skeleton" aria-hidden="true"></span>
-        </template>
-        <template v-else>{{ greetingText }}。</template>
-      </h1>
+      <div class="greeting__copy">
+        <p class="greeting__eyebrow">义工工作台</p>
+        <h1 class="greeting__title">
+          <template v-if="displayName">{{ greetingText }}，{{ displayName }}。</template>
+          <template v-else-if="loading">
+            {{ greetingText }}，<span class="greeting__skeleton" aria-hidden="true"></span>
+          </template>
+          <template v-else>{{ greetingText }}。</template>
+        </h1>
+      </div>
       <div class="greeting__panel">
         <div class="greeting__clock-orb">
           <div class="greeting__clock-light"></div>
@@ -556,12 +573,19 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <nav v-if="!unauthenticated" class="home-shortcuts" aria-label="常用入口">
+      <RouterLink v-for="item in shortcuts" :key="item.path" class="home-shortcut" :to="item.path">
+        <span class="home-shortcut__label">{{ item.label }} <span aria-hidden="true">↗</span></span>
+        <span class="home-shortcut__description">{{ item.description }}</span>
+      </RouterLink>
+    </nav>
+
     <!-- Signed out -->
     <section v-if="unauthenticated" class="state-panel glass-panel" role="alert">
       <h2 class="state-panel__title">需要登录</h2>
-      <p class="state-panel__text">
+      <BubbleFeedback class="glass-feedback--warn">
         登录后即可查看你的义工时长、待审核活动与最近记录。
-      </p>
+      </BubbleFeedback>
       <RouterLink class="glass-button state-panel__action" to="/login?redirect=/">
         去登录
       </RouterLink>
@@ -637,7 +661,7 @@ onUnmounted(() => {
     <!-- Load failure -->
     <section v-else-if="error" class="state-panel glass-panel" role="alert">
       <h2 class="state-panel__title">加载失败</h2>
-      <p class="state-panel__text">{{ error }}</p>
+      <BubbleFeedback class="glass-feedback--error">{{ error }}</BubbleFeedback>
       <button class="glass-button state-panel__action" type="button" @click="handleRetry">
         重试
       </button>
@@ -720,7 +744,7 @@ onUnmounted(() => {
         <div class="hours-panel__header">
           <h2 class="hours-panel__title">义工时长</h2>
           <div class="hours-panel__actions">
-            <button class="glass-button glass-button--compact" type="button">明细</button>
+            <RouterLink class="glass-button glass-button--compact" to="/volunteers">查看记录</RouterLink>
             <button
               class="glass-button glass-button--compact hours-refresh-btn"
               type="button"
@@ -742,6 +766,14 @@ onUnmounted(() => {
               刷新
             </button>
           </div>
+        </div>
+
+        <div aria-live="polite">
+          <BubbleFeedback
+            v-if="refreshFeedback"
+            class="hours-feedback"
+            :class="`glass-feedback--${refreshFeedback.tone}`"
+          >{{ refreshFeedback.text }}</BubbleFeedback>
         </div>
 
         <div class="hours-grid">
@@ -818,7 +850,7 @@ onUnmounted(() => {
               <span class="work-item__status work-item__status--pending">待审核</span>
             </RouterLink>
           </div>
-          <p v-else class="work-empty">暂无待审核活动</p>
+          <BubbleFeedback v-else>暂无待审核活动</BubbleFeedback>
         </article>
 
         <!-- Recent records -->
@@ -843,7 +875,7 @@ onUnmounted(() => {
               </span>
             </RouterLink>
           </div>
-          <p v-else class="work-empty">还没有已确认的记录</p>
+          <BubbleFeedback v-else>还没有已确认的记录</BubbleFeedback>
         </article>
       </section>
     </template>
@@ -861,9 +893,16 @@ onUnmounted(() => {
 /* Greeting */
 .greeting {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  margin-bottom: var(--space-7);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: clamp(15px, 4vw, 32px);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(115deg, var(--palette-main) 0%, transparent 70%), var(--surface-matte);
+  box-shadow: var(--glass-shadow);
   opacity: 0;
   transform: translateY(12px);
   transition:
@@ -876,14 +915,56 @@ onUnmounted(() => {
   transform: translateY(0);
 }
 
+.greeting__copy { min-width: 0; }
+
+.greeting__eyebrow {
+  margin-bottom: var(--space-1);
+  color: var(--accent-ink);
+  font-size: var(--font-size-callout);
+  font-weight: 650;
+}
+
 .greeting__title {
-  font-size: var(--font-size-greeting);
+  font-size: clamp(1.65rem, 4.4vw, 3.2rem);
   font-weight: 600;
   line-height: var(--line-height-tight);
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
-  margin: 0 0 var(--space-4) 0;
+  overflow-wrap: anywhere;
   text-wrap: balance;
+}
+
+.home-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.home-shortcut {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  padding: var(--space-3) clamp(8px, 2vw, 20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-matte);
+  box-shadow: var(--glass-shadow);
+  overflow-wrap: anywhere;
+}
+
+.home-shortcut:hover,
+.home-shortcut:focus-visible { border-color: var(--accent-ink); }
+
+.home-shortcut__label { color: var(--accent-ink); font-weight: 650; }
+.home-shortcut__description { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
+.hours-feedback { margin-bottom: var(--space-4); }
+
+@media (max-width: 420px) {
+  .home-shortcuts { gap: var(--space-2); }
+  .home-shortcut__label { font-size: var(--font-size-callout); }
+  .home-shortcut__label [aria-hidden] { display: none; }
 }
 
 /* Apple-style "now" panel */
@@ -1788,18 +1869,6 @@ onUnmounted(() => {
   color: #ff3b30;
 }
 
-/* 空态也保持玻璃质感，不用占位假数据 */
-.work-empty {
-  margin: 0;
-  padding: var(--space-5);
-  background: rgba(255, 255, 255, 0.38);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-callout);
-  color: var(--color-text-tertiary);
-  text-align: center;
-}
-
 /* Login / error state */
 .state-panel {
   display: flex;
@@ -1819,12 +1888,8 @@ onUnmounted(() => {
   margin: 0;
 }
 
-.state-panel__text {
+.state-panel > .glass-feedback {
   max-width: 44ch;
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-relaxed);
-  color: var(--color-text-secondary);
-  margin: 0;
 }
 
 .state-panel__action {
@@ -2019,9 +2084,6 @@ onUnmounted(() => {
     padding-top: var(--space-10);
   }
 
-  .greeting {
-    margin-bottom: var(--space-8);
-  }
 
   .identity-row {
     margin-bottom: var(--space-10);

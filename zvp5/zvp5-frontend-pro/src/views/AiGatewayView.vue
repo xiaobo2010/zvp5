@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import AiChatPanel from '@/components/AiChatPanel.vue'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { ApiError, readableError } from '@/api/http'
 import { currentRoles } from '@/api/permissions'
 import {
@@ -797,14 +798,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ healthError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ healthError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadHealth">重试</button>
                 </div>
 
                 <template v-else-if="health">
-                  <p v-if="healthError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="healthError" class="inline-note glass-feedback--error" role="alert">
                     {{ healthError }}
-                  </p>
+                  </BubbleFeedback>
 
                   <div class="summary-grid">
                     <div class="summary-card surface-enter" style="--i: 0">
@@ -1020,14 +1021,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ keysError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ keysError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadKeys">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="keysError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="keysError" class="inline-note glass-feedback--error" role="alert">
                     {{ keysError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!keys.length" class="empty-inline">暂无已登记的凭据。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': keysLoading }">
                     <li v-for="key in keys" :key="key.oid || key.name" class="row">
@@ -1104,14 +1105,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ modelsError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ modelsError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadModels">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="modelsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="modelsError" class="inline-note glass-feedback--error" role="alert">
                     {{ modelsError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!models.length" class="empty-inline">暂无模型记录。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': modelsLoading }">
                     <li v-for="model in models" :key="model.model" class="row">
@@ -1192,14 +1193,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ quotaError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ quotaError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadQuota">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="quotaError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="quotaError" class="inline-note glass-feedback--error" role="alert">
                     {{ quotaError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!quotaUsers.length" class="empty-inline">没有匹配的用户。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': quotaLoading }">
                     <li v-for="user in quotaUsers" :key="user.oid || user.name" class="row">
@@ -1295,14 +1296,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ logsError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ logsError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadLogs">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="logsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="logsError" class="inline-note glass-feedback--error" role="alert">
                     {{ logsError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!logs.length" class="empty-inline">当前页没有调用记录。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': logsLoading }">
                     <li v-for="log in logs" :key="log.oid" class="row">
@@ -1392,14 +1393,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ scheduledError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ scheduledError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadScheduled">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="scheduledError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="scheduledError" class="inline-note glass-feedback--error" role="alert">
                     {{ scheduledError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!scheduledTasks.length" class="empty-inline">暂无定时任务。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': scheduledLoading }">
                     <li v-for="task in scheduledTasks" :key="task.oid || task.name" class="row">
@@ -1475,14 +1476,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ ocrError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ ocrError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadOcr">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="ocrError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="ocrError" class="inline-note glass-feedback--error" role="alert">
                     {{ ocrError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!ocrEngines.length" class="empty-inline">暂无 OCR 引擎。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': ocrLoading }">
                     <li v-for="engine in ocrEngines" :key="engine.oid || engine.name" class="row">
@@ -1566,14 +1567,14 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ statsError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ statsError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadStats">重试</button>
                 </div>
 
                 <template v-else-if="stats">
-                  <p v-if="statsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="statsError" class="inline-note glass-feedback--error" role="alert">
                     {{ statsError }}
-                  </p>
+                  </BubbleFeedback>
 
                   <div class="summary-grid">
                     <div class="summary-card surface-enter" style="--i: 0">

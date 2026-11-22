@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -97,14 +98,9 @@ function goBack() {
         </RouterLink>
       </div>
 
-      <p class="register-entry__hint surface-enter" style="--i: 4">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M12 10.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <circle cx="12" cy="7.8" r="1" fill="currentColor"/>
-        </svg>
+      <BubbleFeedback class="register-entry__hint">
         修改义工只覆盖原成员的时长与类型，不会影响其他人的记录；创建义工不受此限制。
-      </p>
+      </BubbleFeedback>
     </div>
   </div>
 </template>
@@ -313,22 +309,7 @@ function goBack() {
 }
 
 .register-entry__hint {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
   margin: var(--space-6) 0 0;
-  padding: var(--space-3) var(--space-4);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-callout);
-  line-height: var(--line-height-normal);
-  background: rgba(255, 255, 255, 0.38);
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: var(--radius-md);
-}
-
-.register-entry__hint svg {
-  flex-shrink: 0;
-  margin-top: 2px;
 }
 
 @media (max-width: 900px) {

@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   createNotification,
@@ -1117,9 +1118,9 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <template v-else>
-                <p v-if="overviewError" class="inline-note glass-feedback glass-feedback--warn" role="alert">
+                <BubbleFeedback v-if="overviewError" class="inline-note glass-feedback--warn" role="alert">
                   {{ overviewError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="summary-grid">
                   <div class="summary-card surface-enter" style="--i: 0">
@@ -1265,14 +1266,14 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <div v-else-if="usersError && !usersLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ usersError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ usersError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadUsers">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="usersError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="usersError" class="inline-note glass-feedback--error" role="alert">
                   {{ usersError }}
-                </p>
+                </BubbleFeedback>
                 <p v-if="!users.length" class="empty-inline">没有匹配的用户。</p>
                 <ul v-else class="row-list" :class="{ 'is-loading': usersLoading }">
                   <li v-for="user in users" :key="user._id" class="row">
@@ -1359,14 +1360,14 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <div v-else-if="groupsError && !groupsLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ groupsError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ groupsError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadGroups">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="groupsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="groupsError" class="inline-note glass-feedback--error" role="alert">
                   {{ groupsError }}
-                </p>
+                </BubbleFeedback>
                 <p v-if="!groups.length" class="empty-inline">没有匹配的班级或权限组。</p>
                 <ul v-else class="row-list" :class="{ 'is-loading': groupsLoading }">
                   <li v-for="group in groups" :key="group._id" class="row">
@@ -1449,9 +1450,9 @@ watch(activeTab, ensureTab, { immediate: true })
                     <p id="notification-title-hint" class="field__hint">
                       {{ notificationForm.title.trim().length }}/200
                     </p>
-                    <p v-if="notificationFormErrors.title" class="field__error" role="alert">
+                    <BubbleFeedback v-if="notificationFormErrors.title" class="glass-feedback--error" role="alert">
                       {{ notificationFormErrors.title }}
-                    </p>
+                    </BubbleFeedback>
                   </div>
 
                   <div class="field">
@@ -1479,17 +1480,17 @@ watch(activeTab, ensureTab, { immediate: true })
                     <p id="notification-content-hint" class="field__hint">
                       {{ notificationForm.content.trim().length }}/4000
                     </p>
-                    <p v-if="notificationFormErrors.content" class="field__error" role="alert">
+                    <BubbleFeedback v-if="notificationFormErrors.content" class="glass-feedback--error" role="alert">
                       {{ notificationFormErrors.content }}
-                    </p>
+                    </BubbleFeedback>
                   </div>
 
-                  <p v-if="notificationCreateNotice" class="inline-note glass-feedback glass-feedback--success" role="status">
+                  <BubbleFeedback v-if="notificationCreateNotice" class="inline-note glass-feedback--success" role="status">
                     {{ notificationCreateNotice }}
-                  </p>
-                  <p v-if="notificationCreateError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  </BubbleFeedback>
+                  <BubbleFeedback v-if="notificationCreateError" class="inline-note glass-feedback--error" role="alert">
                     {{ notificationCreateError }}
-                  </p>
+                  </BubbleFeedback>
                   <p class="panel__footnote">
                     发布与启停属于高权限操作，后端可能要求密码复核；若被拒绝，错误信息会显示在下方。
                   </p>
@@ -1541,28 +1542,28 @@ watch(activeTab, ensureTab, { immediate: true })
                   class="state-block state-block--error"
                   role="alert"
                 >
-                  <span>{{ notificationsError }}</span>
+                  <BubbleFeedback class="glass-feedback--error">{{ notificationsError }}</BubbleFeedback>
                   <button type="button" class="ghost-button" @click="loadNotifications">重试</button>
                 </div>
 
                 <template v-else>
-                  <p v-if="notificationsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="notificationsError" class="inline-note glass-feedback--error" role="alert">
                     {{ notificationsError }}
-                  </p>
-                  <p
+                  </BubbleFeedback>
+                  <BubbleFeedback
                     v-if="notificationActionNotice"
-                    class="inline-note glass-feedback glass-feedback--success"
+                    class="inline-note glass-feedback--success"
                     role="status"
                   >
                     {{ notificationActionNotice }}
-                  </p>
-                  <p
+                  </BubbleFeedback>
+                  <BubbleFeedback
                     v-if="notificationActionError"
-                    class="inline-note glass-feedback glass-feedback--error"
+                    class="inline-note glass-feedback--error"
                     role="alert"
                   >
                     {{ notificationActionError }}
-                  </p>
+                  </BubbleFeedback>
 
                   <p v-if="!notifications.length" class="empty-inline">暂无通知。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': notificationsLoading }">
@@ -1641,14 +1642,14 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <div v-else-if="rolesError && !rolesLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ rolesError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ rolesError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadRolePolicies">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="rolesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="rolesError" class="inline-note glass-feedback--error" role="alert">
                   {{ rolesError }}
-                </p>
+                </BubbleFeedback>
                 <p v-if="!sortedRolePolicies.length" class="empty-inline">暂无角色策略。</p>
                 <div v-else class="role-grid">
                   <article
@@ -1745,14 +1746,14 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <div v-else-if="logsError && !logsLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ logsError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ logsError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadLogs">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="logsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="logsError" class="inline-note glass-feedback--error" role="alert">
                   {{ logsError }}
-                </p>
+                </BubbleFeedback>
                 <p v-if="!logs.length" class="empty-inline">没有匹配的日志。</p>
                 <ul v-else class="row-list" :class="{ 'is-loading': logsLoading }">
                   <li v-for="log in logs" :key="log._id" class="row row--stacked">
@@ -1830,28 +1831,28 @@ watch(activeTab, ensureTab, { immediate: true })
               </div>
 
               <div v-else-if="settingsError && !settingsLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ settingsError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ settingsError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadSettings">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="settingsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="settingsError" class="inline-note glass-feedback--error" role="alert">
                   {{ settingsError }}
-                </p>
-                <p
+                </BubbleFeedback>
+                <BubbleFeedback
                   v-if="settingsSaveNotice"
-                  class="inline-note glass-feedback glass-feedback--success"
+                  class="inline-note glass-feedback--success"
                   role="status"
                 >
                   {{ settingsSaveNotice }}
-                </p>
-                <p
+                </BubbleFeedback>
+                <BubbleFeedback
                   v-if="settingsSaveError"
-                  class="inline-note glass-feedback glass-feedback--error"
+                  class="inline-note glass-feedback--error"
                   role="alert"
                 >
                   {{ settingsSaveError }}
-                </p>
+                </BubbleFeedback>
 
                 <p v-if="!settings?.items?.length" class="empty-inline">暂无可显示的设置项。</p>
 
@@ -1987,9 +1988,9 @@ watch(activeTab, ensureTab, { immediate: true })
                 </div>
 
                 <template v-else>
-                  <p v-if="banRulesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                  <BubbleFeedback v-if="banRulesError" class="inline-note glass-feedback--error" role="alert">
                     {{ banRulesError }}
-                  </p>
+                  </BubbleFeedback>
                   <p v-if="!banRules.length" class="empty-inline">暂无封禁规则。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': banLoading }">
                     <li v-for="rule in banRules" :key="rule.code" class="row">
@@ -2034,9 +2035,9 @@ watch(activeTab, ensureTab, { immediate: true })
                   </button>
                 </form>
 
-                <p v-if="banRecordsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="banRecordsError" class="inline-note glass-feedback--error" role="alert">
                   {{ banRecordsError }}
-                </p>
+                </BubbleFeedback>
                 <div v-if="banLoading && !banLoaded" class="state-block" role="status">
                   <span class="spinner" aria-hidden="true"></span>
                   正在读取封禁记录…
@@ -2124,14 +2125,14 @@ watch(activeTab, ensureTab, { immediate: true })
                 class="state-block state-block--error"
                 role="alert"
               >
-                <span>{{ attachmentsError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ attachmentsError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadAttachments">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="attachmentsError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="attachmentsError" class="inline-note glass-feedback--error" role="alert">
                   {{ attachmentsError }}
-                </p>
+                </BubbleFeedback>
                 <p v-if="!attachments.length" class="empty-inline">暂无附件。</p>
                 <ul v-else class="row-list" :class="{ 'is-loading': attachmentsLoading }">
                   <li v-for="file in attachments" :key="file._id" class="row">
@@ -2561,12 +2562,6 @@ select.input:focus-visible {
 .field__hint {
   font-size: var(--font-size-caption);
   color: var(--color-text-tertiary);
-  line-height: var(--line-height-normal);
-}
-
-.field__error {
-  font-size: var(--font-size-caption);
-  color: var(--tone-rose);
   line-height: var(--line-height-normal);
 }
 

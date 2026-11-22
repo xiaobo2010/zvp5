@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { login } from '@/api/canary'
 import type { CanaryApiError } from '@/api/canary'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -11,7 +12,7 @@ const studentId = ref('')
 const password = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
-const hasAttempted = ref(false)
+const studentIdTouched = ref(false)
 const showContent = ref(false)
 
 const currentTime = ref(new Date())
@@ -33,6 +34,8 @@ const isValidStudentId = computed(() => {
   return /^\d{8}$/.test(studentId.value.trim())
 })
 
+const invalidStudentId = computed(() => studentIdTouched.value && !!studentId.value && !isValidStudentId.value)
+
 const canSubmit = computed(() => {
   return isValidStudentId.value && password.value.length > 0 && !loading.value
 })
@@ -44,18 +47,14 @@ async function handleSubmit() {
 
   loading.value = true
   errorMessage.value = ''
-  hasAttempted.value = true
 
   try {
     await login(studentId.value.trim(), password.value)
 
     const rawRedirect = route.query.redirect
     const redirect = typeof rawRedirect === 'string' ? rawRedirect : ''
-    if (redirect.startsWith('/')) {
-      router.push(redirect)
-    } else {
-      router.push('/me')
-    }
+    const isLocal = redirect.startsWith('/') && !/^\/[\\/]/.test(redirect)
+    await router.replace(isLocal ? redirect : '/')
   } catch (error) {
     const err = error as CanaryApiError
     errorMessage.value = err.message || '登录失败，请检查学号和密码'
@@ -115,7 +114,7 @@ onUnmounted(() => {
         </div>
 
         <form @submit.prevent="handleSubmit" class="login-form">
-          <div class="form-group" :class="{ error: hasAttempted && !isValidStudentId }">
+          <div class="form-group" :class="{ error: invalidStudentId }">
             <label for="student-id" class="form-label">学号</label>
             <input
               id="student-id"
@@ -126,12 +125,15 @@ onUnmounted(() => {
               placeholder="8位数字"
               maxlength="8"
               :disabled="loading"
+              :aria-invalid="invalidStudentId"
+              :aria-describedby="invalidStudentId ? 'student-id-error' : undefined"
+              @blur="studentIdTouched = true"
               class="form-input"
               required
             />
-            <span v-if="hasAttempted && !isValidStudentId" class="field-hint error">
+            <BubbleFeedback v-if="invalidStudentId" id="student-id-error" class="glass-feedback--error" role="alert">
               请输入有效的8位学号
-            </span>
+            </BubbleFeedback>
           </div>
 
           <div class="form-group">
@@ -148,9 +150,9 @@ onUnmounted(() => {
             />
           </div>
 
-          <div v-if="errorMessage" class="glass-feedback glass-feedback--error" role="alert">
+          <BubbleFeedback v-if="errorMessage" class="glass-feedback--error" role="alert">
             {{ errorMessage }}
-          </div>
+          </BubbleFeedback>
 
           <button
             type="submit"
@@ -449,15 +451,6 @@ onUnmounted(() => {
 
 .form-group.error .form-input {
   border-color: var(--tone-rose);
-}
-
-.field-hint {
-  font-size: var(--font-size-caption);
-  color: var(--color-text-tertiary);
-}
-
-.field-hint.error {
-  color: var(--tone-rose);
 }
 
 .submit-button {

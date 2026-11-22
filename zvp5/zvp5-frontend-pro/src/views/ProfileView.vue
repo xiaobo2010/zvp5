@@ -12,6 +12,8 @@ import {
 } from '@/api/canary'
 import type { CanaryNotice, CanaryUser } from '@/api/canary'
 import { renderMarkdown } from '@/utils/markdown'
+import AppearanceSettings from '@/components/AppearanceSettings.vue'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 const router = useRouter()
 
@@ -25,6 +27,8 @@ const noticesLoading = ref(false)
 const noticesError = ref('')
 const openNoticeId = ref('')
 const actionMessage = ref('')
+const actionId = ref(0)
+const actionTone = ref<'success' | 'warn' | 'info'>('info')
 let actionTimer: ReturnType<typeof setTimeout> | null = null
 
 const ROLE_LABELS: Record<string, string> = {
@@ -117,21 +121,22 @@ function formatNoticeTime(value: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function announceAction(message: string) {
+function announceAction(message: string, tone: typeof actionTone.value = 'info') {
   actionMessage.value = message
+  actionTone.value = tone
+  actionId.value++
   if (actionTimer) clearTimeout(actionTimer)
   actionTimer = setTimeout(() => {
     actionMessage.value = ''
     actionTimer = null
-  }, 2800)
+  }, 4500)
 }
 
 function handleRefreshNotices() {
   if (noticesLoading.value) return
   void (async () => {
     const ok = await loadNotices()
-    if (ok) announceAction('通知已刷新。')
-    else if (!unauthenticated.value) announceAction('通知刷新失败，请稍后重试。')
+    if (ok) announceAction('通知已刷新。', 'success')
   })()
 }
 
@@ -181,6 +186,8 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <AppearanceSettings />
+
     <!-- Loading state -->
     <section v-if="loading" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="status" aria-live="polite">
       <span class="state-spinner" aria-hidden="true"></span>
@@ -191,7 +198,7 @@ onUnmounted(() => {
     <!-- Unauthenticated state -->
     <section v-else-if="unauthenticated" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <h2 class="state-title">需要登录</h2>
-      <p class="state-description">登录后即可查看个人资料、班级与站内通知。</p>
+      <BubbleFeedback class="glass-feedback--warn">登录后即可查看个人资料、班级与站内通知。</BubbleFeedback>
       <RouterLink class="liquid-btn liquid-btn--primary" to="/login?redirect=/me">
         去登录
       </RouterLink>
@@ -200,7 +207,7 @@ onUnmounted(() => {
     <!-- API error state -->
     <section v-else-if="error" class="glass-card state-card surface-enter" :style="{ '--i': 0 }" role="alert">
       <h2 class="state-title">个人资料加载失败</h2>
-      <p class="state-description">{{ error }}</p>
+      <BubbleFeedback class="glass-feedback--error">{{ error }}</BubbleFeedback>
       <button
         class="liquid-btn liquid-btn--secondary"
         type="button"
@@ -277,7 +284,7 @@ onUnmounted(() => {
         </div>
         <div v-else-if="noticesError" class="empty-state" role="alert">
           <p class="empty-state__title">通知加载失败</p>
-          <p class="empty-state__description">{{ noticesError }}</p>
+          <BubbleFeedback class="glass-feedback--error">{{ noticesError }}</BubbleFeedback>
           <button
             class="liquid-btn liquid-btn--secondary liquid-btn--sm"
             type="button"
@@ -324,7 +331,7 @@ onUnmounted(() => {
         </ul>
         <div v-else class="empty-state">
           <p class="empty-state__title">暂时没有新通知</p>
-          <p class="empty-state__description">有新的公告或提醒时会出现在这里</p>
+          <BubbleFeedback>有新的公告或提醒时会出现在这里。</BubbleFeedback>
         </div>
       </section>
 
@@ -342,11 +349,11 @@ onUnmounted(() => {
       </section>
     </template>
 
-    <Transition name="action-feedback">
-      <p v-if="actionMessage" class="action-feedback" role="status" aria-live="polite">
+    <div class="action-feedback" aria-live="polite">
+      <BubbleFeedback v-if="actionMessage" :key="actionId" :class="`glass-feedback--${actionTone}`">
         {{ actionMessage }}
-      </p>
-    </Transition>
+      </BubbleFeedback>
+    </div>
   </div>
 </template>
 
@@ -357,6 +364,8 @@ onUnmounted(() => {
   max-width: var(--content-max-width);
   margin: 0 auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: var(--space-6);
 }
 
@@ -1031,30 +1040,10 @@ onUnmounted(() => {
   left: 50%;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
   z-index: 1200;
-  max-width: min(520px, calc(100vw - 32px));
-  padding: var(--space-3) var(--space-5);
+  width: max-content;
+  max-width: min(520px, calc(100% - 32px));
   transform: translateX(-50%);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--glass-shadow);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-callout);
-  text-align: center;
-}
-
-.action-feedback-enter-active,
-.action-feedback-leave-active {
-  transition: opacity var(--duration-base) var(--ease-smooth),
-    transform var(--duration-base) var(--ease-spring);
-}
-
-.action-feedback-enter-from,
-.action-feedback-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
+  pointer-events: none;
 }
 
 @media (max-width: 767px) {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -380,10 +381,10 @@ onMounted(() => {
             </option>
           </select>
         </div>
-        <p v-if="activitiesError" class="message message--error" role="alert">{{ activitiesError }}</p>
-        <p v-else-if="!activitiesLoading && !activities.length" class="message">
+        <BubbleFeedback v-if="activitiesError" class="glass-feedback--error" role="alert">{{ activitiesError }}</BubbleFeedback>
+        <BubbleFeedback v-else-if="!activitiesLoading && !activities.length">
           没有找到可登记的活动。请先在「创建义工」中新建活动。
-        </p>
+        </BubbleFeedback>
         <div v-if="selectedActivity" class="activity-summary">
           <span class="activity-summary__name">{{ selectedActivity.name }}</span>
           <span class="activity-summary__meta">{{ formatActivityMeta(selectedActivity) || '暂无时间地点' }}</span>
@@ -438,7 +439,7 @@ onMounted(() => {
                   </select>
                 </div>
               </div>
-              <p v-if="row.error" class="message message--error" role="alert">{{ row.error }}</p>
+              <BubbleFeedback v-if="row.error" class="glass-feedback--error" role="alert">{{ row.error }}</BubbleFeedback>
               <button class="remove-row" type="button" :disabled="submitting" @click="removeAddRow(index)">移除</button>
             </article>
           </div>
@@ -462,9 +463,9 @@ onMounted(() => {
             </button>
           </div>
 
-          <p v-if="membersError" class="message message--error" role="alert">{{ membersError }}</p>
+          <BubbleFeedback v-if="membersError" class="glass-feedback--error" role="alert">{{ membersError }}</BubbleFeedback>
           <p v-else-if="membersLoading" class="message">正在加载成员…</p>
-          <p v-else-if="!editRows.length" class="message">这个活动还没有录入成员。</p>
+           <BubbleFeedback v-else-if="!editRows.length">这个活动还没有录入成员。</BubbleFeedback>
 
           <div v-else class="member-rows">
             <article v-for="row in editRows" :key="row.key" class="member-row">
@@ -496,9 +497,9 @@ onMounted(() => {
                   </select>
                 </div>
               </div>
-              <p v-if="row.message" class="message" :class="{ 'message--error': row.message !== '已保存' }">
+              <BubbleFeedback v-if="row.message" :key="row.message" :class="row.message === '已保存' ? 'glass-feedback--success' : 'glass-feedback--error'" role="status">
                 {{ row.message }}
-              </p>
+              </BubbleFeedback>
             </article>
           </div>
 
@@ -511,9 +512,9 @@ onMounted(() => {
         </section>
       </template>
 
-      <p v-if="feedback" class="glass-feedback" :class="`glass-feedback--${feedbackType}`" role="status">
+      <BubbleFeedback v-if="feedback" :key="feedback" :class="`glass-feedback--${feedbackType}`" :role="feedbackType === 'error' ? 'alert' : 'status'">
         {{ feedback }}
-      </p>
+      </BubbleFeedback>
     </div>
   </div>
 </template>
@@ -761,8 +762,6 @@ onMounted(() => {
   font-size: var(--font-size-callout);
   line-height: var(--line-height-normal);
 }
-
-.message--error { color: var(--tone-rose); }
 
 @media (max-width: 820px) {
   .picker-card { grid-template-columns: 1fr; }

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
+import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { ApiError, currentUserId, readableError } from '@/api/http'
 import {
   disableMaintenance,
@@ -991,9 +992,9 @@ onBeforeUnmount(() => {
               </div>
 
               <template v-else>
-                <p v-if="overviewError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="overviewError" class="inline-note glass-feedback--error" role="alert">
                   {{ overviewError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="summary-grid">
                   <div class="summary-card surface-enter" style="--i: 0">
@@ -1046,12 +1047,12 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <p
+                <BubbleFeedback
                   v-if="overviewMaintenance?.enabled"
-                  class="inline-note glass-feedback glass-feedback--warn"
+                  class="inline-note glass-feedback--warn"
                 >
                   系统当前处于维护模式{{ overviewMaintenance?.announcement ? `：${overviewMaintenance.announcement}` : '。' }}
-                </p>
+                </BubbleFeedback>
               </template>
             </section>
           </template>
@@ -1086,14 +1087,14 @@ onBeforeUnmount(() => {
                 class="state-block state-block--error"
                 role="alert"
               >
-                <span>{{ maintenanceError || '维护状态不可用。' }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ maintenanceError || '维护状态不可用。' }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadMaintenance">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="maintenanceError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="maintenanceError" class="inline-note glass-feedback--error" role="alert">
                   {{ maintenanceError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="status-line surface-enter" style="--i: 0">
                   <span class="badge" :class="maintenanceEnabled ? 'badge--warn' : 'badge--good'">
@@ -1104,12 +1105,12 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <p
+                <BubbleFeedback
                   v-if="maintenanceEnabled && maintenanceAnnouncement"
-                  class="inline-note glass-feedback glass-feedback--warn announcement-note"
+                  class="inline-note glass-feedback--warn announcement-note"
                 >
                   {{ maintenanceAnnouncement }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="detail-list">
                   <div class="detail-row">
@@ -1128,12 +1129,12 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <p v-if="maintenanceActionNotice" class="inline-note glass-feedback glass-feedback--success" role="status">
+                <BubbleFeedback v-if="maintenanceActionNotice" class="inline-note glass-feedback--success" role="status">
                   {{ maintenanceActionNotice }}
-                </p>
-                <p v-if="maintenanceActionError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                </BubbleFeedback>
+                <BubbleFeedback v-if="maintenanceActionError" class="inline-note glass-feedback--error" role="alert">
                   {{ maintenanceActionError }}
-                </p>
+                </BubbleFeedback>
 
                 <form class="form surface-enter" style="--i: 1" @submit.prevent="submitMaintenance">
                   <div class="field">
@@ -1152,9 +1153,9 @@ onBeforeUnmount(() => {
                     <p id="maintenance-reason-hint" class="field__hint">
                       {{ maintenanceForm.reason.trim().length }}/200
                     </p>
-                    <p v-if="maintenanceErrors.reason" class="field__error" role="alert">
+                    <BubbleFeedback v-if="maintenanceErrors.reason" class="glass-feedback--error" role="alert">
                       {{ maintenanceErrors.reason }}
-                    </p>
+                    </BubbleFeedback>
                   </div>
 
                   <div v-if="!maintenanceEnabled" class="field">
@@ -1172,9 +1173,9 @@ onBeforeUnmount(() => {
                     <p id="maintenance-announcement-hint" class="field__hint">
                       {{ maintenanceForm.announcement.trim().length }}/300
                     </p>
-                    <p v-if="maintenanceErrors.announcement" class="field__error" role="alert">
+                    <BubbleFeedback v-if="maintenanceErrors.announcement" class="glass-feedback--error" role="alert">
                       {{ maintenanceErrors.announcement }}
-                    </p>
+                    </BubbleFeedback>
                   </div>
 
                   <div class="form__actions">
@@ -1233,14 +1234,14 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-else-if="!dbStatus" class="state-block state-block--error" role="alert">
-                <span>{{ dbError || '数据库状态不可用。' }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ dbError || '数据库状态不可用。' }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadDbStatus">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="dbError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="dbError" class="inline-note glass-feedback--error" role="alert">
                   {{ dbError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="summary-grid">
                   <div class="summary-card surface-enter" style="--i: 0">
@@ -1271,9 +1272,9 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">应用表空间</h3>
                       <span class="sub-panel__meta">仅业务表所在表空间</span>
                     </div>
-                    <p v-if="dbTablespaces && !dbTablespaces.available" class="inline-note glass-feedback glass-feedback--warn">
+                    <BubbleFeedback v-if="dbTablespaces && !dbTablespaces.available" class="inline-note glass-feedback--warn">
                       {{ sectionUnavailableText(dbTablespaces) }}
-                    </p>
+                    </BubbleFeedback>
                     <div v-else-if="appTablespaces.length" class="meter-list">
                       <div v-for="space in appTablespaces" :key="space.name" class="meter-row">
                         <div class="meter-row__head">
@@ -1308,9 +1309,9 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">负载与连接池</h3>
                       <span class="sub-panel__meta">{{ dbLoad?.source || '—' }}</span>
                     </div>
-                    <p v-if="dbLoad && !dbLoad.available" class="inline-note glass-feedback glass-feedback--warn">
+                    <BubbleFeedback v-if="dbLoad && !dbLoad.available" class="inline-note glass-feedback--warn">
                       {{ sectionUnavailableText(dbLoad) }}
-                    </p>
+                    </BubbleFeedback>
                     <template v-else>
                       <div v-if="dbMetrics.length" class="metric-grid">
                         <div v-for="metric in dbMetrics" :key="metric.name" class="metric">
@@ -1328,9 +1329,9 @@ onBeforeUnmount(() => {
 
                     <div v-if="dbPool" class="pool-block">
                       <h4 class="pool-block__title">连接池</h4>
-                      <p v-if="!dbPool.available" class="inline-note glass-feedback glass-feedback--warn">
+                      <BubbleFeedback v-if="!dbPool.available" class="inline-note glass-feedback--warn">
                         {{ sectionUnavailableText(dbPool) }}
-                      </p>
+                      </BubbleFeedback>
                       <template v-else>
                         <div class="metric-grid metric-grid--compact">
                           <div class="metric">
@@ -1379,9 +1380,9 @@ onBeforeUnmount(() => {
                       <h3 class="sub-panel__title">最大数据表</h3>
                       <span class="sub-panel__meta">按总占用降序 · 仅显示前 6 项</span>
                     </div>
-                    <p v-if="dbTables && !dbTables.available" class="inline-note glass-feedback glass-feedback--warn">
+                    <BubbleFeedback v-if="dbTables && !dbTables.available" class="inline-note glass-feedback--warn">
                       {{ sectionUnavailableText(dbTables) }}
-                    </p>
+                    </BubbleFeedback>
                     <div v-else-if="dbTopTables.length" class="compact-list">
                       <div v-for="table in dbTopTables" :key="table.name" class="compact-row">
                         <span class="compact-row__name">{{ table.name }}</span>
@@ -1431,14 +1432,14 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-else-if="!totpData" class="state-block state-block--error" role="alert">
-                <span>{{ totpError || '动态码不可用。' }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ totpError || '动态码不可用。' }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadTotp">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="totpError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="totpError" class="inline-note glass-feedback--error" role="alert">
                   {{ totpError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="totp-stage surface-enter" style="--i: 0">
                   <div class="totp-display" :class="{ 'totp-expired': totpExpired }">
@@ -1520,9 +1521,9 @@ onBeforeUnmount(() => {
                   <p class="totp-info__item">查看会写入审计日志</p>
                 </div>
 
-                <p v-if="totpExpired" class="inline-note glass-feedback glass-feedback--warn" role="status">
+                <BubbleFeedback v-if="totpExpired" class="inline-note glass-feedback--warn" role="status">
                   动态码已过期，请刷新后再查看。
-                </p>
+                </BubbleFeedback>
               </template>
             </section>
           </template>
@@ -1553,14 +1554,14 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-else-if="!sshData" class="state-block state-block--error" role="alert">
-                <span>{{ sshError || 'SSH 目标目录不可用。' }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ sshError || 'SSH 目标目录不可用。' }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadSshTargets">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="sshError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="sshError" class="inline-note glass-feedback--error" role="alert">
                   {{ sshError }}
-                </p>
+                </BubbleFeedback>
 
                 <div class="summary-grid">
                   <div class="summary-card surface-enter" style="--i: 0">
@@ -1593,9 +1594,9 @@ onBeforeUnmount(() => {
                 </div>
                 <div v-else class="state-block">当前没有配置 SSH 目标。</div>
 
-                <p class="inline-note glass-feedback">
+                <BubbleFeedback class="inline-note">
                   本页面仅展示目标目录；不提供终端连接、票据创建或命令执行入口。
-                </p>
+                </BubbleFeedback>
               </template>
             </section>
           </template>
@@ -1663,14 +1664,14 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-else-if="filesError && !filesLoaded" class="state-block state-block--error" role="alert">
-                <span>{{ filesError }}</span>
+                <BubbleFeedback class="glass-feedback--error">{{ filesError }}</BubbleFeedback>
                 <button type="button" class="ghost-button" @click="loadFiles">重试</button>
               </div>
 
               <template v-else>
-                <p v-if="filesError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                <BubbleFeedback v-if="filesError" class="inline-note glass-feedback--error" role="alert">
                   {{ filesError }}
-                </p>
+                </BubbleFeedback>
 
                 <ul v-if="filesEntries.length" class="file-list">
                   <li v-for="entry in filesEntries" :key="entry.name" class="file-row">
@@ -1762,14 +1763,14 @@ onBeforeUnmount(() => {
                     class="state-block state-block--error state-block--compact"
                     role="alert"
                   >
-                    <span>{{ schemaError }}</span>
+                    <BubbleFeedback class="glass-feedback--error">{{ schemaError }}</BubbleFeedback>
                     <button type="button" class="ghost-button" @click="loadSchema">重试</button>
                   </div>
 
                   <template v-else>
-                    <p v-if="schemaError" class="inline-note glass-feedback glass-feedback--error" role="alert">
+                    <BubbleFeedback v-if="schemaError" class="inline-note glass-feedback--error" role="alert">
                       {{ schemaError }}
-                    </p>
+                    </BubbleFeedback>
                     <div v-if="filteredSchema.length" class="schema-list" role="group" aria-label="表或视图">
                       <button
                         v-for="item in filteredSchema"
@@ -1816,7 +1817,7 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div v-else-if="rowsError" class="state-block state-block--error" role="alert">
-                      <span>{{ rowsError }}</span>
+                      <BubbleFeedback class="glass-feedback--error">{{ rowsError }}</BubbleFeedback>
                       <button type="button" class="ghost-button" @click="loadRows">重试</button>
                     </div>
 
@@ -2286,12 +2287,6 @@ onBeforeUnmount(() => {
 .field__hint {
   font-size: var(--font-size-caption);
   color: var(--color-text-tertiary);
-  line-height: var(--line-height-normal);
-}
-
-.field__error {
-  font-size: var(--font-size-caption);
-  color: var(--tone-rose);
   line-height: var(--line-height-normal);
 }
 
