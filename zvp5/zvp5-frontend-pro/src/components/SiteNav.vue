@@ -1,16 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { currentRoles } from '@/api/permissions'
 
 const route = useRoute()
-const router = useRouter()
-
-// Primary nav link
-const primaryLink = { label: '首页', path: '/' }
 
 // Drawer menu items
 const drawerItems = [
+  { label: '首页', path: '/' },
   { label: '义工列表', path: '/volunteers' },
   { label: '个人主页', path: '/me' },
   { label: '关于', path: '/about' }
@@ -44,20 +41,8 @@ const adminItems = computed(() =>
 
 const drawerOpen = ref(false)
 const activePath = computed(() => route.path)
-const pressingItem = ref<string | null>(null)
-
-// Thumb state tracking per nav section
-const navThumbState = ref({ left: 0, top: 0, width: 0, height: 0, ready: false })
-const adminThumbState = ref({ left: 0, top: 0, width: 0, height: 0, ready: false })
-
-// Refs for nav sections
-const navRef = ref<HTMLElement | null>(null)
-const adminRef = ref<HTMLElement | null>(null)
-
-let navObserver: ResizeObserver | null = null
-let adminObserver: ResizeObserver | null = null
-const navLinkRefs = new Map<string, HTMLElement>()
-const adminLinkRefs = new Map<string, HTMLElement>()
+const pendingItem = ref<string | null>(null)
+let navigationSequence = 0
 
 function isNavActive(path: string): boolean {
   if (path === '/volunteers/create') return activePath.value.startsWith('/volunteers/create')
@@ -74,7 +59,6 @@ let suppressHandleClick = false
 // Focus trap refs
 const drawerRef = ref<HTMLElement>()
 const drawerHandleRef = ref<HTMLElement>()
-let focusableElements: HTMLElement[] = []
 
 function toggleDrawer() {
   drawerOpen.value = !drawerOpen.value
@@ -146,19 +130,14 @@ function handleOverlayClick(e: MouseEvent) {
   }
 }
 
-function updateFocusTrap() {
-  if (!drawerRef.value) return
-
-  focusableElements = Array.from(
-    drawerRef.value.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    )
-  ) as HTMLElement[]
+function drawerControls() {
+  return drawerRef.value?.querySelectorAll<HTMLElement>('button, a[href]') ?? []
 }
 
 function handleDrawerKeydown(e: KeyboardEvent) {
   if (e.key !== 'Tab' || !drawerOpen.value) return
 
+  const focusableElements = drawerControls()
   const first = focusableElements[0]
   const last = focusableElements[focusableElements.length - 1]
 
@@ -206,19 +185,8 @@ watch(drawerOpen, (isOpen) => {
   setScrollLock(isOpen)
 
   if (isOpen) {
-    nextTick(async () => {
-      updateFocusTrap()
-      // Wait for fonts to load for accurate measurements
-      await (document as any).fonts?.ready
-      measureNav()
-      measureAdmin()
-      // Focus first focusable element in drawer
-      const firstFocusable = focusableElements[0]
-      if (firstFocusable) {
-        firstFocusable.focus()
-      } else if (drawerRef.value) {
-        drawerRef.value.focus()
-      }
+    nextTick(() => {
+      if (drawerOpen.value) (drawerControls()[0] ?? drawerRef.value)?.focus()
     })
   } else {
     // Return focus to handle when drawer closes
@@ -228,97 +196,17 @@ watch(drawerOpen, (isOpen) => {
   }
 })
 
-watch(activePath, async () => {
-  // Remeasure thumb positions when active path changes
-  await nextTick()
-  await (document as any).fonts?.ready
-  measureNav()
-  measureAdmin()
-})
+async function handleNavClick(event: MouseEvent, path: string, navigate: (event: MouseEvent) => Promise<unknown>) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
 
-// Keep the drawer open when a destination is chosen. It closes only from the
-// explicit close button, Escape, or the overlay.
-
-function setNavRef(path: string, el: unknown) {
-  if (!(el instanceof HTMLElement)) {
-    navLinkRefs.delete(path)
-  } else {
-    navLinkRefs.set(path, el)
+  // Keep the press tint through lazy route loading. aria-current still follows the committed route.
+  const sequence = ++navigationSequence
+  pendingItem.value = path
+  try {
+    await navigate(event)
+  } finally {
+    if (sequence === navigationSequence) pendingItem.value = null
   }
-}
-
-function setAdminRef(path: string, el: unknown) {
-  if (!(el instanceof HTMLElement)) {
-    adminLinkRefs.delete(path)
-  } else {
-    adminLinkRefs.set(path, el)
-  }
-}
-
-function measureNav() {
-  if (!navRef.value) return
-
-  // Find the currently active link in nav section
-  const activeLink = Array.from(navLinkRefs.values()).find((el) => {
-    const path = Array.from(navLinkRefs.entries()).find(([, v]) => v === el)?.[0]
-    return path && isNavActive(path)
-  })
-
-  if (activeLink) {
-    const rect = activeLink.getBoundingClientRect()
-    const navRect = navRef.value.getBoundingClientRect()
-    navThumbState.value = {
-      left: rect.left - navRect.left,
-      top: rect.top - navRect.top,
-      width: rect.width,
-      height: rect.height,
-      ready: true
-    }
-  } else {
-    navThumbState.value = { ...navThumbState.value, ready: false }
-  }
-}
-
-function measureAdmin() {
-  if (!adminRef.value) return
-
-  // Find the currently active link in admin section
-  const activeLink = Array.from(adminLinkRefs.values()).find((el) => {
-    const path = Array.from(adminLinkRefs.entries()).find(([, v]) => v === el)?.[0]
-    return path && isNavActive(path)
-  })
-
-  if (activeLink) {
-    const rect = activeLink.getBoundingClientRect()
-    const adminRect = adminRef.value.getBoundingClientRect()
-    adminThumbState.value = {
-      left: rect.left - adminRect.left,
-      top: rect.top - adminRect.top,
-      width: rect.width,
-      height: rect.height,
-      ready: true
-    }
-  } else {
-    adminThumbState.value = { ...adminThumbState.value, ready: false }
-  }
-}
-
-async function handleNavClick(path: string) {
-  pressingItem.value = path
-  // Delay navigation to allow spring animation to start
-  await new Promise((resolve) => setTimeout(resolve, 220))
-  router.push(path)
-  // Keep drawer open after navigation
-  pressingItem.value = null
-}
-
-async function handleAdminClick(path: string) {
-  pressingItem.value = path
-  // Delay navigation to allow spring animation to start
-  await new Promise((resolve) => setTimeout(resolve, 220))
-  router.push(path)
-  // Keep drawer open after navigation
-  pressingItem.value = null
 }
 
 </script>
@@ -375,50 +263,29 @@ async function handleAdminClick(path: string) {
       </button>
     </div>
 
-    <nav class="site-nav__drawer-nav" ref="navRef">
-      <span
-        class="site-nav__drawer-thumb"
-        :style="{
-          transform: `translate3d(${navThumbState.left}px, ${navThumbState.top}px, 0)`,
-          width: `${navThumbState.width}px`,
-          height: `${navThumbState.height}px`,
-          opacity: navThumbState.ready ? 1 : 0
-        }"
-      />
-      <router-link
-        :to="primaryLink.path"
-        class="site-nav__drawer-link"
-        :class="{ 'is-active': primaryLink.path === activePath, 'is-pressing': pressingItem === primaryLink.path }"
-        :aria-current="primaryLink.path === activePath ? 'page' : undefined"
-        :ref="(el) => setNavRef(primaryLink.path, el)"
-        @click.prevent="handleNavClick(primaryLink.path)"
-      >
-        <span class="site-nav__drawer-link-text">{{ primaryLink.label }}</span>
-      </router-link>
-
-      <router-link
-        v-for="item in drawerItems"
-        :key="item.path"
-        :to="item.path"
-        class="site-nav__drawer-link"
-        :class="{ 'is-active': isNavActive(item.path), 'is-pressing': pressingItem === item.path }"
-        :aria-current="isNavActive(item.path) ? 'page' : undefined"
-        :ref="(el) => setNavRef(item.path, el)"
-        @click.prevent="handleNavClick(item.path)"
-      >
-        <span class="site-nav__drawer-link-text">{{ item.label }}</span>
+    <nav class="site-nav__drawer-nav">
+      <router-link v-for="item in drawerItems" :key="item.path" :to="item.path" custom v-slot="{ href, navigate }">
+        <a
+          :href="href"
+          class="site-nav__drawer-link"
+          :class="{ 'is-selected': pendingItem ? pendingItem === item.path : isNavActive(item.path) }"
+          :aria-current="isNavActive(item.path) ? 'page' : undefined"
+          @click="handleNavClick($event, item.path, navigate)"
+        >{{ item.label }}</a>
       </router-link>
     </nav>
 
     <div class="site-nav__drawer-divider" />
 
     <div class="site-nav__drawer-section">
-      <router-link
-        class="site-nav__drawer-action"
-        :class="{ 'is-active': activePath === '/notifications' }"
-        to="/notifications"
-      >
-        <span class="site-nav__drawer-link-text">通知</span>
+      <router-link to="/notifications" custom v-slot="{ href, navigate }">
+        <a
+          :href="href"
+          class="site-nav__drawer-link"
+          :class="{ 'is-selected': pendingItem ? pendingItem === '/notifications' : isNavActive('/notifications') }"
+          :aria-current="isNavActive('/notifications') ? 'page' : undefined"
+          @click="handleNavClick($event, '/notifications', navigate)"
+        >通知</a>
       </router-link>
     </div>
 
@@ -426,27 +293,15 @@ async function handleAdminClick(path: string) {
 
     <div v-if="adminItems.length" class="site-nav__drawer-section">
       <div class="site-nav__drawer-section-title">管理</div>
-      <div class="site-nav__drawer-admin-wrapper" ref="adminRef">
-        <span
-          class="site-nav__drawer-thumb"
-          :style="{
-            transform: `translate3d(${adminThumbState.left}px, ${adminThumbState.top}px, 0)`,
-            width: `${adminThumbState.width}px`,
-            height: `${adminThumbState.height}px`,
-            opacity: adminThumbState.ready ? 1 : 0
-          }"
-        />
-        <router-link
-          v-for="item in adminItems"
-          :key="item.path"
-          :to="item.path"
-          class="site-nav__drawer-link"
-          :class="{ 'is-active': isNavActive(item.path), 'is-pressing': pressingItem === item.path }"
-          :aria-current="isNavActive(item.path) ? 'page' : undefined"
-          :ref="(el) => setAdminRef(item.path, el)"
-          @click.prevent="handleAdminClick(item.path)"
-        >
-          <span class="site-nav__drawer-link-text">{{ item.label }}</span>
+      <div class="site-nav__drawer-admin-wrapper">
+        <router-link v-for="item in adminItems" :key="item.path" :to="item.path" custom v-slot="{ href, navigate }">
+          <a
+            :href="href"
+            class="site-nav__drawer-link"
+            :class="{ 'is-selected': pendingItem ? pendingItem === item.path : isNavActive(item.path) }"
+            :aria-current="isNavActive(item.path) ? 'page' : undefined"
+            @click="handleNavClick($event, item.path, navigate)"
+          >{{ item.label }}</a>
         </router-link>
       </div>
     </div>
@@ -484,6 +339,7 @@ async function handleAdminClick(path: string) {
 <style scoped>
 /* Glass handle on left edge */
 .site-nav__handle {
+  --handle-time: 200ms;
   position: fixed;
   left: 0;
   top: 50%;
@@ -505,9 +361,9 @@ async function handleAdminClick(path: string) {
   cursor: grab;
   touch-action: none;
   transition:
-    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
-    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    transform var(--handle-time) var(--ease-settle),
+    color var(--handle-time) var(--ease-settle),
+    box-shadow var(--handle-time) var(--ease-settle);
   box-shadow: var(--glass-floating-shadow);
   overflow: hidden;
   isolation: isolate;
@@ -547,14 +403,16 @@ async function handleAdminClick(path: string) {
 }
 
 .site-nav__handle:hover {
-  transform: translateY(-50%) scale(1.04);
-  color: var(--color-brand);
   box-shadow: var(--glass-floating-shadow), 0 0 0 1px rgb(0 113 227 / 0.12);
+}
+
+.site-nav__handle:active,
+.site-nav__handle[aria-expanded='true'] {
+  color: var(--accent-ink);
 }
 
 .site-nav__handle:active {
   transform: translateY(-50%) scale(0.96);
-  transition-duration: 120ms;
 }
 
 .site-nav__handle:focus-visible {
@@ -717,156 +575,64 @@ async function handleAdminClick(path: string) {
   outline-offset: -2px;
 }
 
-/* Drawer thumb */
-.site-nav__drawer-thumb {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 0;
-  height: 44px;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(240, 248, 255, 0.38) 100%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.88));
-  box-shadow:
-    0 2px 6px rgba(0, 113, 227, 0.08),
-    0 0 0 0.5px rgba(255, 255, 255, 0.4),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
-  transition:
-    transform 460ms cubic-bezier(0.34, 1.32, 0.64, 1),
-    width 460ms cubic-bezier(0.34, 1.32, 0.64, 1);
-  pointer-events: none;
-}
-
-.site-nav__drawer-thumb::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.5) 100%
-  );
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-/* Drawer navigation */
 .site-nav__drawer-nav {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
 .site-nav__drawer-link {
+  --nav-press-time: 200ms;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
   padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #ffffffb8, #f8fafc8f);
+  box-shadow: var(--glass-rim), 0 1px 3px #1230520a;
   color: var(--color-text-primary);
   text-decoration: none;
   font-size: var(--font-size-body);
   font-weight: 500;
-  position: relative;
-  z-index: 1;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 250, 252, 0.56) 100%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.86));
-  box-shadow:
-    0 1px 3px rgba(18, 48, 82, 0.04),
-    0 0 0 0.5px rgba(255, 255, 255, 0.5),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
-  overflow: hidden;
-  isolation: isolate;
-  transition:
-    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
-    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  cursor: pointer;
+  transition: scale var(--nav-press-time) var(--ease-settle),
+    color var(--nav-press-time) var(--ease-settle),
+    border-color var(--nav-press-time) var(--ease-settle);
 }
 
-.site-nav__drawer-link-text {
-  position: relative;
-  z-index: 1;
-}
-
-.site-nav__drawer-link::before,
-.site-nav__drawer-action::before {
+.site-nav__drawer-link::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: var(--glass-sheen);
-  transform: translateX(0);
-  transition:
-    transform 680ms cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
-  pointer-events: none;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(150deg, #ffffffb3, transparent 60%), var(--palette-main, #d9eafd);
+  box-shadow: var(--glass-rim);
   opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--nav-press-time) var(--ease-settle);
 }
 
-.site-nav__drawer-link:hover::before,
-.site-nav__drawer-action:hover::before {
-  opacity: 1;
-  transform: translateX(200%);
+@media (hover: hover) {
+  .site-nav__drawer-link:hover::before { opacity: 0.36; }
 }
 
-.site-nav__drawer-link:hover {
-  border-color: rgba(255, 255, 255, 0.92);
-  box-shadow:
-    0 2px 6px rgba(18, 48, 82, 0.06),
-    0 0 0 0.5px rgba(255, 255, 255, 0.6),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
-  transform: translateX(3px);
+.site-nav__drawer-link.is-selected,
+.site-nav__drawer-link:active {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent-ink) 42%, var(--glass-border));
 }
 
-.site-nav__drawer-link.is-active,
-.site-nav__drawer-action.is-active {
-  animation: drawer-active-in 420ms cubic-bezier(0.34, 1.08, 0.64, 1);
-}
+.site-nav__drawer-link.is-selected::before,
+.site-nav__drawer-link:active::before { opacity: 1; }
 
-@keyframes drawer-active-in {
-  from {
-    opacity: 0.6;
-    transform: translateX(-4px) scale(0.988);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-}
-
-.site-nav__drawer-link.is-active {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(240, 248, 255, 0.72) 100%);
-  border-color: rgba(0, 113, 227, 0.24);
-  color: var(--color-brand);
-  font-weight: 600;
-  box-shadow:
-    0 2px 8px rgba(0, 113, 227, 0.12),
-    0 0 0 0.5px rgba(0, 113, 227, 0.15),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
-  z-index: 1;
-  position: relative;
-}
-
-.site-nav__drawer-link.is-active::before {
-  display: none;
-}
+.site-nav__drawer-link:active { scale: 0.97; }
 
 .site-nav__drawer-link:focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--accent-ink);
   outline-offset: -2px;
-}
-
-.site-nav__drawer-link.is-pressing {
-  transform: scale(0.97);
-  transition: transform 200ms cubic-bezier(0.34, 1.32, 0.64, 1);
 }
 
 /* Drawer sections */
@@ -898,79 +664,6 @@ async function handleAdminClick(path: string) {
   color: var(--color-text-tertiary);
 }
 
-.site-nav__drawer-action {
-  position: relative;
-  padding: var(--space-3) var(--space-4);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-body);
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 250, 252, 0.56) 100%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.86));
-  box-shadow:
-    0 1px 3px rgba(18, 48, 82, 0.04),
-    0 0 0 0.5px rgba(255, 255, 255, 0.5),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  isolation: isolate;
-  transition:
-    transform 280ms cubic-bezier(0.34, 1.08, 0.64, 1),
-    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  text-decoration: none;
-}
-
-.site-nav__drawer-action:hover {
-  border-color: rgba(255, 255, 255, 0.92);
-  box-shadow:
-    0 2px 6px rgba(18, 48, 82, 0.06),
-    0 0 0 0.5px rgba(255, 255, 255, 0.6),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
-  transform: translateX(3px);
-}
-
-.site-nav__drawer-action.is-active {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(240, 248, 255, 0.72) 100%);
-  border-color: rgba(0, 113, 227, 0.24);
-  color: var(--color-brand);
-  box-shadow:
-    0 2px 8px rgba(0, 113, 227, 0.12),
-    0 0 0 0.5px rgba(0, 113, 227, 0.15),
-    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.96));
-}
-
-.site-nav__drawer-action.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
-  background: var(--color-brand);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-  opacity: 1;
-  transition:
-    height 320ms cubic-bezier(0.34, 1.08, 0.64, 1),
-    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 2;
-}
-
-.site-nav__drawer-action:active {
-  transform: translateX(2px);
-  transition-duration: 120ms;
-}
-
-.site-nav__drawer-action:focus-visible {
-  outline: 2px solid var(--color-brand);
-  outline-offset: -2px;
-}
-
 /* Transitions */
 .drawer-overlay-enter-active,
 .drawer-overlay-leave-active {
@@ -985,11 +678,7 @@ async function handleAdminClick(path: string) {
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .site-nav__handle {
-    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .site-nav__handle:hover {
-    transform: translateY(-50%);
+    transition: none;
   }
 
   .site-nav__handle:active {
@@ -1009,54 +698,26 @@ async function handleAdminClick(path: string) {
     transform: none;
   }
 
-  .site-nav__drawer-link {
-    transition:
-      background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
-      border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .site-nav__drawer-action {
-    transition:
-      border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .site-nav__drawer-link::before,
-  .site-nav__drawer-action::before {
-    display: none;
-  }
-
-  .site-nav__drawer-link.is-active,
-  .site-nav__drawer-action.is-active {
-    animation: none;
-  }
-
-  .site-nav__drawer-link:hover,
-  .site-nav__drawer-action:hover {
-    transform: none;
-  }
-
-  .site-nav__drawer-action:active {
-    transform: none;
-  }
-
-  .site-nav__drawer-thumb {
+  .site-nav__drawer-link,
+  .site-nav__drawer-link::before {
     transition: none;
   }
+
+  .site-nav__drawer-link:active { scale: none; }
 }
 
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
   .site-nav__drawer-close,
-  .site-nav__drawer-link,
-  .site-nav__drawer-action {
+  .site-nav__drawer-link {
     background: var(--surface-matte);
     border-color: var(--glass-border);
   }
 
-  .site-nav__drawer-thumb,
-  .site-nav__drawer-link.is-active,
-  .site-nav__drawer-action.is-active {
-    background: #e3eef8;
-    border-color: var(--accent-ink);
+  .site-nav__drawer-link::before { background: var(--palette-main, #d9eafd); }
+
+  .site-nav__drawer-link.is-selected,
+  .site-nav__drawer-link:active {
+    border-color: currentColor;
   }
 }
 </style>

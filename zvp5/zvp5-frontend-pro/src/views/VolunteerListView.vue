@@ -45,7 +45,7 @@ const loading = ref(true)
 const listLoading = ref(false)
 const activities = ref<Activity[]>([])
 const totalActivities = ref(0)
-const selectedActivity = ref<Activity | null>(null)
+const deckIndex = ref(0)
 const error = ref('')
 const unauthenticated = ref(false)
 const classId = ref('')
@@ -60,12 +60,19 @@ const visiblePages = computed(() => {
   return Array.from({ length: 7 }, (_, index) => start + index)
 })
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
+const selectedActivity = computed(() => activities.value[deckIndex.value] ?? null)
+
+function deckDepth(index: number) {
+  const count = activities.value.length
+  return (index - deckIndex.value + count) % count
+}
 
 const pagerTrackRef = ref<HTMLElement | null>(null)
 const pagerThumbRef = ref<HTMLElement | null>(null)
 const pagerThumbState = ref({ left: 0, width: 0, ready: false })
 const pagerDragging = ref(false)
 const pagerDragOffset = ref(0)
+const detailDialogRef = ref<HTMLDialogElement | null>(null)
 const pagerPages = new Map<number, HTMLElement>()
 let pagerObserver: ResizeObserver | null = null
 let pagerObserverHost: HTMLElement | null = null
@@ -258,7 +265,8 @@ async function loadActivities() {
     error.value = ''
     activities.value = []
     totalActivities.value = 0
-    selectedActivity.value = null
+    deckIndex.value = 0
+    closeDetail()
     return
   }
 
@@ -294,17 +302,17 @@ async function loadActivities() {
     if (pageCount > 0 && activePage.value > pageCount) {
       activePage.value = pageCount
     }
-    if (
-      selectedActivity.value &&
-      !activities.value.some((activity) => activity.id === selectedActivity.value?.id)
-    ) {
-      selectedActivity.value = null
+    if (deckIndex.value >= activities.value.length) {
+      deckIndex.value = Math.max(0, activities.value.length - 1)
+      closeDetail()
     }
   } catch (reason) {
     if (seq !== requestSeq) return
     if (!isAuthError(reason)) {
       activities.value = []
       totalActivities.value = 0
+      deckIndex.value = 0
+      closeDetail()
       error.value = readableError(reason, '活动加载失败，请稍后重试。')
     }
   } finally {
@@ -339,6 +347,8 @@ function handleSearch() {
   if (next === appliedSearch.value) return
   appliedSearch.value = next
   activePage.value = 1
+  deckIndex.value = 0
+  closeDetail()
   void loadActivities()
 }
 
@@ -357,7 +367,8 @@ function handleTabChange(tab: ActivityScope) {
   if (activeTab.value === tab) return
   activeTab.value = tab
   activePage.value = 1
-  selectedActivity.value = null
+  deckIndex.value = 0
+  closeDetail()
   void loadActivities()
 }
 
@@ -365,7 +376,8 @@ function handlePageChange(page: number) {
   if (page === activePage.value || page < 1) return
   if (totalPages.value > 0 && page > totalPages.value) return
   activePage.value = page
-  selectedActivity.value = null
+  deckIndex.value = 0
+  closeDetail()
   void loadActivities()
 }
 
@@ -400,19 +412,34 @@ function getStatusClass(status: ActivityStatus) {
   return classes[status]
 }
 
-function openActivity(activity: Activity) {
-  selectedActivity.value = selectedActivity.value?.id === activity.id ? null : activity
+function openCard() {
+  const dialog = detailDialogRef.value
+  if (dialog && !dialog.open && !listLoading.value) dialog.showModal()
 }
 
-function closeActivity(card: Element | null) {
-  selectedActivity.value = null
-  card?.querySelector<HTMLButtonElement>('.stack-card__header')?.focus()
+function closeDetail() {
+  detailDialogRef.value?.close()
 }
 
-function handleKeydown(event: KeyboardEvent, activity: Activity) {
-  if (event.key === 'Escape' && selectedActivity.value?.id === activity.id) {
-    event.stopPropagation()
-    closeActivity(event.currentTarget as Element)
+function navPrev() {
+  if (!listLoading.value && deckIndex.value > 0) deckIndex.value -= 1
+}
+
+function navNext() {
+  if (!listLoading.value && deckIndex.value < activities.value.length - 1) deckIndex.value += 1
+}
+
+async function handleDeckKeydown(event: KeyboardEvent) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+
+  event.preventDefault()
+  const stage = (event.currentTarget as HTMLElement).querySelector('.deck-stage')
+  const focusCard = stage?.contains(document.activeElement)
+  if (event.key === 'ArrowLeft') navPrev()
+  else navNext()
+  if (focusCard) {
+    await nextTick()
+    stage?.querySelector<HTMLButtonElement>('.is-front')?.focus()
   }
 }
 
@@ -562,7 +589,7 @@ onBeforeUnmount(() => {
       aria-live="polite"
       aria-label="正在加载活动"
     >
-      <div v-for="n in 6" :key="n" class="activity-skeleton glass-card">
+      <div v-for="n in 3" :key="n" class="activity-skeleton glass-card">
         <div class="skeleton-line skeleton-line--title"></div>
       </div>
     </div>
@@ -580,78 +607,112 @@ onBeforeUnmount(() => {
 
     <div
       v-else
-      class="activities-stack"
+      class="deck-container"
       :class="{ 'is-refreshing': listLoading }"
       :aria-busy="listLoading"
-      role="list"
+      @keydown="handleDeckKeydown"
     >
-      <article
-        v-for="activity in activities"
-        :key="activity.id"
-        class="stack-card glass-card"
-        :class="{ 'is-expanded': selectedActivity?.id === activity.id }"
-        role="listitem"
-        @keydown="handleKeydown($event, activity)"
-      >
-        <h2>
+      <div class="deck-stage">
+        <button
+          v-for="(activity, index) in activities"
+          :key="activity.id"
+          v-show="deckDepth(index) <= 3"
+          type="button"
+          class="deck-card glass-card"
+          :class="{ 'is-front': index === deckIndex, 'is-behind': index !== deckIndex }"
+          :style="{ '--deck-depth': deckDepth(index) }"
+          :inert="index !== deckIndex"
+          :disabled="listLoading"
+          aria-haspopup="dialog"
+          @click="openCard"
+        >
+          <span class="deck-card__title">{{ activity.name }}</span>
+        </button>
+      </div>
+
+      <div v-if="activities.length > 1" class="deck-nav" role="group" aria-label="卡片导航">
+        <button
+          class="deck-nav__btn"
+          type="button"
+          :aria-disabled="deckIndex === 0 || listLoading"
+          aria-label="上一张卡片"
+          @click="navPrev"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M12 4L6 10L12 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <span class="deck-nav__counter" aria-live="polite">
+          {{ deckIndex + 1 }} / {{ activities.length }}
+        </span>
+        <button
+          class="deck-nav__btn"
+          type="button"
+          :aria-disabled="deckIndex === activities.length - 1 || listLoading"
+          aria-label="下一张卡片"
+          @click="navNext"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M8 4L14 10L8 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <dialog
+      ref="detailDialogRef"
+      class="detail-dialog"
+      aria-labelledby="detail-title"
+      @click.self="closeDetail"
+    >
+      <div class="detail-panel glass-card">
+        <header class="detail-header">
+          <h2 id="detail-title" class="detail-title">{{ selectedActivity?.name }}</h2>
           <button
-            class="stack-card__header"
+            class="detail-close"
             type="button"
-            :aria-expanded="selectedActivity?.id === activity.id"
-            :aria-controls="`activity-${activity.id}`"
-            @click="openActivity(activity)"
+            aria-label="关闭详情"
+            autofocus
+            @click="closeDetail"
           >
-            <span class="stack-card__title">{{ activity.name }}</span>
-            <svg class="stack-card__chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M7 8L10 11L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M5 5L15 15M15 5L5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </button>
-        </h2>
+        </header>
 
-        <div v-show="selectedActivity?.id === activity.id" :id="`activity-${activity.id}`" class="stack-card__body">
-          <dl class="stack-card__info">
-            <div class="stack-card__info-row">
-              <dt>日期</dt>
-              <dd>{{ activity.detailDate }}</dd>
-            </div>
-            <div class="stack-card__info-row">
-              <dt>地点</dt>
-              <dd>{{ activity.place || '—' }}</dd>
-            </div>
-            <div class="stack-card__info-row">
-              <dt>类型</dt>
-              <dd><span class="stack-card__type" :class="activity.typeClass">{{ activity.type }}</span></dd>
-            </div>
-            <div v-if="activity.creator" class="stack-card__info-row">
-              <dt>创建者</dt>
-              <dd>{{ activity.creator }}</dd>
-            </div>
-            <div class="stack-card__info-row">
-              <dt>状态</dt>
-              <dd>
-                <span class="stack-card__status" :class="activity.statusClass">
-                  {{ activity.statusLabel }}
-                </span>
-              </dd>
-            </div>
-            <div class="stack-card__info-row">
-              <dt>时长</dt>
-              <dd>{{ activity.duration }}h</dd>
-            </div>
-          </dl>
-
-          <div class="stack-card__actions">
-            <button
-              class="liquid-btn liquid-btn--secondary liquid-btn--sm"
-              type="button"
-              @click="closeActivity(($event.currentTarget as HTMLElement).closest('.stack-card'))"
-            >
-              收起
-            </button>
+        <dl v-if="selectedActivity" class="detail-info">
+          <div class="detail-info-row">
+            <dt>日期</dt>
+            <dd>{{ selectedActivity.detailDate }}</dd>
           </div>
-        </div>
-      </article>
-    </div>
+          <div class="detail-info-row">
+            <dt>地点</dt>
+            <dd>{{ selectedActivity.place || '—' }}</dd>
+          </div>
+          <div class="detail-info-row">
+            <dt>类型</dt>
+            <dd><span class="detail-type" :class="selectedActivity.typeClass">{{ selectedActivity.type }}</span></dd>
+          </div>
+          <div v-if="selectedActivity.creator" class="detail-info-row">
+            <dt>创建者</dt>
+            <dd>{{ selectedActivity.creator }}</dd>
+          </div>
+          <div class="detail-info-row">
+            <dt>状态</dt>
+            <dd>
+              <span class="detail-status" :class="selectedActivity.statusClass">
+                {{ selectedActivity.statusLabel }}
+              </span>
+            </dd>
+          </div>
+          <div class="detail-info-row">
+            <dt>时长</dt>
+            <dd>{{ selectedActivity.duration }}h</dd>
+          </div>
+        </dl>
+      </div>
+    </dialog>
 
     <nav
       v-if="totalPages > 1 && !loading && !error && !unauthenticated && !needsClass"
@@ -991,188 +1052,267 @@ onBeforeUnmount(() => {
   transform: scale(0.9);
 }
 
-.activities-stack {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  width: min(100%, 720px);
-  margin-inline: auto;
-  isolation: isolate;
-  transition: opacity var(--duration-fast) var(--ease-settle);
+.deck-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  align-items: center;
+  position: relative;
+  outline: none;
 }
 
-.activities-stack.is-refreshing {
-  opacity: 0.55;
+.deck-container.is-refreshing {
+  opacity: 0.6;
   pointer-events: none;
 }
 
-.stack-card {
-  padding: 0 0 8px;
-  margin-inline: 5px;
-  background: var(--surface-matte);
-  box-shadow: var(--glass-rim), 0 5px 14px #203d5c22;
-  transition: translate 300ms var(--ease-settle), box-shadow 300ms var(--ease-settle);
+.deck-stage {
+  position: relative;
+  width: min(352px, calc(100% - 34px));
+  aspect-ratio: 1;
+  margin: var(--space-6) 0;
 }
 
-.stack-card:nth-child(even) { margin-inline: 9px; }
-.stack-card + .stack-card { margin-top: -8px; }
-
-.stack-card.is-expanded {
-  z-index: 2;
-  translate: 0 -4px;
-  margin-bottom: 8px;
-  background: var(--glass-floating-bg);
-  box-shadow: var(--glass-floating-shadow);
+.deck-card {
+  position: absolute;
+  inset: 0;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  cursor: pointer;
+  text-align: start;
+  background: linear-gradient(145deg, #fbfcff, var(--palette-edge, #dce9f5));
+  border-color: color-mix(in srgb, var(--accent-ink) 22%, #fff);
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.08, 0.64, 1),
+    opacity 320ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.stack-card__header:focus-visible {
+.deck-card.is-behind {
+  pointer-events: none;
+  transform:
+    translate(calc(var(--deck-depth) * -8px), calc(var(--deck-depth) * -8px))
+    rotate(calc(var(--deck-depth) * -1deg));
+  z-index: calc(10 - var(--deck-depth));
+  background: color-mix(in srgb, var(--palette-main, #d9eafd) calc(var(--deck-depth) * 17%), #f8fbff);
+}
+
+.deck-card.is-behind .deck-card__title { visibility: hidden; }
+
+.deck-card.is-front {
+  z-index: 10;
+}
+
+.deck-card.is-front:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.deck-card.is-front:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.deck-card.is-front:focus-visible {
   outline: 2px solid var(--accent-ink);
-  outline-offset: -4px;
+  outline-offset: 2px;
 }
 
-.stack-card__header {
+.deck-card__title {
+  margin: 0;
+  font-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
+.deck-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 52px;
-  padding: var(--space-3) var(--space-5);
-  border: 0;
-  border-radius: var(--radius-xl);
-  background: transparent;
-  color: inherit;
-  text-align: start;
-  cursor: pointer;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--surface-matte);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  box-shadow: var(--glass-shadow);
 }
 
-.stack-card__title {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--font-size-body);
+.deck-nav__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 180ms,
+    color 180ms,
+    transform 180ms;
+}
+
+.deck-nav__btn:hover:not([aria-disabled='true']) {
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-ink);
+  transform: scale(1.05);
+}
+
+.deck-nav__btn:active:not([aria-disabled='true']) {
+  transform: scale(0.95);
+}
+
+.deck-nav__btn[aria-disabled='true'] {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.deck-nav__counter {
+  min-width: 4rem;
+  text-align: center;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.4;
 }
 
-.stack-card__chevron {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  transition: transform 380ms cubic-bezier(0.34, 1.18, 0.64, 1);
+.detail-dialog {
+  max-width: min(480px, calc(100vw - var(--space-5) * 2));
+  max-height: calc(100vh - var(--space-5) * 2);
+  margin: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xl);
+  background: transparent;
+  overflow: visible;
 }
 
-.stack-card.is-expanded .stack-card__chevron {
-  transform: rotate(180deg);
+.detail-dialog::backdrop {
+  background: rgb(16 27 50 / 42%);
 }
 
-.stack-card.is-expanded .stack-card__title { white-space: normal; overflow-wrap: anywhere; }
+.detail-dialog[open] { animation: deck-detail-in 260ms var(--ease-settle) backwards; }
 
-.stack-card__body {
-  display: grid;
+@keyframes deck-detail-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.94); }
+}
+
+.detail-panel {
+  width: 100%;
+  max-height: calc(100vh - var(--space-5) * 2);
+  overflow-y: auto;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5);
-  border-top: 1px solid var(--color-border-moderate);
-  animation: surface-enter-keyframes 260ms var(--ease-settle) backwards;
 }
 
-.stack-card__type {
-  padding: 4px 8px;
-  border: 1px solid;
-  border-radius: var(--radius-xs);
-  font-weight: 500;
-}
-
-.activity-type--on-campus {
-  color: var(--tone-blue);
-  background: var(--tone-blue-bg);
-  border-color: rgba(0, 113, 227, 0.2);
-}
-
-.activity-type--off-campus {
-  color: var(--tone-teal);
-  background: var(--tone-teal-bg);
-  border-color: rgba(48, 176, 199, 0.2);
-}
-
-.activity-type--social-practice {
-  color: var(--tone-amber);
-  background: var(--tone-amber-bg);
-  border-color: rgba(255, 159, 10, 0.2);
-}
-
-.activity-type--hybrid {
-  color: var(--tone-violet);
-  background: var(--tone-violet-bg);
-  border-color: rgba(175, 82, 222, 0.2);
-}
-
-.stack-card__status {
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: var(--font-size-caption);
-}
-
-.status-effective {
-  background: rgba(52, 211, 153, 0.15);
-  color: rgb(6, 95, 70);
-}
-
-.status-pending {
-  background: rgba(251, 191, 36, 0.15);
-  color: rgb(120, 53, 15);
-}
-
-.status-draft {
-  background: rgba(156, 163, 175, 0.15);
-  color: rgb(55, 65, 81);
-}
-
-.status-refused {
-  background: rgba(248, 113, 113, 0.15);
-  color: rgb(153, 27, 27);
-}
-
-.stack-card__info {
-  display: grid;
-  gap: var(--space-3);
+.detail-title {
+  flex: 1;
   margin: 0;
-  padding: var(--space-4);
-  background: rgba(0, 0, 0, 0.02);
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
-.stack-card__info-row {
+.detail-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 180ms,
+    color 180ms;
+}
+
+.detail-close:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-primary);
+}
+
+.detail-info {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detail-info-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: min(5rem, 30%) minmax(0, 1fr);
   gap: var(--space-3);
   align-items: baseline;
 }
 
-.stack-card__info-row dt {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-callout);
+.detail-info-row dt {
+  font-size: 0.875rem;
   font-weight: 500;
+  color: var(--color-text-tertiary);
 }
 
-.stack-card__info-row dd {
+.detail-info-row dd {
   margin: 0;
+  font-size: 0.9375rem;
   color: var(--color-text-primary);
-  font-size: var(--font-size-callout);
   overflow-wrap: anywhere;
 }
 
-.stack-card__actions {
-  display: flex;
-  gap: var(--space-3);
-  justify-content: flex-end;
+.detail-type {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background: rgba(56, 189, 248, 0.1);
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--accent-ink);
 }
+
+.activity-type--on-campus { background: rgba(56, 189, 248, 0.1); color: var(--accent-ink); }
+.activity-type--off-campus { background: rgba(110, 231, 183, 0.1); color: rgb(5, 150, 105); }
+.activity-type--social-practice { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
+.activity-type--hybrid { background: rgba(167, 139, 250, 0.1); color: rgb(109, 40, 217); }
+
+.detail-status {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.status-draft { background: rgba(148, 163, 184, 0.1); color: rgb(71, 85, 105); }
+.status-pending { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
+.status-refused { background: rgba(239, 68, 68, 0.1); color: rgb(185, 28, 28); }
+.status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
 
 .activities-skeleton {
   display: grid;
@@ -1446,22 +1586,10 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 374px) {
-  .stack-card__header {
-    padding: var(--space-3) var(--space-4);
-  }
-
-  .stack-card__body {
-    padding: var(--space-4);
-  }
-
-  .stack-card__info-row {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .pagination-thumb {
+  .pagination-thumb,
+  .deck-card,
+  .deck-nav__btn {
     transition: none;
   }
 
@@ -1471,28 +1599,11 @@ onBeforeUnmount(() => {
     transform: none;
   }
 
-  .stack-card {
-    transition: none;
-  }
-
-  .stack-card.is-expanded {
-    translate: none;
-  }
-
-  .stack-card__body {
-    animation: none;
-  }
-
-  .stack-card__chevron {
-    transition: none;
-  }
-
-  .skeleton-line {
-    animation: none;
-  }
-
-  .scope-indicator {
-    transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
+  .skeleton-line { animation: none; }
+  .detail-dialog[open] { animation: none; }
+  .deck-card.is-front:hover,
+  .deck-card.is-front:active,
+  .deck-nav__btn:hover,
+  .deck-nav__btn:active { transform: none; }
 }
 </style>

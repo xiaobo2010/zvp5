@@ -1,6 +1,7 @@
 .glass-feedback {
   --feedback-tint: var(--palette-edge, #d9eafd);
   --feedback-ink: var(--accent-ink, #175588);
+  --feedback-release-delay: 135ms;
   position: relative;
   min-inline-size: 0;
   padding-inline-start: 19px;
@@ -23,10 +24,27 @@
   background: radial-gradient(circle at 30% 28%, white 5%, var(--feedback-tint) 49%, var(--feedback-ink) 130%);
   box-shadow: 0 1px 4px #28466828;
   pointer-events: none;
-  animation: feedback-seed 440ms var(--ease-settle) backwards;
+  animation: feedback-seed 520ms var(--ease-settle) backwards;
+}
+
+.glass-feedback::after {
+  content: '';
+  position: absolute;
+  inset-block-start: 16px;
+  inset-inline-start: 7px;
+  width: 17px;
+  height: 9px;
+  border-radius: 45%;
+  background: linear-gradient(to bottom, #fffdf9 10%, var(--feedback-tint) 70%);
+  box-shadow: inset 0 -1px 1px color-mix(in srgb, var(--feedback-ink) 28%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: left center;
+  animation: feedback-neck 365ms linear var(--feedback-release-delay) backwards;
 }
 
 .glass-feedback__body {
+  position: relative;
   display: block;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--glass-border);
@@ -36,7 +54,7 @@
     linear-gradient(153deg, #ffffffa8, var(--feedback-tint));
   box-shadow: var(--glass-rim), 0 4px 12px #28466818;
   transform-origin: left 20px;
-  animation: feedback-bubble 390ms var(--ease-settle) 135ms backwards;
+  animation: feedback-bubble 410ms var(--ease-settle) var(--feedback-release-delay) backwards;
 }
 
 .glass-feedback--error {
@@ -56,21 +74,33 @@
 
 @keyframes feedback-seed {
   from { opacity: 0; transform: translate(-4px, 5px) scale(0.2); }
-  32% { opacity: 1; transform: translate(1px, -1px) scale(1.18); }
-  54% { transform: translate(2px, 0) scale(1.22, 0.83); }
+  24% { opacity: 1; transform: translateX(1px) scale(1.17); }
+  61% { transform: translateX(1px) scale(1.28, 0.9); }
   to { opacity: 1; transform: none; }
 }
 
+/* The neck stays attached while the body grows, then pinches off toward the seed. */
+@keyframes feedback-neck {
+  from { opacity: 0; transform: scale(0.48, 0.72); }
+  17% { opacity: 1; transform: scale(1.02, 1); }
+  56% { opacity: 1; transform: scale(1.04, 0.76); }
+  69% { opacity: 1; transform: scale(1.05, 0.32); }
+  82% { opacity: 0; transform: scale(0.3, 0.13); }
+  to { opacity: 0; transform: scale(0.2, 0.1); }
+}
+
 @keyframes feedback-bubble {
-  from { opacity: 0; transform: translate(-9px, 2px) scale(0.12, 0.48); }
-  42% { opacity: 1; transform: translate(-3px, -1px) scale(0.87, 1.09); }
-  72% { transform: translate(0, -1px) scale(1.014, 1.03); }
+  from { opacity: 0; transform: translateX(-9px) scale(0.12, 0.48); }
+  26% { opacity: 1; transform: translateX(-5px) scale(0.73, 1.02); }
+  60% { transform: translateX(-2px) scale(1.014, 1.04); }
   to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .glass-feedback::before,
   .glass-feedback__body { animation: none; }
+
+  .glass-feedback::after { display: none; }
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
@@ -81,4 +111,6 @@
   }
 
   .glass-feedback::before { border-color: currentColor; }
+
+  .glass-feedback::after { background: currentColor; box-shadow: none; }
 }

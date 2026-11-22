@@ -75,12 +75,6 @@ const error = ref('')
 const hoursRefreshing = ref(false)
 const refreshFeedback = ref<{ text: string; tone: 'success' | 'error' | 'warn' } | null>(null)
 
-const shortcuts = [
-  { path: '/volunteers', label: '义工列表', description: '查看活动与登记记录' },
-  { path: '/notifications', label: '站内通知', description: '查看公告与提醒' },
-  { path: '/me#appearance', label: '外观设置', description: '切换界面配色' },
-]
-
 const greetingVisible = ref(false)
 const sectionsVisible = ref<Record<string, boolean>>({
   identity: false,
@@ -573,13 +567,6 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <nav v-if="!unauthenticated" class="home-shortcuts" aria-label="常用入口">
-      <RouterLink v-for="item in shortcuts" :key="item.path" class="home-shortcut" :to="item.path">
-        <span class="home-shortcut__label">{{ item.label }} <span aria-hidden="true">↗</span></span>
-        <span class="home-shortcut__description">{{ item.description }}</span>
-      </RouterLink>
-    </nav>
-
     <!-- Signed out -->
     <section v-if="unauthenticated" class="state-panel glass-panel" role="alert">
       <h2 class="state-panel__title">需要登录</h2>
@@ -934,38 +921,7 @@ onUnmounted(() => {
   text-wrap: balance;
 }
 
-.home-shortcuts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-5);
-}
-
-.home-shortcut {
-  display: grid;
-  align-content: start;
-  gap: 3px;
-  min-width: 0;
-  padding: var(--space-3) clamp(8px, 2vw, 20px);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-matte);
-  box-shadow: var(--glass-shadow);
-  overflow-wrap: anywhere;
-}
-
-.home-shortcut:hover,
-.home-shortcut:focus-visible { border-color: var(--accent-ink); }
-
-.home-shortcut__label { color: var(--accent-ink); font-weight: 650; }
-.home-shortcut__description { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .hours-feedback { margin-bottom: var(--space-4); }
-
-@media (max-width: 420px) {
-  .home-shortcuts { gap: var(--space-2); }
-  .home-shortcut__label { font-size: var(--font-size-callout); }
-  .home-shortcut__label [aria-hidden] { display: none; }
-}
 
 /* Apple-style "now" panel */
 .greeting__panel {
