@@ -275,10 +275,12 @@ jobs:
           }
           NODE
       - name: Build theme apps (full branch frontends)
-        # 主题 = 整站多构建：canary2 / canary-pro 是另外两个分支的完整前端，
-        # 由脚本取 worktree 各自 install + build 后并入 dist/t/<id>/。
+        # 主题 = 整站多构建：清单 zvp5/themes/manifest.json 声明每个主题的
+        # 来源分支/目录与构建命令，构建器取 worktree 各自 install + build，
+        # 产物并入 dist/themes/<id>/ 并生成运行清单 dist/themes.json。
+        # 新增主题只改清单 + 后端 registry，不需要动本 workflow。
         working-directory: .
-        run: bash zvp5/deployment/build-theme-apps.sh
+        run: node zvp5/deployment/build-theme-apps.mjs
       - name: Drop service worker from the preview bundle
         shell: bash
         run: |

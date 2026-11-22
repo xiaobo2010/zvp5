@@ -16,7 +16,7 @@ Oracle Autonomous Database。
 | `adb-backup/` | 数据库备份：安装脚本 + systemd timer + `sync_adb.py`，见 [`adb-backup/README.md`](./adb-backup/README.md) |
 | `github-actions/` | 服务端部署侧：免密账号引导、部署/回滚主脚本、Actions 配置说明，见 [`github-actions/README.md`](./github-actions/README.md) |
 | `preview-worker/` | canary 分支的前端预览站（Cloudflare Worker），见 [`preview-worker/README.md`](./preview-worker/README.md) |
-| `build-theme-apps.sh` | 主题子应用构建：用 worktree 取出 `v5-canary2` / `v5-canary-pro` 的完整前端，按 `/t/<id>/` 构建并并入根 canary 产物（CI 在根构建后调用） |
+| `build-theme-apps.mjs` | 主题子应用构建：读 `zvp5/themes/manifest.json`（唯一主题清单），按每条主题的 `source`（git ref/path 或仓库内 local path）取 worktree，应用 `patch`、执行 `install`/`command`（自动追加 `--base=<base>`），产物并入 `zvp5/zvp5-frontend/dist/themes/<id>/` 并生成运行清单 `dist/themes.json`（CI 在根构建后调用；`--validate` 只校验清单） |
 
 ## 两种发布通道
 
@@ -36,6 +36,24 @@ Oracle Autonomous Database。
 推送到 `v5-canary` 会跑同一套门禁，然后由 `preview` job 把前端构建发布到
 Cloudflare Worker 预览站，跨域直连正式 API。预览站的放行由 canary environment
 的 reviewer 控制。
+
+### 主题构建（同源多构建）
+
+主题清单是唯一事实源：[`../themes/manifest.json`](../themes/manifest.json)。
+
+- 默认主题（`default` + `build.kind: "root"`）由前端自己构建，挂在 `/`；
+- 其余主题 `build.kind: "vite"`，`base` 必须是 `/themes/<id>/`，由
+  `build-theme-apps.mjs` 用 worktree 从 `source.ref`/`source.path` 取出源码构建，
+  产物并入 `dist/themes/<id>/`；
+- 构建完生成运行清单 `dist/themes.json`（只含 `id/label/description/status/base`），
+  前端 `/me` 下拉与子应用 `theme-switcher.js` 都读它；
+- Worker 只认通用前缀 `/themes/<slug>/`，不维护主题列表。
+
+新增主题 = 清单一条（`id/label/description/status/base`，非根主题再给
+`source` 与 `build`）+ 后端 `services/theme_registry.py` 一条；Worker、CI、前端
+都不需要改。`tests/test_theme_manifest.py` 守着清单与后端注册表不漂移。
+本地只校验清单：`node zvp5/deployment/build-theme-apps.mjs --validate`。
+
 
 ## 首次部署
 

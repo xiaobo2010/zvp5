@@ -190,7 +190,7 @@ export const useUserStore = defineStore('user', {
     /**
      * 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。
      * 若当前跑在根 canary 应用里而账号偏好是别的主题，整页跳转到那份完整应用；
-     * 子应用（/t/canary2/、/t/canary-pro/）不执行这段逻辑，避免互相踢。
+     * 子应用（`/themes/<id>/`）不执行这段逻辑，避免互相踢。
      */
     async syncThemeFromServer() {
       try {

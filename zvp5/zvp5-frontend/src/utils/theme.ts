@@ -1,67 +1,63 @@
 /**
  * 主题 = 整站多构建（same-origin multi-build），不是同一套页面换外壳。
  *
- * 三个主题各自是一份**完整的前端构建**，由 `zvp5/deployment/build-theme-apps.sh`
- * 在 CI 里从对应分支构建后挂到同一域名下：
- * - canary    → `/`（当前 `zvp5/zvp5-frontend`）
- * - canary2   → `/t/canary2/`（`v5-canary2` 的 `zvms4-modified-main/zvms4-frontend`）
- * - canary-pro→ `/t/canary-pro/`（`v5-canary-pro` 的 `zvp5/zvp5-frontend-pro`）
+ * 每个主题都是一份**完整的前端构建**，由 `zvp5/deployment/build-theme-apps.mjs`
+ * 按 `zvp5/themes/manifest.json` 在 CI 里构建后挂到同一域名下：
+ * - 默认主题（canary）→ `/`
+ * - 其余主题 `<id>`   → `/themes/<id>/`
+ *
+ * 这里**不再维护主题 id 列表**：清单是唯一事实源，主题集合在运行时由
+ * `/api/v1/themes`（后端注册表）或 `/themes.json`（构建产物里的运行清单）提供。
+ * 本模块只负责「id ↔ 路径」的约定与设备级缓存。
  *
  * 因为同源，localStorage 里的 token 共享，切换主题 = 整页跳转，登录态无缝。
- * 这里只负责「主题 id ↔ 路径」的映射和设备级缓存；主题本身由各自构建产出，
- * 前端不再按属性换皮（`data-theme-variant` / `installTheme` 已废弃）。
  */
 
 export type ThemeVariant = string
 
 export const THEME_STORAGE_KEY = 'zvms.theme'
 
-/** 主题 id → 该主题完整应用的站内基路径。 */
-export const THEME_PATHS: Record<string, string> = {
-  canary: '/',
-  canary2: '/t/canary2/',
-  'canary-pro': '/t/canary-pro/'
-}
-
+/** 默认主题（挂在根路径）。后端注册表与清单的 `default` 都必须是它。 */
 export const DEFAULT_THEME: ThemeVariant = 'canary'
 
-/** 全部已部署的主题 id（顺序即选择器顺序）。 */
-export const THEME_IDS = Object.keys(THEME_PATHS)
+/** 非根主题的统一路径前缀；实际 URL 是 `${THEME_PREFIX}${id}/`。 */
+export const THEME_PREFIX = '/themes/'
+
+/** 合法主题 slug：小写字母/数字开头，后续小写字母/数字/连字符。 */
+const THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/** 是否是语法合法的主题 id（不做「是否已部署」判断——那由清单/注册表决定）。 */
+export function isThemeId(value: unknown): value is ThemeVariant {
+  return typeof value === 'string' && THEME_ID_RE.test(value)
+}
 
 /**
- * 规范化主题值：非字符串或不在允许列表中一律回落到 canary。
- * allowed 可选：不传则按 THEME_PATHS 校验（默认行为）。
+ * 规范化主题值：非字符串或不是合法 slug 一律回落到 canary。
+ * allowed 可选：传了就以它为准（例如后端注册表 / 运行清单给出的主题集合）。
  */
-export function normalizeTheme(value: unknown, allowed?: string[]): ThemeVariant {
-  if (typeof value !== 'string' || !value) {
+export function normalizeTheme(value: unknown, allowed?: readonly string[]): ThemeVariant {
+  if (!isThemeId(value)) {
     return DEFAULT_THEME
   }
-  if (!(allowed ?? THEME_IDS).includes(value)) {
+  if (allowed && !allowed.includes(value)) {
     return DEFAULT_THEME
   }
   return value
 }
 
-/** 主题 id → 站内路径；未知 id 一律回落到 canary 根路径。 */
-export function themePath(theme: ThemeVariant): string {
-  return THEME_PATHS[normalizeTheme(theme)] ?? THEME_PATHS[DEFAULT_THEME]
+/** 主题 id → 站内路径；非法 id 回落到 canary 根路径。 */
+export function themePath(theme: ThemeVariant, allowed?: readonly string[]): string {
+  const id = normalizeTheme(theme, allowed)
+  return id === DEFAULT_THEME ? '/' : `${THEME_PREFIX}${id}/`
 }
 
 /**
- * 按 pathname 反查当前主题：
- * `/t/canary2/...` 是 canary2，`/t/canary-pro/...` 是 canary-pro，其它都是 canary。
+ * 按 pathname 反查当前主题：`/themes/<id>/...` 是 `<id>`，其它都是 canary。
+ * 与清单无关，只按统一路径约定解析。
  */
 export function currentThemeId(pathname: string): ThemeVariant {
-  const path = pathname || '/'
-  for (const [id, base] of Object.entries(THEME_PATHS)) {
-    if (id === DEFAULT_THEME) {
-      continue
-    }
-    if (path === base || path.startsWith(base)) {
-      return id
-    }
-  }
-  return DEFAULT_THEME
+  const match = /^\/themes\/([a-z0-9][a-z0-9-]*)(?:\/|$)/.exec(pathname || '/')
+  return match ? match[1] : DEFAULT_THEME
 }
 
 /** 当前路径是否落在某个子应用（非根 canary）的基路径下。 */
@@ -69,9 +65,7 @@ export function isThemePath(pathname: string, theme: ThemeVariant): boolean {
   if (theme === DEFAULT_THEME) {
     return false
   }
-  const base = themePath(theme)
-  const path = pathname || '/'
-  return path === base || path.startsWith(base)
+  return currentThemeId(pathname) === normalizeTheme(theme)
 }
 
 /** 当前是否运行在根 canary 应用里（只有它能做「登录后按服务器主题跳转」）。 */

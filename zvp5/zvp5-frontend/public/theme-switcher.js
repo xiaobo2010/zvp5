@@ -1,14 +1,16 @@
 /* 全局主题切换器（整站多构建版）。
  *
- * 主题不是「同一套页面换外壳」，而是三份完整前端构建挂同域不同路径：
- *   canary     → /
- *   canary2    → /t/canary2/
- *   canary-pro → /t/canary-pro/
+ * 主题不是「同一套页面换外壳」，而是多份完整前端构建挂同域不同路径：
+ *   默认主题（canary）→ /
+ *   其它主题 <id>     → /themes/<id>/
  *
- * 这个脚本只由 `zvp5/deployment/build-theme-apps.sh` 注入到两个子应用的
- * index.html（根 canary 不注入，它有自己的 /me 主题下拉），作用是让用户
- * 在子应用里也能一键跳回其它应用。因为同源，localStorage 里的 token 共享，
- * 跳转后仍是登录态。
+ * 菜单完全由构建产物里的运行清单 `/themes.json` 驱动（由
+ * `zvp5/deployment/build-theme-apps.mjs` 按 `zvp5/themes/manifest.json` 生成），
+ * 这里不写死任何主题 id / 路径。新增主题只需改清单。
+ *
+ * 这个脚本只被注入到子应用的 index.html（根 canary 不注入，它有自己的 /me
+ * 主题下拉），作用是让用户在子应用里也能一键跳回其它应用。因为同源，
+ * localStorage 里的 token 共享，跳转后仍是登录态。
  *
  * 依赖：
  *   - <meta name="zvms-api-base" content="..."> 由构建脚本注入，用来同步账号偏好；
@@ -25,30 +27,68 @@
   }
   window.__zvmsThemeSwitcherInstalled = true
 
-  var THEME_PATHS = {
-    canary: '/',
-    canary2: '/t/canary2/',
-    'canary-pro': '/t/canary-pro/'
-  }
-  var THEME_LABELS = {
-    canary: 'Canary',
-    canary2: 'Canary 2',
-    'canary-pro': 'Canary Pro'
-  }
   var STORAGE_KEY = 'zvms.theme'
+  var RUNTIME_MANIFEST_URL = '/themes.json'
+  var THEME_PREFIX = '/themes/'
+  var THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+  // 清单读不到（本地 dev、构建脚本没跑）时至少还能跳回根应用。
+  var FALLBACK_THEMES = [{ id: 'canary', label: 'Canary', base: '/' }]
+
+  /** 该 id 对应的站内路径：canary → /，其它 → /themes/<id>/。 */
+  function baseFor(id) {
+    return id === 'canary' ? '/' : THEME_PREFIX + id + '/'
+  }
 
   function currentThemeId() {
-    var path = window.location.pathname || '/'
-    var ids = Object.keys(THEME_PATHS)
-    for (var i = 0; i < ids.length; i += 1) {
-      var id = ids[i]
-      if (id === 'canary') continue
-      var base = THEME_PATHS[id]
-      if (path === base || path.indexOf(base) === 0) {
-        return id
-      }
+    var match = /^\/themes\/([a-z0-9][a-z0-9-]*)(?:\/|$)/.exec(window.location.pathname || '/')
+    return match ? match[1] : 'canary'
+  }
+
+  /** 只接受合法 slug 与站内绝对路径，避免清单被污染时跳出站点。 */
+  function normalizeTheme(item) {
+    if (!item || typeof item.id !== 'string' || !THEME_ID_RE.test(item.id)) {
+      return null
     }
-    return 'canary'
+    var base = typeof item.base === 'string' && item.base.charAt(0) === '/' ? item.base : baseFor(item.id)
+    if (base.charAt(base.length - 1) !== '/') {
+      base += '/'
+    }
+    return {
+      id: item.id,
+      label: typeof item.label === 'string' && item.label ? item.label : item.id,
+      base: base
+    }
+  }
+
+  function loadThemes(callback) {
+    if (typeof window.fetch !== 'function') {
+      callback(FALLBACK_THEMES)
+      return
+    }
+    window
+      .fetch(RUNTIME_MANIFEST_URL, { headers: { Accept: 'application/json' } })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error('manifest ' + response.status)
+        }
+        return response.json()
+      })
+      .then(function (manifest) {
+        var list = manifest && manifest.themes
+        if (!Array.isArray(list)) {
+          throw new Error('manifest has no themes')
+        }
+        var themes = list
+          .filter(function (item) {
+            return !item || item.status !== 'deprecated'
+          })
+          .map(normalizeTheme)
+          .filter(Boolean)
+        callback(themes.length ? themes : FALLBACK_THEMES)
+      })
+      .catch(function () {
+        callback(FALLBACK_THEMES)
+      })
   }
 
   function apiBase() {
@@ -87,21 +127,28 @@
       })
   }
 
-  function switchTo(themeId) {
-    var target = THEME_PATHS[themeId]
-    if (!target) {
+  function switchTo(theme) {
+    syncPreference(theme.id)
+    if (currentThemeId() === theme.id) {
+      close()
       return
     }
-    syncPreference(themeId)
-    if (target !== window.location.pathname && currentThemeId() !== themeId) {
-      window.location.assign(target)
-    } else if (currentThemeId() === themeId) {
-      close()
-    }
+    window.location.assign(theme.base)
   }
 
+  var themes = FALLBACK_THEMES
   var panel = null
   var trigger = null
+
+  function activeLabel() {
+    var active = currentThemeId()
+    for (var i = 0; i < themes.length; i += 1) {
+      if (themes[i].id === active) {
+        return themes[i].label
+      }
+    }
+    return active
+  }
 
   function close() {
     if (!panel || !trigger) return
@@ -155,12 +202,12 @@
     )
 
     var active = currentThemeId()
-    Object.keys(THEME_PATHS).forEach(function (id) {
+    themes.forEach(function (theme) {
       var item = document.createElement('button')
       item.type = 'button'
       item.setAttribute('role', 'menuitemradio')
-      item.setAttribute('aria-checked', id === active ? 'true' : 'false')
-      item.textContent = THEME_LABELS[id] || id
+      item.setAttribute('aria-checked', theme.id === active ? 'true' : 'false')
+      item.textContent = theme.label
       item.setAttribute(
         'style',
         [
@@ -174,10 +221,10 @@
           'font:inherit',
           'text-align:left',
           'cursor:pointer',
-          id === active ? 'font-weight:600' : 'font-weight:400'
+          theme.id === active ? 'font-weight:600' : 'font-weight:400'
         ].join(';')
       )
-      if (id === active) {
+      if (theme.id === active) {
         item.setAttribute('aria-current', 'true')
       }
       item.addEventListener('mouseenter', function () {
@@ -187,7 +234,7 @@
         item.style.background = 'transparent'
       })
       item.addEventListener('click', function () {
-        switchTo(id)
+        switchTo(theme)
       })
       panel.appendChild(item)
     })
@@ -195,7 +242,7 @@
     trigger = document.createElement('button')
     trigger.type = 'button'
     trigger.textContent = '主题'
-    trigger.setAttribute('aria-label', '切换主题应用（当前：' + (THEME_LABELS[active] || active) + '）')
+    trigger.setAttribute('aria-label', '切换主题应用（当前：' + activeLabel() + '）')
     trigger.setAttribute('aria-haspopup', 'menu')
     trigger.setAttribute('aria-expanded', 'false')
     trigger.setAttribute(
@@ -235,9 +282,16 @@
     document.body.appendChild(host)
   }
 
+  function start() {
+    loadThemes(function (loaded) {
+      themes = loaded
+      build()
+    })
+  }
+
   if (document.body) {
-    build()
+    start()
   } else {
-    document.addEventListener('DOMContentLoaded', build, { once: true })
+    document.addEventListener('DOMContentLoaded', start, { once: true })
   }
 })()

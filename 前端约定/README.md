@@ -47,20 +47,22 @@
 
 - **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
   不设置则跟随系统。
-- **主题变体（整站多构建）**：canary / canary2 / canary-pro 不是同一套页面换外壳，
-  而是**三份完整的前端构建**挂同一域名下的不同路径：
-  - `canary` → `/`（本仓库 `zvp5/zvp5-frontend`）
-  - `canary2` → `/t/canary2/`（`v5-canary2` 的 `zvms4-modified-main/zvms4-frontend`）
-  - `canary-pro` → `/t/canary-pro/`（`v5-canary-pro` 的 `zvp5/zvp5-frontend-pro`）
-  - 构建：CI 在根 canary 构建后跑 `zvp5/deployment/build-theme-apps.sh`，用 worktree
-    取出另两个分支各自 `pnpm install` + `vite build --base=/t/<id>/`，产物并入
-    `zvp5/zvp5-frontend/dist/t/<id>/`。
-  - 切换：`/me` 的主题下拉与子应用里的 `theme-switcher.js` 都只做
-    「写 `localStorage['zvms.theme']` + `PUT /v1/themes/me` + `location.assign(路径)`」；
-    同源所以 token 共享，登录态无缝。路径映射与缓存读写见 `src/utils/theme.ts`。
-  - 新增主题 = 新建一条分支的完整前端 + 在 `build-theme-apps.sh` 加一段构建 +
-    在 `THEME_PATHS`（以及子应用切换器）里加一条路径。**不要**再复制外壳组件或
-    用几行 `--yg-*` 覆盖冒充新主题。
+- **主题变体（整站多构建）**：每个主题都是**一份完整的前端构建**，挂同一域名下的
+  不同路径。主题清单是唯一事实源：`zvp5/themes/manifest.json`。
+  - 默认主题 `canary` → `/`（本仓库 `zvp5/zvp5-frontend`，`build.kind: "root"`）
+  - 其它主题 `<id>` → `/themes/<id>/`（清单里声明源码分支/目录与构建命令）
+  - 构建：CI 在根 canary 构建后跑 `node zvp5/deployment/build-theme-apps.mjs`，
+    按清单用 worktree 取出各分支前端，各自 `install` + `vite build --base=<base>`，
+    产物并入 `zvp5/zvp5-frontend/dist/themes/<id>/`，并生成运行清单
+    `dist/themes.json`（只含 `id/label/description/status/base`，不含源码信息）。
+  - 切换：`/me` 的主题下拉（先 `/api/v1/themes`，失败读 `/themes.json`）与子应用
+    注入的 `theme-switcher.js`（读 `/themes.json`）都只做「写
+    `localStorage['zvms.theme']` + `PUT /v1/themes/me` + `location.assign(清单 base)`」；
+    同源所以 token 共享，登录态无缝。路径约定在 `src/utils/theme.ts`
+    （`DEFAULT_THEME` + `THEME_PREFIX='/themes/'`），没有任何主题 id 列表。
+  - 新增主题 = 清单加一条（`id/label/description/status/base/source/build`）+
+    后端 `services/theme_registry.py` 加一条；**不要**改 Worker / CI / 前端映射，
+    它们都从清单派生。**不要**复制外壳组件或用几行 `--yg-*` 覆盖冒充新主题。
 - **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
 
 ## 给智能体的三条底线

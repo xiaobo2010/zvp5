@@ -37,7 +37,7 @@ import {
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import { formatDateTime } from '@/utils/dateTime'
-import { currentThemeId, themePath } from '@/utils/theme'
+import { DEFAULT_THEME, currentThemeId, themePath } from '@/utils/theme'
 import { normalizeRenderMode, readRenderMode, setRenderMode } from '@/utils/renderMode'
 import {
   emptyNotificationState,
@@ -60,27 +60,70 @@ const themeVariant = ref<string>(user.theme)
 const themeOptions = ref<Array<{ label: string; value: string }>>([])
 const themeOptionsLoading = ref(false)
 
-/** 注册表接口不可用时的兜底：只用于让选择器仍有可选项，不参与合法性判定。 */
-const FALLBACK_THEME_OPTIONS = [
-  { label: 'Canary', value: 'canary' },
-  { label: 'Canary 2', value: 'canary2' },
-  { label: 'Canary Pro', value: 'canary-pro' }
-]
+/** 注册表接口不可用时的兜底：直接读构建产物里的运行清单（`/themes.json`）。 */
+const RUNTIME_MANIFEST_URL = '/themes.json'
+
+type ThemeOption = { label: string; value: string }
+
+/**
+ * 从 `/themes.json` 读主题列表。
+ * 清单由 `zvp5/deployment/build-theme-apps.mjs` 按 `zvp5/themes/manifest.json`
+ * 生成，是构建产物的一部分；读不到时返回空数组，由调用方再兜底到 canary。
+ */
+async function loadManifestThemeOptions(): Promise<ThemeOption[]> {
+  try {
+    const response = await fetch(RUNTIME_MANIFEST_URL, {
+      headers: { Accept: 'application/json' }
+    })
+    if (!response.ok) {
+      return []
+    }
+    const data = (await response.json()) as {
+      themes?: Array<{ id?: unknown; label?: unknown; status?: unknown }>
+    }
+    if (!Array.isArray(data.themes)) {
+      return []
+    }
+    const options: ThemeOption[] = []
+    for (const item of data.themes) {
+      if (!item || typeof item.id !== 'string' || !item.id) {
+        continue
+      }
+      if (typeof item.label !== 'string' || !item.label) {
+        continue
+      }
+      if (item.status === 'deprecated') {
+        continue
+      }
+      options.push({ label: item.label, value: item.id })
+    }
+    return options
+  } catch {
+    return []
+  }
+}
 
 async function loadThemeOptions() {
   themeOptionsLoading.value = true
   try {
-    const data = await api.theme.listThemes()
-    themeOptions.value = data.items
-      .filter((item) => item.status !== 'deprecated')
-      .map((item) => ({ label: item.label, value: item.id }))
-  } catch {
-    themeOptions.value = FALLBACK_THEME_OPTIONS
-  } finally {
-    // 空列表（老后端/异常数据）同样要有可选项，否则下拉框是空白。
-    if (!themeOptions.value.length) {
-      themeOptions.value = FALLBACK_THEME_OPTIONS
+    let options: ThemeOption[] = []
+    try {
+      const data = await api.theme.listThemes()
+      options = data.items
+        .filter((item) => item.status !== 'deprecated')
+        .map((item) => ({ label: item.label, value: item.id }))
+    } catch {
+      // 后端注册表不可用（未升级/断网）：退到运行清单
+      options = []
     }
+    if (!options.length) {
+      options = await loadManifestThemeOptions()
+    }
+    // 清单也没有（本地 dev 未跑构建脚本）：只给默认主题，不留空白下拉框。
+    themeOptions.value = options.length
+      ? options
+      : [{ label: 'Canary', value: DEFAULT_THEME }]
+  } finally {
     themeOptionsLoading.value = false
   }
 }

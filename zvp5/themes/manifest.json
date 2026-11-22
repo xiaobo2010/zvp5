@@ -1,0 +1,55 @@
+{
+  "default": "canary",
+  "prefix": "/themes/",
+  "themes": [
+    {
+      "id": "canary",
+      "label": "Canary",
+      "description": "经典 Phi 设计：暗色棱角、青色判定线与现有导航",
+      "status": "stable",
+      "base": "/",
+      "build": { "kind": "root" }
+    },
+    {
+      "id": "canary2",
+      "label": "Canary 2",
+      "description": "v2 浅色工作台：左侧边栏、顶栏与环境光玻璃",
+      "status": "experimental",
+      "base": "/themes/canary2/",
+      "source": {
+        "kind": "git",
+        "ref": "v5-canary2",
+        "path": "zvms4-modified-main/zvms4-frontend"
+      },
+      "build": {
+        "kind": "vite",
+        "install": ["pnpm", "install", "--no-frozen-lockfile"],
+        "command": ["pnpm", "exec", "vite", "build"]
+      }
+    },
+    {
+      "id": "canary-pro",
+      "label": "Canary Pro",
+      "description": "Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",
+      "status": "stable",
+      "base": "/themes/canary-pro/",
+      "source": {
+        "kind": "git",
+        "ref": "v5-canary-pro",
+        "path": "zvp5/zvp5-frontend-pro"
+      },
+      "build": {
+        "kind": "vite",
+        "install": ["pnpm", "install", "--no-frozen-lockfile"],
+        "command": ["pnpm", "exec", "vite", "build"],
+        "patch": [
+          {
+            "file": "src/router/index.ts",
+            "from": "createWebHistory()",
+            "to": "createWebHistory(import.meta.env.BASE_URL)"
+          }
+        ]
+      }
+    }
+  ]
+}

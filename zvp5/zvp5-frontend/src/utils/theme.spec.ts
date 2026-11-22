@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
-  THEME_IDS,
-  THEME_PATHS,
+  DEFAULT_THEME,
+  THEME_PREFIX,
   currentThemeId,
   isRootApp,
+  isThemeId,
   isThemePath,
   normalizeTheme,
   readStoredTheme,
@@ -12,8 +13,8 @@ import {
 } from './theme'
 
 /**
- * 主题 = 整站多构建：这里只测「id ↔ 路径」映射与设备级缓存，
- * 不再有 data-theme-variant / 外壳注册表。
+ * 主题 = 整站多构建：这里只测统一路径约定（`/` + `/themes/<id>/`）与设备级缓存。
+ * 主题集合不在这里硬编码——它来自 `zvp5/themes/manifest.json` / 后端注册表。
  */
 
 function memoryStorage(): Storage {
@@ -35,24 +36,37 @@ function memoryStorage(): Storage {
 }
 
 describe('utils/theme', () => {
+  it('路径约定是唯一的：默认主题在根，其它主题在 /themes/<id>/', () => {
+    expect(DEFAULT_THEME).toBe('canary')
+    expect(THEME_PREFIX).toBe('/themes/')
+  })
+
   describe('themePath', () => {
     it('canary 挂在根路径', () => {
       expect(themePath('canary')).toBe('/')
     })
 
-    it('canary-pro 挂在 /t/canary-pro/', () => {
-      expect(themePath('canary-pro')).toBe('/t/canary-pro/')
+    it('canary-pro 挂在 /themes/canary-pro/', () => {
+      expect(themePath('canary-pro')).toBe('/themes/canary-pro/')
     })
 
-    it('每个主题的路径都是站内绝对路径且互不相同', () => {
-      const paths = THEME_IDS.map((id) => themePath(id))
-      expect(paths.every((p) => p.startsWith('/'))).toBe(true)
-      expect(new Set(paths).size).toBe(paths.length)
+    it('任意合法 slug 都按统一前缀派生路径', () => {
+      expect(themePath('canary2')).toBe('/themes/canary2/')
+      expect(themePath('brand-new-theme')).toBe('/themes/brand-new-theme/')
     })
 
-    it('未知 id 回落到 canary 根路径', () => {
-      expect(themePath('unknown')).toBe('/')
+    it('未知/非法 id 回落到 canary 根路径', () => {
       expect(themePath('')).toBe('/')
+      expect(themePath('Canary')).toBe('/')
+      expect(themePath('canary pro')).toBe('/')
+      expect(themePath('../etc/passwd')).toBe('/')
+      expect(themePath('/themes/canary2/')).toBe('/')
+      expect(themePath(null as unknown as string)).toBe('/')
+    })
+
+    it('传 allowed 时收窄到已部署的主题集合', () => {
+      expect(themePath('canary2', ['canary', 'canary-pro'])).toBe('/')
+      expect(themePath('canary-pro', ['canary', 'canary-pro'])).toBe('/themes/canary-pro/')
     })
   })
 
@@ -61,31 +75,49 @@ describe('utils/theme', () => {
       expect(currentThemeId('/')).toBe('canary')
       expect(currentThemeId('/user')).toBe('canary')
       expect(currentThemeId('/activities/1')).toBe('canary')
+      expect(currentThemeId('')).toBe('canary')
     })
 
     it('子应用路径反查回自身 id', () => {
-      expect(currentThemeId('/t/canary-pro/')).toBe('canary-pro')
-      expect(currentThemeId('/t/canary-pro/me')).toBe('canary-pro')
-      expect(currentThemeId('/t/canary2/volunteers')).toBe('canary2')
+      expect(currentThemeId('/themes/canary-pro/')).toBe('canary-pro')
+      expect(currentThemeId('/themes/canary-pro/me')).toBe('canary-pro')
+      expect(currentThemeId('/themes/canary2/volunteers')).toBe('canary2')
+      expect(currentThemeId('/themes/canary2')).toBe('canary2')
     })
 
-    it('前缀相同但不属于子应用的路径仍是 canary', () => {
-      expect(currentThemeId('/t/canary-pro-other')).toBe('canary')
-      expect(currentThemeId('/t/unknown/')).toBe('canary')
+    it('非法前缀 / 非 slug 段不属于任何子应用', () => {
+      expect(currentThemeId('/themes/')).toBe('canary')
+      expect(currentThemeId('/themes/UNKNOWN/')).toBe('canary')
+      expect(currentThemeId('/theme/canary2/')).toBe('canary')
+      expect(currentThemeId('/assets/canary2/')).toBe('canary')
+    })
+
+    it('路径段按完整 slug 匹配，不会被更长的 id 误判', () => {
+      expect(currentThemeId('/themes/canary2-other')).toBe('canary2-other')
+      expect(currentThemeId('/themes/canary2x')).toBe('canary2x')
     })
   })
 
-  describe('isThemePath / isRootApp', () => {
-    it('只在对应子应用路径下为真', () => {
-      expect(isThemePath('/t/canary-pro/me', 'canary-pro')).toBe(true)
-      expect(isThemePath('/t/canary-pro/me', 'canary2')).toBe(false)
+  describe('isThemeId / isThemePath / isRootApp', () => {
+    it('isThemeId 只判断 slug 语法', () => {
+      expect(isThemeId('canary2')).toBe(true)
+      expect(isThemeId('canary-pro')).toBe(true)
+      expect(isThemeId('Canary2')).toBe(false)
+      expect(isThemeId('-canary')).toBe(false)
+      expect(isThemeId('')).toBe(false)
+      expect(isThemeId(undefined)).toBe(false)
+    })
+
+    it('isThemePath 只在对应子应用路径下为真', () => {
+      expect(isThemePath('/themes/canary-pro/me', 'canary-pro')).toBe(true)
+      expect(isThemePath('/themes/canary-pro/me', 'canary2')).toBe(false)
       expect(isThemePath('/', 'canary')).toBe(false)
     })
 
     it('根应用判定只认 canary', () => {
       expect(isRootApp('/')).toBe(true)
-      expect(isRootApp('/t/canary2/')).toBe(false)
-      expect(isRootApp('/t/canary-pro/')).toBe(false)
+      expect(isRootApp('/themes/canary2/')).toBe(false)
+      expect(isRootApp('/themes/canary-pro/')).toBe(false)
     })
   })
 
@@ -93,13 +125,14 @@ describe('utils/theme', () => {
     it('合法 id 原样返回', () => {
       expect(normalizeTheme('canary')).toBe('canary')
       expect(normalizeTheme('canary-pro')).toBe('canary-pro')
+      expect(normalizeTheme('future-theme')).toBe('future-theme')
     })
 
-    it('非字符串 / 未知 id 回落到 canary', () => {
+    it('非字符串 / 非法 slug 回落到 canary', () => {
       expect(normalizeTheme(null)).toBe('canary')
       expect(normalizeTheme(undefined)).toBe('canary')
       expect(normalizeTheme(123)).toBe('canary')
-      expect(normalizeTheme('custom-theme')).toBe('canary')
+      expect(normalizeTheme('custom theme')).toBe('canary')
     })
 
     it('可用 allowed 收窄合法集合', () => {
@@ -120,15 +153,15 @@ describe('utils/theme', () => {
       expect(readStoredTheme(memoryStorage())).toBe('canary')
     })
 
-    it('存储里是未知值时读回 canary', () => {
+    it('存储里是非法值时读回 canary', () => {
       const storage = memoryStorage()
-      storage.setItem('zvms.theme', 'nope')
+      storage.setItem('zvms.theme', 'not a theme')
       expect(readStoredTheme(storage)).toBe('canary')
     })
 
     it('setStoredTheme 写入规范化后的值并返回它', () => {
       const storage = memoryStorage()
-      expect(setStoredTheme('unknown', storage)).toBe('canary')
+      expect(setStoredTheme('Not A Theme', storage)).toBe('canary')
       expect(storage.getItem('zvms.theme')).toBe('canary')
     })
 
@@ -144,10 +177,5 @@ describe('utils/theme', () => {
       expect(readStoredTheme(broken)).toBe('canary')
       expect(setStoredTheme('canary-pro', broken)).toBe('canary-pro')
     })
-  })
-
-  it('THEME_PATHS 覆盖三种主题', () => {
-    expect(THEME_IDS).toEqual(['canary', 'canary2', 'canary-pro'])
-    expect(THEME_PATHS.canary2).toBe('/t/canary2/')
   })
 })
