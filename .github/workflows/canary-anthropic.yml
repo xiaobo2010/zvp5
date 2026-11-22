@@ -271,15 +271,66 @@ jobs:
           [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
           local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
 
+          host="${CANARY_URL#https://}"
+          host="${host%%/*}"
+
+          # runner 的递归解析器会缓存 NXDOMAIN（域名刚建好时容易踩到），
+          # 解析不出来就退回 Cloudflare DoH 拿地址，再用 --resolve 直连，
+          # 免得部署明明成功、冒烟却因为解析缓存红。
+          resolve_ip() {
+            local ip
+            ip="$(getent ahostsv6 "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
+            [[ -n "$ip" ]] || ip="$(getent ahosts "$host" 2>/dev/null | awk '{print $1}' | head -n1)"
+            if [[ -z "$ip" ]]; then
+              ip="$(curl -fsS -H 'accept: application/dns-json' \
+                "https://cloudflare-dns.com/dns-query?name=${host}&type=AAAA" \
+                | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((a['data'] for a in d.get('Answer',[]) if a.get('type')==28),''))" \
+                2>/dev/null || true)"
+            fi
+            printf '%s' "$ip"
+          }
+
+          # $1 = 路径，$2 = 输出文件；回显状态码，失败回 000
+          fetch() {
+            local path="$1" out="$2" status
+            if [[ -n "$ip" ]]; then
+              if [[ "$ip" == *:* ]]; then
+                status="$(curl -6 -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                  --resolve "${host}:443:[${ip}]" "${CANARY_URL}${path}" || true)"
+              else
+                status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' \
+                  --resolve "${host}:443:${ip}" "${CANARY_URL}${path}" || true)"
+              fi
+            else
+              status="$(curl -fsS -A "$PROBE_UA" -o "$out" -w '%{http_code}' "${CANARY_URL}${path}" || true)"
+            fi
+            printf '%s' "${status:-000}"
+          }
+
+          ip="$(resolve_ip)"
+          if [[ -n "$ip" ]]; then
+            echo "resolved $host -> $ip"
+          fi
+
           home_status=""
           waf_blocked=0
-          for _ in $(seq 1 6); do
-            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+          tmp_body="$(mktemp)"
+          for _ in $(seq 1 8); do
+            home_status="$(fetch "/" "$tmp_body")"
             if [[ "$home_status" == "403" ]]; then
               waf_blocked=1
               break
             fi
-            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            remote_sha=""
+            if [[ -n "$ip" && "$ip" == *:* ]]; then
+              remote_sha="$(curl -6 -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                --resolve "${host}:443:[${ip}]" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            elif [[ -n "$ip" ]]; then
+              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' \
+                --resolve "${host}:443:${ip}" "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            else
+              remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "${CANARY_URL}${entry}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+            fi
             if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
               break
             fi
