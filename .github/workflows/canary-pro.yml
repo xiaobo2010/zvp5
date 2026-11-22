@@ -288,6 +288,15 @@ jobs:
             exit 1
           }
 
+          for path in /me /notifications; do
+            page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
+              -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL$path")"
+            [[ "$page" == *"src=\"$entry\""* ]] || {
+              echo "wrong Pro entry at $path" >&2
+              exit 1
+            }
+          done
+
           {
             echo '### Canary Pro preview deployed'
             echo
