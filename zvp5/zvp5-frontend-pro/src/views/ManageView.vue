@@ -5,6 +5,7 @@ import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import AdminWriteVerification from '@/components/AdminWriteVerification.vue'
+import ManageUserDetail from '@/components/ManageUserDetail.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   createNotification,
@@ -267,6 +268,52 @@ function userRoleText(user: AdminUser): string {
 
 function userClassText(user: AdminUser): string {
   return user.class_name || user.class_id || '未分班'
+}
+
+/**
+ * The detail modal is scoped to the row that opened it. Keeping the target in
+ * component state (instead of a route) preserves the list's page, query and
+ * role filter when the user closes it.
+ */
+interface UserDetailTarget {
+  _id: string
+  name: string
+  class_name: string
+}
+
+const detailTarget = ref<UserDetailTarget | null>(null)
+
+function openUserDetail(user: AdminUser) {
+  if (!user?._id) return
+  detailTarget.value = {
+    _id: user._id,
+    name: user.name || '',
+    class_name: user.class_name || ''
+  }
+}
+
+const USER_FILTER_ROLES = ['admin', 'department', 'secretary', 'student', 'auditor']
+
+/** Roles that the users tab can actually filter by (mirrors the <select>). */
+function roleUserFilterable(role: string): boolean {
+  return USER_FILTER_ROLES.includes(role)
+}
+
+/**
+ * Roles tab → filtered users. Role cards only carry policy data, so this is the
+ * role entry point where individual students become clickable.
+ *
+ * The backend (`users_v2_router.get_users_v2`) only allows the `role` filter for
+ * admins, so keep the jump admin-only even though the roles tab already is.
+ */
+function openRoleUsers(role: string) {
+  if (!isAdminUser || !roleUserFilterable(role)) return
+  usersQuery.value = ''
+  usersQueryDraft.value = ''
+  usersRole.value = role
+  usersPage.value = 1
+  activeTab.value = 'users'
+  void loadUsers()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1296,8 +1343,16 @@ watch(activeTab, ensureTab, { immediate: true })
                   <li v-for="user in users" :key="user._id" class="row">
                     <div class="row__main">
                       <span class="row__title">
-                        {{ user.name || '未命名用户' }}
-                        <span class="row__id">{{ user.id }}</span>
+                        <button
+                          type="button"
+                          class="row__link"
+                          aria-haspopup="dialog"
+                          :title="`查看 ${user.name || '未命名用户'} 的用户资料`"
+                          @click="openUserDetail(user)"
+                        >
+                          <span class="row__name">{{ user.name || '未命名用户' }}</span>
+                          <span class="row__id">{{ user.id }}</span>
+                        </button>
                       </span>
                       <span class="row__meta">
                         {{ userRoleText(user) }} · {{ userClassText(user) }}
@@ -1680,9 +1735,20 @@ watch(activeTab, ensureTab, { immediate: true })
                         <h3 class="role-card__name">{{ roleLabel(policy.role) }}</h3>
                         <span class="role-card__code">{{ policy.role }}</span>
                       </div>
-                      <span class="badge badge--info">
-                        {{ policy.role === 'admin' ? '固定全量' : '策略行' }}
-                      </span>
+                      <div class="role-card__actions">
+                        <span class="badge badge--info">
+                          {{ policy.role === 'admin' ? '固定全量' : '策略行' }}
+                        </span>
+                        <button
+                          v-if="roleUserFilterable(policy.role)"
+                          type="button"
+                          class="role-card__link"
+                          :aria-label="`查看${roleLabel(policy.role)}角色的用户`"
+                          @click="openRoleUsers(policy.role)"
+                        >
+                          查看用户
+                        </button>
+                      </div>
                     </header>
 
                     <div class="quota-row">
@@ -2177,6 +2243,15 @@ watch(activeTab, ensureTab, { immediate: true })
         </div>
       </Transition>
     </div>
+
+    <ManageUserDetail
+      v-if="detailTarget"
+      :key="detailTarget._id"
+      :user-id="detailTarget._id"
+      :fallback-name="detailTarget.name"
+      :fallback-class="detailTarget.class_name"
+      @close="detailTarget = null"
+    />
   </div>
 </template>
 
@@ -2825,6 +2900,36 @@ select.input:focus-visible {
   color: var(--color-text-tertiary);
 }
 
+/* Name + 学号 share one button: a single tab stop opens the read-only detail. */
+.row__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: 28px;
+  margin-inline-start: -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.row__link:hover {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.row__link:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+}
+
 .row__meta {
   font-size: var(--font-size-caption);
   color: var(--color-text-secondary);
@@ -3045,6 +3150,37 @@ select.input:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.role-card__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.role-card__link {
+  min-height: 30px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border-moderate);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--color-brand);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.role-card__link:hover {
+  border-color: var(--color-brand);
+  background: var(--tone-blue-bg);
+}
+
+.role-card__link:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }
 
 .role-card__name {

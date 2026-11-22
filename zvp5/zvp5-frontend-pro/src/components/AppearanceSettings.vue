@@ -250,16 +250,9 @@ onUnmounted(() => {
   border: 0;
 }
 
-.appearance__group + .appearance__group {
-  position: relative;
-  margin-block-start: var(--space-4);
-}
-
-.appearance__group + .appearance__group::before {
-  position: absolute;
-  inset: calc(-1 * var(--space-4)) 0 auto;
-  border-block-start: 1px solid var(--color-border-moderate);
-  content: '';
+.appearance__group:first-of-type {
+  padding-block-end: var(--space-5);
+  border-block-end: 1px solid var(--color-border-moderate);
 }
 
 .appearance__group legend {

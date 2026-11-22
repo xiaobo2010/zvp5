@@ -13,6 +13,9 @@ import type { CanaryActivity, CanaryTime, CanaryUser } from '@/api/canary'
 import { fetchPendingReviews, fetchRecentAgentRuns, fetchSuspiciousLogs, LOG_TYPE_LABELS } from '@/api/home'
 import { ApiError } from '@/api/http'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
+import VolunteerStack from '@/components/VolunteerStack.vue'
+import { mapActivity, useVolunteerStackExpansion } from '@/components/volunteerStack'
+import { renderMarkdown } from '@/utils/markdown'
 
 type HourKey = keyof CanaryTime
 
@@ -70,7 +73,6 @@ const pendingReviews = ref<CanaryActivity[]>([])
 const agentRuns = ref<Awaited<ReturnType<typeof fetchRecentAgentRuns>>>([])
 const suspiciousLogs = ref<Awaited<ReturnType<typeof fetchSuspiciousLogs>>>([])
 const workErrors = ref({ pending: '', agent: '', logs: '' })
-const expandedActivityId = ref<string | null>(null)
 const groupName = ref('')
 
 // 首帧即确定登录状态，避免先闪骨架再跳到「需要登录」。
@@ -207,12 +209,25 @@ function progressTone(percent: number): string {
 }
 
 const recentActivities = computed(() =>
-  activities.value.filter((activity) => activity.mine).slice(0, RECENT_RECORD_LIMIT)
+  activities.value.filter((activity) => activity.mine).slice(0, RECENT_RECORD_LIMIT).map(mapActivity)
 )
+const expandedActivityId = useVolunteerStackExpansion(() => recentActivities.value, () => studentId.value)
 
-const ACTIVITY_TYPES: Record<CanaryActivity['type'], string> = {
-  'on-campus': '校内', 'off-campus': '校外', 'social-practice': '社会实践', hybrid: '混合'
+function agentResultPreview(source: string): string {
+  // The renderer escapes source HTML. Keep inline formatting, flatten blocks,
+  // and remove link elements so a clipped preview has no hidden tab stops.
+  return renderMarkdown(source)
+    .replace(/<\/?a\b[^>]*>/gi, '')
+    .replace(/<\/?(?:h[1-6]|p|li|ul|ol|blockquote|pre|br|hr)\b[^>]*>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
+
+const agentPreviews = computed(() => agentRuns.value.map((run) => ({
+  ...run,
+  previewHtml: run.result ? agentResultPreview(run.result) : '',
+  fallback: run.error_message || (run.resultUnavailable ? '结果内容暂不可用' : '')
+})))
 
 const RUN_STATUSES: Record<string, string> = {
   queued: '排队中', running: '运行中', succeeded: '已完成', failed: '失败',
@@ -221,20 +236,6 @@ const RUN_STATUSES: Record<string, string> = {
 
 function pendingLink(id: string) {
   return { name: 'volunteer-detail', params: { id } }
-}
-
-function toggleRecentCard(activity: CanaryActivity) {
-  const id = activity.mine?._id || activity._id
-  expandedActivityId.value = expandedActivityId.value === id ? null : id
-}
-
-function closeRecentCard(event: KeyboardEvent, id: string) {
-  if (event.key !== 'Escape' || expandedActivityId.value !== id) return
-  expandedActivityId.value = null
-  event.stopPropagation()
-  if (event.currentTarget instanceof HTMLElement) {
-    event.currentTarget.querySelector('summary')?.focus()
-  }
 }
 
 function formatHours(value: number): string {
@@ -259,23 +260,6 @@ function pendingMeta(activity: CanaryActivity): string {
   const place = (activity.place ?? '').trim()
   const date = formatActivityDate(activity.date)
   return [place, date].filter(Boolean).join(' · ')
-}
-
-function recentMeta(activity: CanaryActivity): string {
-  const duration = Number(activity.mine?.duration ?? 0)
-  return `${formatActivityDate(activity.date)} · ${formatHours(duration)}h`
-}
-
-function recentStatusLabel(activity: CanaryActivity): string {
-  if (activity.mine?.status === 'refused') return '已拒绝'
-  if (activity.mine?.status === 'effective') return '已确认'
-  return '待确认'
-}
-
-function recentStatusClass(activity: CanaryActivity): string {
-  if (activity.mine?.status === 'refused') return 'work-item__status--refused'
-  if (activity.mine?.status === 'effective') return 'work-item__status--done'
-  return 'work-item__status--pending'
 }
 
 function reduceMotion(): boolean {
@@ -355,7 +339,6 @@ async function loadPage() {
   unauthenticated.value = false
   recentError.value = ''
   workErrors.value = { pending: '', agent: '', logs: '' }
-  expandedActivityId.value = null
 
   try {
     const [profileResult, timeResult, activitiesResult] = await Promise.allSettled([
@@ -905,11 +888,12 @@ onUnmounted(() => {
             <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
           </div>
           <ul v-else-if="agentRuns.length" class="work-list__items work-list__entries">
-            <li v-for="run in agentRuns" :key="run.oid" class="work-item">
+            <li v-for="run in agentPreviews" :key="run.oid" class="work-item">
               <div class="work-item__content">
                 <p class="work-item__name">{{ RUN_STATUSES[run.status] ?? run.status }}</p>
                 <p class="work-item__meta">{{ [run.model, formatActivityDate(run.created_at ?? '')].filter(Boolean).join(' · ') }}</p>
-                <p v-if="run.result || run.error_message || run.resultUnavailable" class="work-item__result">{{ run.result || run.error_message || '结果内容暂不可用' }}</p>
+                <p v-if="run.previewHtml" class="work-item__result" v-html="run.previewHtml"></p>
+                <p v-else-if="run.fallback" class="work-item__result">{{ run.fallback }}</p>
               </div>
             </li>
           </ul>
@@ -940,31 +924,11 @@ onUnmounted(() => {
             <BubbleFeedback class="glass-feedback--error">{{ recentError }}</BubbleFeedback>
             <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
           </div>
-          <div v-else-if="recentActivities.length" class="recent-stack">
-            <details
-              v-for="activity in recentActivities"
-               :key="activity.mine?._id || activity._id"
-               class="recent-card glass-card"
-               :open="expandedActivityId === (activity.mine?._id || activity._id)"
-               @keydown="closeRecentCard($event, activity.mine?._id || activity._id)"
-            >
-              <summary
-                class="recent-card__summary"
-                 @click.prevent="toggleRecentCard(activity)"
-              >
-                <span class="work-item__content">
-                  <span class="work-item__name">{{ activity.name }}</span>
-                   <span class="work-item__meta">{{ recentMeta(activity) }} · {{ ACTIVITY_TYPES[activity.mine?.mode ?? activity.type] }}</span>
-                </span>
-                <span class="work-item__status" :class="recentStatusClass(activity)">{{ recentStatusLabel(activity) }}</span>
-              </summary>
-              <dl class="recent-card__details">
-                <div><dt>地点</dt><dd>{{ activity.place || '—' }}</dd></div>
-                <div><dt>类型</dt><dd>{{ ACTIVITY_TYPES[activity.mine?.mode ?? activity.type] }}</dd></div>
-                <div v-if="activity.creator_name"><dt>创建者</dt><dd>{{ activity.creator_name }}</dd></div>
-              </dl>
-            </details>
-          </div>
+          <VolunteerStack
+            v-else-if="recentActivities.length"
+            v-model="expandedActivityId"
+            :activities="recentActivities"
+          />
           <BubbleFeedback v-else>暂无个人活动记录</BubbleFeedback>
         </article>
       </section>
@@ -1839,68 +1803,16 @@ onUnmounted(() => {
 
 .work-list--wide { grid-column: 1 / -1; }
 .work-list__entries { list-style: none; margin: 0; padding: 0; }
-.work-item__result { overflow-wrap: anywhere; white-space: pre-wrap; }
-
-.recent-stack {
-  --recent-overlap: 22px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  width: min(100%, 620px);
-  margin-inline: auto;
-  isolation: isolate;
+.work-item__result {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.5;
+  max-block-size: 3em;
 }
-
-.recent-card {
-  position: relative;
-  padding: 0 0 var(--recent-overlap);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(125deg, #fbfcff, var(--palette-edge, #dce9f5));
-  box-shadow: var(--glass-rim), 0 3px 12px #102c471f;
-}
-
-.recent-card:nth-child(even) {
-  background: linear-gradient(125deg, #f9fbff, var(--palette-main, #d9eafd));
-}
-
-.recent-card + .recent-card { margin-block-start: calc(-1 * var(--recent-overlap)); }
-.recent-card:last-child { padding-block-end: 0; }
-
-.recent-card__summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 64px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: inherit;
-  list-style: none;
-  cursor: pointer;
-}
-
-.recent-card__summary::-webkit-details-marker { display: none; }
-.recent-card__summary .work-item__name,
-.recent-card__summary .work-item__meta { display: block; }
-
-.recent-card__summary::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(45deg);
-}
-
-.recent-card[open] .recent-card__summary::after { transform: rotate(225deg); }
-
-.recent-card__summary:focus-visible {
-  outline: 2px solid var(--color-brand);
-  outline-offset: -3px;
-}
-
-.recent-card__details { margin: 0 var(--space-4) var(--space-4); }
-.recent-card__details > div { display: grid; grid-template-columns: 5em 1fr; gap: var(--space-2); }
-.recent-card__details dd { margin: 0; overflow-wrap: anywhere; }
 
 .work-item {
   display: flex;
@@ -1969,21 +1881,6 @@ onUnmounted(() => {
 .work-item__status--pending {
   background: rgba(255, 159, 10, 0.15);
   color: #ff9f0a;
-}
-
-.work-item__status--confirm {
-  background: rgba(0, 113, 227, 0.15);
-  color: var(--color-brand);
-}
-
-.work-item__status--done {
-  background: rgba(52, 199, 89, 0.15);
-  color: #34c759;
-}
-
-.work-item__status--refused {
-  background: rgba(255, 59, 48, 0.15);
-  color: #ff3b30;
 }
 
 /* Login / error state */
