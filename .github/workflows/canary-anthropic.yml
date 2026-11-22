@@ -187,13 +187,15 @@ jobs:
     # 选择依据是 **github.actor（推送者身份）**，不是提交里的 author 字段：
     # author 是提交内容的一部分，任何人都能写别人的邮箱；actor 由 GitHub 认证，
     # 骗不了。
+    # workflow_dispatch 与 push 同规则：所有者手动重跑就是「人工放行」那条路，
+    # 因此这里不能按 event_name 区分——否则手动放行反而落到没令牌的通道。
     # 为什么保留那道批准：有写权限的人能直接 push 到本分支（本分支没有 PR 门禁），
     # 也就能临时塞一个引用本 environment 的 workflow 去 echo token。分支策略挡不住
     # 「本分支推的东西」，只有人工放行能挡。
     # 门禁 job（backend / frontend-e2e / workflow-security / dependency-security）
     # 在批准之前就跑完，所以协作者仍能立刻看到代码质量结果，只有发布这一步等批。
     environment:
-      name: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/canary-anthropic' && (github.actor == 'wzxundesigned' || github.actor == 'xiaobo2010' || github.actor == 'neiworldfirst1314-cell')) && 'canary-anthropic-auto' || 'canary-anthropic' }}
+      name: ${{ (github.ref == 'refs/heads/canary-anthropic' && (github.actor == 'wzxundesigned' || github.actor == 'xiaobo2010' || github.actor == 'neiworldfirst1314-cell')) && 'canary-anthropic-auto' || 'canary-anthropic' }}
     env:
       WRANGLER_VERSION: "4.162.0"
       CANARY_URL: https://canary-claude.xiaoboisces.top
