@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { fetchActivity, fetchActivityMembers, fetchUserBrief } from '@/shared/api/domain'
@@ -8,11 +8,9 @@ import {
   updateMemberRecord,
   updateMemberStatus
 } from '@/shared/api/manage'
-import type { Activity, ActivityMemberRow, MemberStatus, TimeMode } from '@/types/domain'
+import type { Activity, ActivityMemberRow, TimeMode } from '@/types/domain'
 import { ApiError } from '@/shared/http/errors'
 import { formatDate, formatDateTime, formatHours } from '@/shared/lib/format'
-import { categoryOf, categoryTone } from '@/shared/lib/category'
-import CategoryIcon from '@/shared/ui/CategoryIcon.vue'
 import { useSessionStore } from '@/shared/stores/session'
 import { useUiStore } from '@/shared/stores/ui'
 import ZBadge from '@/shared/ui/ZBadge.vue'
@@ -24,11 +22,19 @@ import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 import ZModal from '@/shared/ui/ZModal.vue'
 import ZField from '@/shared/ui/ZField.vue'
-import UserLink from '@/shared/ui/UserLink.vue'
+import ZAvatar from '@/shared/ui/ZAvatar.vue'
 import ZSegmented from '@/shared/ui/ZSegmented.vue'
 import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
 import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
-import { loadStudentIndex, type StudentRecord } from '@/shared/lib/studentIndex'
+
+type MemberStatus = ActivityMemberRow['status']
+
+const categories = {
+  'on-campus': { id: 'campus', tone: 'accent' },
+  'off-campus': { id: 'outdoor', tone: 'success' },
+  'social-practice': { id: 'social', tone: 'info' },
+  hybrid: { id: 'hybrid', tone: 'neutral' }
+} as const
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -43,41 +49,8 @@ const loading = ref(true)
 const memberLoading = ref(false)
 const error = ref('')
 const memberQuery = ref('')
-const memberSort = ref<'' | 'business_id' | 'duration'>('duration')
-const memberAsc = ref(true)
 let memberSearchTimer = 0
 let memberRequest = 0
-
-const sortOptions = [
-  { field: 'business_id' as const, label: locale.value === 'zh-CN' ? '账号' : 'ID' },
-  { field: 'duration' as const, label: locale.value === 'zh-CN' ? '时长' : 'Hours' }
-]
-
-function sortState(field: 'business_id' | 'duration') {
-  const active = memberSort.value === field
-  const zh = locale.value === 'zh-CN'
-  const hint = active
-    ? memberAsc.value
-      ? zh
-        ? '当前升序，点击切换降序'
-        : 'Ascending, click for descending'
-      : zh
-        ? '当前降序，点击恢复原始顺序'
-        : 'Descending, click to clear'
-    : zh
-      ? '点击按此列升序排序'
-      : 'Click to sort ascending'
-  return {
-    active,
-    order: active ? (memberAsc.value ? 'asc' : 'desc') : '',
-    title: hint,
-    aria: active
-      ? memberAsc.value
-        ? 'ascending'
-        : 'descending'
-      : 'none'
-  }
-}
 
 const {
   size: memberSize,
@@ -107,8 +80,7 @@ const meta = computed(() => {
     {
       label: t('activities.organizer'),
       value: personName(appointee) || '—',
-      icon: 'user',
-      oid: isOid(appointee) ? appointee : ''
+      icon: 'user'
     },
     {
       label: locale.value === 'zh-CN' ? '审核方' : 'Approver',
@@ -118,8 +90,7 @@ const meta = computed(() => {
             ? '学校团委'
             : 'School Youth League'
           : personName(approver) || '—',
-      icon: 'shield',
-      oid: approver !== 'authority' && isOid(approver) ? approver : ''
+      icon: 'shield'
     }
   ]
 })
@@ -239,9 +210,7 @@ async function loadMembers() {
       id.value,
       memberPage.value,
       memberSize.value,
-      memberQuery.value.trim(),
-      memberSort.value,
-      memberAsc.value
+      memberQuery.value.trim()
     )
     if (ticket !== memberRequest) return
     members.value = result.members
@@ -257,46 +226,6 @@ async function loadMembers() {
   }
 }
 
-/**
- * 姓名旁的班级 / 学号：优先用列表内嵌的用户摘要（class_id、id），
- * 缺失时回退到本地学生名单缓存。没有班级也没有学号时不占位。
- */
-const studentIndex = ref<Map<string, StudentRecord>>(new Map())
-
-function gradeOf(studentId: string) {
-  const grade = studentId.slice(0, 4)
-  return /^\d{4}$/.test(grade) ? Number(grade.slice(2)) : 0
-}
-
-function memberInfo(member: ActivityMemberRow) {
-  const cached = studentIndex.value.get(member.member)
-  const studentId = member.user?.id || cached?.studentId || ''
-  const raw = member.user?.class_id || cached?.classId || ''
-  const className = (raw ? cached?.className : '') || ''
-  const grade = gradeOf(studentId)
-  const klass = className
-    ? grade
-      ? `${grade} 年级 ${className}`
-      : className
-    : grade
-      ? `${grade} 年级${raw && !className ? ` ${raw}` : ''}`
-      : raw
-  if (!klass && !studentId) return null
-  return { klass: klass || '—', studentId }
-}
-
-function loadMemberIndex() {
-  void loadStudentIndex()
-    .then((state) => {
-      const index = new Map<string, StudentRecord>()
-      for (const record of state.students) {
-        if (record.oid) index.set(record.oid, record)
-      }
-      studentIndex.value = index
-    })
-    .catch(() => undefined)
-}
-
 function resetMemberPage() {
   if (memberPage.value === 1) {
     void loadMembers()
@@ -309,20 +238,6 @@ watch(memberQuery, () => {
   window.clearTimeout(memberSearchTimer)
   memberSearchTimer = window.setTimeout(resetMemberPage, 260)
 })
-
-function toggleMemberSort(field: 'business_id' | 'duration') {
-  if (memberSort.value !== field) {
-    memberSort.value = field
-    memberAsc.value = true
-  } else if (memberAsc.value) {
-    memberAsc.value = false
-  } else {
-    // 第三次点击：清除排序，回到后端原始顺序。
-    memberSort.value = ''
-    memberAsc.value = true
-  }
-  resetMemberPage()
-}
 
 async function load() {
   loading.value = true
@@ -350,10 +265,8 @@ watch(memberSize, () => {
   }
   void loadMembers()
 })
-onMounted(() => {
-  void load()
-  if (canManage.value) loadMemberIndex()
-})
+onMounted(load)
+onUnmounted(() => window.clearTimeout(memberSearchTimer))
 </script>
 
 <template>
@@ -378,10 +291,9 @@ onMounted(() => {
     </ZAlert>
 
     <template v-else-if="activity">
-      <header class="hero" :data-category="categoryOf(activity.type)">
+      <header class="hero" :data-category="categories[activity.type]?.id">
         <div class="hero-badges">
-          <CategoryIcon :type="activity.type" />
-          <ZBadge :tone="categoryTone(activity.type)">{{ t(`activities.type.${activity.type}`) }}</ZBadge>
+          <ZBadge :tone="categories[activity.type]?.tone">{{ t(`activities.type.${activity.type}`) }}</ZBadge>
           <ZBadge
             :tone="activity.status === 'effective' ? 'success' : activity.status === 'pending' ? 'warning' : 'danger'"
           >
@@ -393,10 +305,7 @@ onMounted(() => {
         <dl class="meta">
           <div v-for="item in meta" :key="item.label" class="meta-item">
             <dt><ZIcon :name="item.icon" :size="14" />{{ item.label }}</dt>
-            <dd>
-              <UserLink v-if="item.oid" :oid="item.oid" :name="item.value" :size="24" />
-              <template v-else>{{ item.value }}</template>
-            </dd>
+            <dd>{{ item.value }}</dd>
           </div>
         </dl>
 
@@ -435,28 +344,6 @@ onMounted(() => {
                 @keydown.esc="memberQuery = ''"
               />
             </div>
-            <div class="member-sort" role="group" :aria-label="locale === 'zh-CN' ? '排序' : 'Sort'">
-              <button
-                v-for="item in sortOptions"
-                :key="item.field"
-                type="button"
-                class="sort-btn"
-                :data-active="sortState(item.field).active || undefined"
-                :data-order="sortState(item.field).order || undefined"
-                :aria-pressed="sortState(item.field).active"
-                :aria-label="`${item.label} ${sortState(item.field).aria}`"
-                :title="sortState(item.field).title"
-                @click="toggleMemberSort(item.field)"
-              >
-                {{ item.label }}
-                <ZIcon
-                  name="chevron-down"
-                  :size="12"
-                  class="sort-arrow"
-                  :data-order="sortState(item.field).order || 'idle'"
-                />
-              </button>
-            </div>
           </div>
         </div>
 
@@ -473,19 +360,16 @@ onMounted(() => {
               v-for="member in members"
               :key="member._id"
               class="row"
-              :data-category="categoryOf(member.mode)"
+              :data-category="categories[member.mode]?.id"
             >
               <div class="member-main">
-                <UserLink
-                  :oid="member.member"
-                  :name="member.member_name"
-                  :size="32"
-                  :meta="t(`activities.type.${member.mode}`)"
-                  class="member-name"
-                />
-                <span v-if="memberInfo(member)" class="member-info num">
-                  <span class="member-class">{{ memberInfo(member)?.klass }}</span>
-                  <span v-if="memberInfo(member)?.studentId" class="member-sid">{{ memberInfo(member)?.studentId }}</span>
+                <ZAvatar :name="member.member_name" :size="32" />
+                <span class="member-text">
+                  <strong>{{ member.member_name }}</strong>
+                  <small>{{ t(`activities.type.${member.mode}`) }}</small>
+                </span>
+                <span v-if="member.user?.id" class="member-info num">
+                  <span class="member-sid">{{ member.user.id }}</span>
                 </span>
               </div>
               <span class="duration num">{{ formatHours(member.duration) }}h</span>
@@ -760,56 +644,6 @@ onMounted(() => {
   opacity: 0.55;
 }
 
-.member-sort {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-pill);
-  background: var(--glass-hi);
-  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-}
-
-.sort-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  height: 1.6rem;
-  padding-inline: 0.6rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-size: var(--text-2xs);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-
-.sort-btn:hover {
-  color: var(--ink);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.sort-btn[data-active] {
-  color: var(--accent-strong, var(--accent));
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  font-weight: 600;
-}
-
-.sort-arrow {
-  opacity: 0.35;
-  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
-}
-
-.sort-btn[data-active] .sort-arrow {
-  opacity: 1;
-}
-
-.sort-arrow[data-order='asc'] {
-  transform: rotate(180deg);
-}
-
 .status-switch {
   position: relative;
   display: inline-flex;
@@ -944,34 +778,9 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.member-class {
-  color: var(--ink-muted);
-}
-
 .member-sid {
   color: var(--ink-faint);
   letter-spacing: 0.02em;
-}
-
-.member-name {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-.avatar {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border-radius: 50%;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: #fffdf8;
-  background: linear-gradient(140deg, #c58a33, #8c5a12);
 }
 
 .member-text {
