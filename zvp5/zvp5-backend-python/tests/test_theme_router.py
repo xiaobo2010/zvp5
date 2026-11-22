@@ -171,7 +171,6 @@ def test_stats_reports_counts_percent_and_other(
     # 注册表顺序 + 0 人的主题也必须在。
     assert [item["id"] for item in data["items"]] == [
         "canary",
-        "canary2",
         "canary-pro",
         "canary-anthropic",
     ]
@@ -182,8 +181,6 @@ def test_stats_reports_counts_percent_and_other(
         "count": 12,
         "percent": 60.0,
     }
-    assert by_id["canary2"]["count"] == 0
-    assert by_id["canary2"]["percent"] == 0.0
     assert by_id["canary-pro"]["count"] == 6
     assert by_id["canary-pro"]["percent"] == 30.0
     # 未知历史值只计入 other，不伪造 item。

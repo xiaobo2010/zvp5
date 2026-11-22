@@ -185,8 +185,7 @@ jobs:
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend
-    # token 存在 canary* environment 里，两个 environment 都只接受 v5-canary /
-    # v5-canary2 分支的 job：
+    # token 存在 canary* environment 里，两个 environment 都只接受 v5-canary 分支的 job：
     #   - canary      = 带 required_reviewers，部署前必须仓库所有者手动放行；
     #   - canary-auto = 不放行闸，只给 allowlist 里那个账号自己推的提交用。
     # 选择依据是 **github.actor（推送者身份）**，不是提交里的 author 字段：author 是

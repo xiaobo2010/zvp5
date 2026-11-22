@@ -33,15 +33,6 @@
   border-block-start: 2px solid var(--picker-accent);
 }
 
-.zvms-theme-dialog[data-theme-app='canary2'] {
-  --picker-bg: var(--yg2-surface-raised, Canvas);
-  --picker-text: var(--yg2-text, CanvasText);
-  --picker-muted: var(--yg2-text-secondary, CanvasText);
-  --picker-line: var(--yg-border-default, GrayText);
-  --picker-accent: var(--yg2-accent, LinkText);
-  --picker-hover: var(--yg2-surface-sunken, Canvas);
-}
-
 .zvms-theme-dialog[data-theme-app='canary-anthropic'] {
   --picker-bg: var(--surface-raised, Canvas);
   --picker-text: var(--ink, CanvasText);

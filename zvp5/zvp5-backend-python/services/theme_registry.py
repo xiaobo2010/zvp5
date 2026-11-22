@@ -41,12 +41,6 @@ THEMES: tuple[Theme, ...] = (
         status="stable",
     ),
     Theme(
-        id="canary2",
-        label="Canary 2",
-        description="v2 浅色工作台：左侧边栏、顶栏与环境光玻璃",
-        status="experimental",
-    ),
-    Theme(
         id="canary-pro",
         label="Canary Pro",
         description="Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",

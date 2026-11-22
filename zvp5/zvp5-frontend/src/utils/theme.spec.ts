@@ -51,7 +51,7 @@ describe('utils/theme', () => {
     })
 
     it('任意合法 slug 都按统一前缀派生路径', () => {
-      expect(themePath('canary2')).toBe('/themes/canary2/')
+      expect(themePath('canary-anthropic')).toBe('/themes/canary-anthropic/')
       expect(themePath('brand-new-theme')).toBe('/themes/brand-new-theme/')
     })
 
@@ -60,12 +60,12 @@ describe('utils/theme', () => {
       expect(themePath('Canary')).toBe('/')
       expect(themePath('canary pro')).toBe('/')
       expect(themePath('../etc/passwd')).toBe('/')
-      expect(themePath('/themes/canary2/')).toBe('/')
+      expect(themePath('/themes/canary-anthropic/')).toBe('/')
       expect(themePath(null as unknown as string)).toBe('/')
     })
 
     it('传 allowed 时收窄到已部署的主题集合', () => {
-      expect(themePath('canary2', ['canary', 'canary-pro'])).toBe('/')
+      expect(themePath('canary-anthropic', ['canary', 'canary-pro'])).toBe('/')
       expect(themePath('canary-pro', ['canary', 'canary-pro'])).toBe('/themes/canary-pro/')
     })
   })
@@ -81,26 +81,26 @@ describe('utils/theme', () => {
     it('子应用路径反查回自身 id', () => {
       expect(currentThemeId('/themes/canary-pro/')).toBe('canary-pro')
       expect(currentThemeId('/themes/canary-pro/me')).toBe('canary-pro')
-      expect(currentThemeId('/themes/canary2/volunteers')).toBe('canary2')
-      expect(currentThemeId('/themes/canary2')).toBe('canary2')
+      expect(currentThemeId('/themes/canary-anthropic/me')).toBe('canary-anthropic')
+      expect(currentThemeId('/themes/canary-anthropic')).toBe('canary-anthropic')
     })
 
     it('非法前缀 / 非 slug 段不属于任何子应用', () => {
       expect(currentThemeId('/themes/')).toBe('canary')
       expect(currentThemeId('/themes/UNKNOWN/')).toBe('canary')
-      expect(currentThemeId('/theme/canary2/')).toBe('canary')
-      expect(currentThemeId('/assets/canary2/')).toBe('canary')
+      expect(currentThemeId('/theme/canary-anthropic/')).toBe('canary')
+      expect(currentThemeId('/assets/canary-anthropic/')).toBe('canary')
     })
 
     it('路径段按完整 slug 匹配，不会被更长的 id 误判', () => {
-      expect(currentThemeId('/themes/canary2-other')).toBe('canary2-other')
-      expect(currentThemeId('/themes/canary2x')).toBe('canary2x')
+      expect(currentThemeId('/themes/canary-anthropic-other')).toBe('canary-anthropic-other')
+      expect(currentThemeId('/themes/canary-anthropicx')).toBe('canary-anthropicx')
     })
   })
 
   describe('isThemeId / isThemePath / isRootApp', () => {
     it('isThemeId 只判断 slug 语法', () => {
-      expect(isThemeId('canary2')).toBe(true)
+      expect(isThemeId('canary-anthropic')).toBe(true)
       expect(isThemeId('canary-pro')).toBe(true)
       expect(isThemeId('Canary2')).toBe(false)
       expect(isThemeId('-canary')).toBe(false)
@@ -110,13 +110,13 @@ describe('utils/theme', () => {
 
     it('isThemePath 只在对应子应用路径下为真', () => {
       expect(isThemePath('/themes/canary-pro/me', 'canary-pro')).toBe(true)
-      expect(isThemePath('/themes/canary-pro/me', 'canary2')).toBe(false)
+      expect(isThemePath('/themes/canary-pro/me', 'canary-anthropic')).toBe(false)
       expect(isThemePath('/', 'canary')).toBe(false)
     })
 
     it('根应用判定只认 canary', () => {
       expect(isRootApp('/')).toBe(true)
-      expect(isRootApp('/themes/canary2/')).toBe(false)
+      expect(isRootApp('/themes/canary-anthropic/')).toBe(false)
       expect(isRootApp('/themes/canary-pro/')).toBe(false)
     })
   })
@@ -136,7 +136,7 @@ describe('utils/theme', () => {
     })
 
     it('可用 allowed 收窄合法集合', () => {
-      expect(normalizeTheme('canary2', ['canary', 'canary-pro'])).toBe('canary')
+      expect(normalizeTheme('canary-anthropic', ['canary', 'canary-pro'])).toBe('canary')
       expect(normalizeTheme('canary-pro', ['canary', 'canary-pro'])).toBe('canary-pro')
     })
   })

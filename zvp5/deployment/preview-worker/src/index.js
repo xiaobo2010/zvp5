@@ -52,7 +52,7 @@ export default {
     }
 
     // 子应用的 SPA 深链接：只对 HTML 导航改写到自己的 index.html，
-    // 静态资源（/themes/canary2/assets/*.js 等）仍然按原路径取。
+    // 静态资源（/themes/canary-pro/assets/*.js 等）仍然按原路径取。
     const themeIndex = themeAppIndexUrl(url)
     const asset =
       themeIndex && isHtmlNavigation(request, url) ? themeIndex.toString() : request
