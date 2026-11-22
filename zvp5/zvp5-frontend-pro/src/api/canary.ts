@@ -1,6 +1,6 @@
 // Minimal canary API client for the standalone Pro frontend.
 // The Pro app deliberately keeps its dependency surface small, so this uses
-// the browser fetch API instead of the canary2 axios stack.
+// the browser fetch API instead of the legacy axios stack.
 
 const API_BASE = (
   import.meta.env.VITE_API_BASE || 'https://zvp.xiaobopisces.top/api'

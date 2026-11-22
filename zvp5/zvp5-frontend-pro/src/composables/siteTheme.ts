@@ -21,10 +21,6 @@ const standaloneThemes: SiteTheme[] = [
     description: '经典 Phi 设计：暗色棱角、青色判定线与现有导航',
   },
   {
-    id: 'canary2', label: 'Canary 2', status: 'experimental', base: '/themes/canary2/',
-    description: 'v2 浅色工作台：左侧边栏、顶栏与环境光玻璃',
-  },
-  {
     id: PRO_THEME_ID, label: 'Canary Pro', status: 'stable', base: '/themes/canary-pro/',
     description: 'Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局',
   },
