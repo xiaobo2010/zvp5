@@ -5,6 +5,7 @@ import { router } from './app/router'
 import { i18n } from './shared/i18n'
 import { useUiStore } from './shared/stores/ui'
 import { useSessionStore } from './shared/stores/session'
+import { reveal } from './shared/directives/reveal'
 import { AUTH_EXPIRED_EVENT, MAINTENANCE_EVENT } from './shared/http/client'
 
 import './design/tokens.css'
@@ -18,6 +19,7 @@ const pinia = createPinia()
 app.use(pinia)
 app.use(i18n)
 app.use(router)
+app.directive('reveal', reveal)
 
 const ui = useUiStore(pinia)
 ui.applyTheme()

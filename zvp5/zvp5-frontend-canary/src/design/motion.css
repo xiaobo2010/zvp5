@@ -34,6 +34,31 @@
   transform: translate3d(0, -4px, 0);
 }
 
+/* --- 滚动显现（v-reveal） --------------------------------------------------
+   只用在首屏之外、需要独立节奏的区块；同屏元素继续走上面的 stagger。 */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  will-change: opacity, transform;
+  transition:
+    opacity 620ms var(--ease-out),
+    transform 760ms var(--spring-soft);
+}
+
+.reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
 /* --- 页面内容渐进进入 ----------------------------------------------------- */
 .page-view {
   min-width: 0;

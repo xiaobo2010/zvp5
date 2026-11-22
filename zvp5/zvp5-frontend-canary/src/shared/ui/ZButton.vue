@@ -27,8 +27,19 @@ function trackPointer(event: PointerEvent) {
   const element = event.currentTarget as HTMLElement
   const rect = element.getBoundingClientRect()
   if (rect.width === 0 || rect.height === 0) return
+  const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  const ny = ((event.clientY - rect.top) / rect.height) * 2 - 1
   element.style.setProperty('--bx', `${((event.clientX - rect.left) / rect.width) * 100}%`)
   element.style.setProperty('--by', `${((event.clientY - rect.top) / rect.height) * 100}%`)
+  // 主要按钮的轻微磁吸：最多 3px，离开即回中
+  element.style.setProperty('--mag-x', `${(nx * 2.6).toFixed(2)}px`)
+  element.style.setProperty('--mag-y', `${(ny * 1.8).toFixed(2)}px`)
+}
+
+function resetPointer(event: PointerEvent) {
+  const element = event.currentTarget as HTMLElement
+  element.style.setProperty('--mag-x', '0px')
+  element.style.setProperty('--mag-y', '0px')
 }
 </script>
 
@@ -39,6 +50,7 @@ function trackPointer(event: PointerEvent) {
     :class="[`is-${variant}`, `size-${size}`, { 'is-block': block, 'is-loading': loading }]"
     :disabled="disabled || loading"
     @pointermove="trackPointer"
+    @pointerleave="resetPointer"
   >
     <span v-if="loading" class="spinner" aria-hidden="true" />
     <ZIcon v-else-if="icon" :name="icon" :size="size === 'sm' ? 16 : 18" />
@@ -53,6 +65,8 @@ function trackPointer(event: PointerEvent) {
   --btn-pad: 1.15rem;
   --bx: 50%;
   --by: 50%;
+  --mag-x: 0px;
+  --mag-y: 0px;
   position: relative;
   isolation: isolate;
   display: inline-flex;
@@ -155,10 +169,16 @@ function trackPointer(event: PointerEvent) {
 }
 
 .is-primary:not(:disabled):hover {
+  transform: translate3d(var(--mag-x), calc(var(--mag-y) - 1px), 0) scale(1.012);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     inset 0 -2px 6px -3px rgba(60, 34, 4, 0.5),
     0 16px 32px -16px color-mix(in srgb, var(--accent-strong) 95%, transparent);
+}
+
+.is-primary:not(:disabled):active {
+  transform: translate3d(var(--mag-x), var(--mag-y), 0) scale(0.975);
+  transition-duration: 100ms;
 }
 
 [data-theme='dark'] .is-primary {
@@ -262,7 +282,9 @@ function trackPointer(event: PointerEvent) {
 
 @media (prefers-reduced-motion: reduce) {
   .z-button:not(:disabled):hover,
-  .z-button:not(:disabled):active {
+  .z-button:not(:disabled):active,
+  .z-button.is-primary:not(:disabled):hover,
+  .z-button.is-primary:not(:disabled):active {
     transform: none;
   }
 }

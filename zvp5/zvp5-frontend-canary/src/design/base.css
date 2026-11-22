@@ -30,6 +30,14 @@ body {
     color var(--dur-base) var(--ease-out);
 }
 
+/* 应用根建立独立层叠上下文：环境光层用 z-index:-1 落在内容之下，
+   但仍然位于 body 背景之上，不会被 body 的底色盖住。 */
+#app {
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+}
+
 /* 背景氛围：温暖的光晕 + 极轻的纸张颗粒，避免大面积死白 */
 body::before {
   content: "";

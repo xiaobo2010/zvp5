@@ -10,6 +10,7 @@ import ZButton from '@/shared/ui/ZButton.vue'
 import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZGlassSurface from '@/shared/ui/ZGlassSurface.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
+import GoldenOrb from './GoldenOrb.vue'
 
 const { t, locale } = useI18n()
 const router = useRouter()
@@ -25,6 +26,7 @@ const challenge = ref('')
 const tempPassword = ref('')
 
 const canSubmit = computed(() => id.value.trim().length > 0 && password.value.length > 0)
+const headlineLines = computed(() => t('login.title').split('\n'))
 
 onMounted(() => {
   if (!window.crypto?.subtle) {
@@ -101,6 +103,9 @@ function toggleLocale() {
 <template>
   <div class="auth">
     <section class="story">
+      <GoldenOrb />
+      <span class="story-veil" aria-hidden="true" />
+
       <div class="story-top">
         <div class="brand">
           <span class="mark" aria-hidden="true">Z</span>
@@ -114,13 +119,22 @@ function toggleLocale() {
 
       <div class="story-body">
         <p class="eyebrow">{{ t('login.eyebrow') }}</p>
-        <h1 class="headline">{{ t('login.title') }}</h1>
+        <h1 class="headline">
+          <span
+            v-for="(line, index) in headlineLines"
+            :key="index"
+            class="headline-line"
+            :class="{ 'is-accent': index === headlineLines.length - 1 }"
+            :style="{ '--i': index }"
+          >
+            {{ line }}
+          </span>
+        </h1>
         <p class="lede">{{ t('login.subtitle') }}</p>
       </div>
 
       <div class="story-foot">
         <span class="foot-note">Zhenhai · Volunteer Platform</span>
-        <span class="orb" aria-hidden="true" />
       </div>
     </section>
 
@@ -251,6 +265,20 @@ function toggleLocale() {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
 }
 
+/* 文字一侧的柔和遮罩：光球经过时压暗一点，保证标题与副标题的对比度 */
+.story-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    98deg,
+    color-mix(in srgb, var(--surface) 92%, transparent) 0%,
+    color-mix(in srgb, var(--surface) 76%, transparent) 32%,
+    transparent 64%
+  );
+}
+
 .story-top {
   position: relative;
   z-index: 1;
@@ -313,17 +341,51 @@ function toggleLocale() {
   z-index: 1;
   max-width: 34rem;
   padding-block: clamp(3rem, 8vh, 7rem);
-  animation: rise var(--dur-slow) var(--ease-out) both;
 }
 
 .headline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.04em;
   margin-top: var(--space-4);
   font-size: var(--text-hero);
   font-weight: 500;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-  white-space: pre-line;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
   color: var(--ink);
+}
+
+.headline-line {
+  display: block;
+  opacity: 0;
+  animation: line-in 900ms var(--spring-soft) both;
+  animation-delay: calc(var(--i, 0) * 150ms + 140ms);
+}
+
+.headline-line.is-accent {
+  background: linear-gradient(
+    96deg,
+    var(--accent-ink),
+    color-mix(in srgb, var(--accent) 68%, #f0d39b) 52%,
+    var(--accent)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 15px, 0);
+    filter: blur(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
 .lede {
@@ -332,6 +394,8 @@ function toggleLocale() {
   font-size: var(--text-md);
   line-height: 1.7;
   color: var(--ink-muted);
+  opacity: 0;
+  animation: line-in 900ms var(--spring-soft) 420ms both;
 }
 
 .story-foot {
@@ -351,28 +415,14 @@ function toggleLocale() {
   opacity: 0.85;
 }
 
-.orb {
-  width: clamp(90px, 10vw, 150px);
-  height: clamp(90px, 10vw, 150px);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.85), transparent 46%),
-    radial-gradient(circle at 62% 70%, color-mix(in srgb, var(--c-sage) 55%, transparent), transparent 60%),
-    linear-gradient(150deg, #e8bd6e, #a96a1c 65%, #6f4210);
-  box-shadow:
-    inset 0 2px 6px rgba(255, 255, 255, 0.4),
-    0 30px 70px -30px rgba(120, 80, 20, 0.6);
-  opacity: 0.9;
-}
-
 .panel {
+  position: relative;
   display: grid;
   place-items: center;
   padding: clamp(1.5rem, 1rem + 3vw, 4rem);
   background:
-    radial-gradient(40rem 30rem at 18% 8%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 62%),
-    radial-gradient(36rem 28rem at 88% 92%, color-mix(in srgb, var(--c-sage) 10%, transparent), transparent 60%),
-    var(--bg);
+    radial-gradient(40rem 30rem at 18% 8%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 62%),
+    radial-gradient(36rem 28rem at 88% 92%, color-mix(in srgb, var(--c-sage) 8%, transparent), transparent 60%);
 }
 
 .form-card {
@@ -382,9 +432,50 @@ function toggleLocale() {
   border-radius: var(--radius-2xl);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
+  animation: card-in 760ms var(--spring-soft) both;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+.form-card:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--glass-border));
+  box-shadow:
+    var(--glass-shadow),
+    0 0 46px -14px color-mix(in srgb, var(--accent) 46%, transparent);
+}
+
+/* 卡片顶部的一层斜向高光：模拟液体玻璃的受光面 */
+.form-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    168deg,
+    color-mix(in srgb, var(--glass-hi) 34%, transparent),
+    transparent 34%
+  );
+  mix-blend-mode: screen;
+  opacity: 0.45;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0) scale(0.986);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .form-wrap {
+  position: relative;
+  z-index: 1;
   animation: rise var(--dur-slow) var(--ease-out) 80ms both;
 }
 
@@ -468,6 +559,18 @@ function toggleLocale() {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headline-line,
+  .lede,
+  .form-card,
+  .form-wrap {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
 }
 
