@@ -75,6 +75,10 @@ Worker 只对 `/themes/<slug>/...` 的 **HTML 导航请求**（`Accept` 含 `tex
 的 index；静态资源仍按原路径取。Worker 里**没有**主题 id 列表——新增主题不需要
 改 Worker，只要清单里有、构建产物在 `dist/themes/<id>/`。根路径与 https 强制逻辑不变。
 
+`assets.run_worker_first` 要覆盖 `/themes/*`。否则浏览器刷新发送的
+`Sec-Fetch-Mode: navigate` 会触发 Cloudflare 的根 SPA 回落，绕过主题路由。
+发布冒烟检查会带上这个请求头，核对子应用深链接返回的入口资源。
+
 源码接入、清单示例、后端注册和上线验证见 [新主题接入指南](../../themes/README.md)。
 
 

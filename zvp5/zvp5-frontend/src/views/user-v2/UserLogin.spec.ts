@@ -28,7 +28,7 @@ vi.mock('@/stores/user', () => ({
     validatePasswordStrength: mocks.validatePasswordStrength,
     setUser: mocks.setUser,
     setUserInformation: vi.fn(),
-    syncThemeFromServer: vi.fn()
+    applyAccountThemeAfterLogin: vi.fn()
   })
 }))
 

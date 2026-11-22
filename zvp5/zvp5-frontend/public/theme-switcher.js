@@ -93,10 +93,6 @@
     dismiss.disabled = true
     const saved = await save(theme.id)
     if (theme.id !== active) {
-      // 账号未保存时，从子应用切回根站也要尊重刚完成的设备选择。
-      if (!saved && theme.base === '/') {
-        try { sessionStorage.setItem('zvms.theme-manual-return', '1') } catch { /* 存储可能不可用 */ }
-      }
       location.assign(theme.base)
       return
     }

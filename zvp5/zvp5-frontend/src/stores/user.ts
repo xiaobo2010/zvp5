@@ -91,8 +91,7 @@ export const useUserStore = defineStore('user', {
         await this.setUserInformation(information)
         this.shouldResetPassword = Boolean(result.weak_password)
         this.isLogin = true
-        // 登录成功后同步账号主题偏好
-        await this.syncThemeFromServer()
+        await this.applyAccountThemeAfterLogin()
       }
     },
     async refreshUser() {
@@ -194,18 +193,11 @@ export const useUserStore = defineStore('user', {
       return this.theme
     },
     /**
-     * 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。
-     * 若当前跑在根 canary 应用里而账号偏好是别的主题，整页跳转到那份完整应用；
-     * 子应用（`/themes/<id>/`）不执行这段逻辑，避免互相踢。
+     * 完成登录时应用账号默认主题。刷新与会话恢复保留当前页面的主题和路径。
      */
-    async syncThemeFromServer() {
+    async applyAccountThemeAfterLogin() {
       try {
         if (new URLSearchParams(window.location.search).has('choose-theme')) return
-        if (sessionStorage.getItem('zvms.theme-manual-return') === '1') {
-          sessionStorage.removeItem('zvms.theme-manual-return')
-          this.theme = readStoredTheme()
-          return
-        }
         const { theme } = await api.theme.getMyTheme()
         if (!theme) {
           return

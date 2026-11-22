@@ -6,6 +6,8 @@
   "assets": {
     "directory": "../../zvp5-frontend/dist",
     "binding": "ASSETS",
+    // 浏览器刷新子应用页面时，先由 Worker 选择对应的 SPA 入口。
+    "run_worker_first": ["/themes/*"],
     "not_found_handling": "single-page-application"
   },
   "routes": [
