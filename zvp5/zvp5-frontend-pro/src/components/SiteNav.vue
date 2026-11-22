@@ -12,6 +12,7 @@ const drawerItems = [
   { label: '个人主页', path: '/me' },
   { label: '关于', path: '/about' }
 ]
+const notificationsItem = { label: '通知', path: '/notifications' }
 
 // Admin menu items. `currentRoles()` is read through a route tick so the drawer
 // updates immediately after login without a full reload.
@@ -49,6 +50,19 @@ function isNavActive(path: string): boolean {
   return activePath.value === path
 }
 
+// Every drawer group shares one selection target so a single indicator can
+// travel across the section dividers. `pendingItem` leads the visual while a
+// lazy route/guard is settling; aria-current always follows the committed route.
+const navLinkItems = computed(() => [...drawerItems, notificationsItem, ...adminItems.value])
+const activeNavPath = computed(
+  () => navLinkItems.value.find((item) => isNavActive(item.path))?.path ?? ''
+)
+const selectedPath = computed(() => {
+  const pending = pendingItem.value
+  if (pending && navLinkItems.value.some((item) => item.path === pending)) return pending
+  return activeNavPath.value
+})
+
 // Drag-to-pull state for the collapsed edge handle.
 const dragOffset = ref(0)
 const dragging = ref(false)
@@ -59,6 +73,62 @@ let suppressHandleClick = false
 // Focus trap refs
 const drawerRef = ref<HTMLElement>()
 const drawerHandleRef = ref<HTMLElement>()
+
+// One spring indicator shared by every drawer group. It is measured in drawer
+// content coordinates, so it scrolls with the panel without a scroll listener.
+const indicatorState = ref({ x: 0, y: 0, width: 0, height: 0, ready: false })
+const indicatorCanSlide = ref(false)
+const linkElements = new Map<string, HTMLElement>()
+let indicatorFrame = 0
+let slideFrame = 0
+let pendingSnap = false
+let drawerObserver: ResizeObserver | null = null
+
+function setLinkRef(path: string, element: Element | null) {
+  if (element instanceof HTMLElement) linkElements.set(path, element)
+  else linkElements.delete(path)
+}
+
+function measureIndicator(snap = false) {
+  const host = drawerRef.value
+  const target = selectedPath.value ? linkElements.get(selectedPath.value) : undefined
+  if (!host || !target) {
+    if (indicatorState.value.ready) indicatorState.value = { ...indicatorState.value, ready: false }
+    return
+  }
+
+  const hostRect = host.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const instant = snap || !indicatorState.value.ready
+  if (instant) indicatorCanSlide.value = false
+  indicatorState.value = {
+    x: targetRect.left - hostRect.left - host.clientLeft + host.scrollLeft,
+    y: targetRect.top - hostRect.top - host.clientTop + host.scrollTop,
+    width: targetRect.width,
+    height: targetRect.height,
+    ready: true
+  }
+  if (instant) enableIndicatorSlide()
+}
+
+function enableIndicatorSlide() {
+  if (slideFrame) window.cancelAnimationFrame(slideFrame)
+  slideFrame = window.requestAnimationFrame(() => {
+    slideFrame = 0
+    indicatorCanSlide.value = true
+  })
+}
+
+function scheduleIndicatorMeasure(snap = false) {
+  pendingSnap = pendingSnap || snap
+  if (indicatorFrame) return
+  indicatorFrame = window.requestAnimationFrame(() => {
+    const shouldSnap = pendingSnap
+    pendingSnap = false
+    indicatorFrame = 0
+    measureIndicator(shouldSnap)
+  })
+}
 
 function toggleDrawer() {
   drawerOpen.value = !drawerOpen.value
@@ -170,14 +240,42 @@ function setScrollLock(locked: boolean) {
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
   window.addEventListener('keydown', handleDrawerKeydown)
+  window.addEventListener('resize', onViewportResize)
+
+  // Measure before the first paint so the indicator does not fly in from (0, 0).
+  nextTick(() => {
+    measureIndicator()
+    enableIndicatorSlide()
+  })
+
+  if (typeof ResizeObserver !== 'undefined' && drawerRef.value) {
+    drawerObserver = new ResizeObserver(() => scheduleIndicatorMeasure(true))
+    drawerObserver.observe(drawerRef.value)
+  }
+
+  if (document.fonts?.ready) {
+    void document.fonts.ready.then(() => measureIndicator(true))
+  }
 })
+
+function onViewportResize() {
+  scheduleIndicatorMeasure(true)
+}
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
   window.removeEventListener('keydown', handleDrawerKeydown)
+  window.removeEventListener('resize', onViewportResize)
   window.removeEventListener('pointermove', moveHandleDrag)
   window.removeEventListener('pointerup', endHandleDrag)
   window.removeEventListener('pointercancel', endHandleDrag)
+  drawerObserver?.disconnect()
+  drawerObserver = null
+  if (indicatorFrame) window.cancelAnimationFrame(indicatorFrame)
+  if (slideFrame) window.cancelAnimationFrame(slideFrame)
+  indicatorFrame = 0
+  slideFrame = 0
+  pendingSnap = false
   setScrollLock(false)
 })
 
@@ -187,6 +285,7 @@ watch(drawerOpen, (isOpen) => {
   if (isOpen) {
     nextTick(() => {
       if (drawerOpen.value) (drawerControls()[0] ?? drawerRef.value)?.focus()
+      scheduleIndicatorMeasure(true)
     })
   } else {
     // Return focus to handle when drawer closes
@@ -196,10 +295,24 @@ watch(drawerOpen, (isOpen) => {
   }
 })
 
+// A committed route, pending navigation or role change can move the target;
+// remeasure after Vue has patched the DOM.
+watch(selectedPath, () => {
+  void nextTick(scheduleIndicatorMeasure)
+})
+
+watch(
+  () => adminItems.value.map((item) => item.path).join('|'),
+  () => {
+    void nextTick(() => scheduleIndicatorMeasure(true))
+  }
+)
+
 async function handleNavClick(event: MouseEvent, path: string, navigate: (event: MouseEvent) => Promise<unknown>) {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
 
-  // Keep the press tint through lazy route loading. aria-current still follows the committed route.
+  // Let the indicator lead through lazy route loading; aria-current still
+  // follows the committed route and falls back here if a guard rejects.
   const sequence = ++navigationSequence
   pendingItem.value = path
   try {
@@ -235,6 +348,17 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
     aria-modal="true"
     role="dialog"
   >
+    <span
+      class="site-nav__indicator"
+      :class="{ 'is-ready': indicatorState.ready, 'can-slide': indicatorCanSlide }"
+      aria-hidden="true"
+      :style="{
+        transform: `translate3d(${indicatorState.x}px, ${indicatorState.y}px, 0)`,
+        width: `${indicatorState.width}px`,
+        height: `${indicatorState.height}px`
+      }"
+    />
+
     <!-- Drawer header with close button -->
     <div class="site-nav__drawer-header">
       <h2 id="drawer-title" class="site-nav__drawer-title">ZVMS</h2>
@@ -267,25 +391,31 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
       <router-link v-for="item in drawerItems" :key="item.path" :to="item.path" custom v-slot="{ href, navigate }">
         <a
           :href="href"
+          :ref="(element) => setLinkRef(item.path, element as Element | null)"
           class="site-nav__drawer-link"
-          :class="{ 'is-selected': pendingItem ? pendingItem === item.path : isNavActive(item.path) }"
+          :class="{ 'is-selected': selectedPath === item.path }"
           :aria-current="isNavActive(item.path) ? 'page' : undefined"
           @click="handleNavClick($event, item.path, navigate)"
-        >{{ item.label }}</a>
+        >
+          <span class="site-nav__drawer-link-text">{{ item.label }}</span>
+        </a>
       </router-link>
     </nav>
 
     <div class="site-nav__drawer-divider" />
 
     <div class="site-nav__drawer-section">
-      <router-link to="/notifications" custom v-slot="{ href, navigate }">
+      <router-link :to="notificationsItem.path" custom v-slot="{ href, navigate }">
         <a
           :href="href"
+          :ref="(element) => setLinkRef(notificationsItem.path, element as Element | null)"
           class="site-nav__drawer-link"
-          :class="{ 'is-selected': pendingItem ? pendingItem === '/notifications' : isNavActive('/notifications') }"
-          :aria-current="isNavActive('/notifications') ? 'page' : undefined"
-          @click="handleNavClick($event, '/notifications', navigate)"
-        >通知</a>
+          :class="{ 'is-selected': selectedPath === notificationsItem.path }"
+          :aria-current="isNavActive(notificationsItem.path) ? 'page' : undefined"
+          @click="handleNavClick($event, notificationsItem.path, navigate)"
+        >
+          <span class="site-nav__drawer-link-text">{{ notificationsItem.label }}</span>
+        </a>
       </router-link>
     </div>
 
@@ -297,11 +427,14 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
         <router-link v-for="item in adminItems" :key="item.path" :to="item.path" custom v-slot="{ href, navigate }">
           <a
             :href="href"
+            :ref="(element) => setLinkRef(item.path, element as Element | null)"
             class="site-nav__drawer-link"
-            :class="{ 'is-selected': pendingItem ? pendingItem === item.path : isNavActive(item.path) }"
+            :class="{ 'is-selected': selectedPath === item.path }"
             :aria-current="isNavActive(item.path) ? 'page' : undefined"
             @click="handleNavClick($event, item.path, navigate)"
-          >{{ item.label }}</a>
+          >
+            <span class="site-nav__drawer-link-text">{{ item.label }}</span>
+          </a>
         </router-link>
       </div>
     </div>
@@ -496,6 +629,52 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   transition: none;
 }
 
+/* Single sliding selection backdrop shared by every drawer group. It lives in
+   drawer content coordinates (measured with scrollTop/scrollLeft) and animates
+   only transform/width/height, so retargeting mid-flight is handled by CSS. */
+.site-nav__indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 0;
+  height: 0;
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(ellipse at 18% 0%, #ffffffd9, transparent 62%),
+    linear-gradient(148deg, #e8f4ff 0%, #bcdcf9 55%, #9fc8f4 100%);
+  border: 1px solid rgb(0 113 227 / 0.34);
+  box-shadow:
+    0 6px 16px rgb(0 113 227 / 0.22),
+    0 1px 3px #1230521f,
+    inset 0 1px 0 #ffffffe6;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: opacity 180ms var(--ease-smooth);
+}
+
+.site-nav__indicator.is-ready {
+  opacity: 1;
+}
+
+.site-nav__indicator.can-slide {
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    width 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    height 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    opacity 180ms var(--ease-smooth);
+}
+
+.site-nav__indicator::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #ffffff8c, transparent 58%);
+  pointer-events: none;
+}
+
 /* Drawer navigation */
 .site-nav__drawer-header {
   display: flex;
@@ -584,7 +763,6 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 .site-nav__drawer-link {
   --nav-press-time: 200ms;
   position: relative;
-  isolation: isolate;
   display: flex;
   align-items: center;
   min-height: 44px;
@@ -597,7 +775,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   text-decoration: none;
   font-size: var(--font-size-body);
   font-weight: 500;
-  transition: scale var(--nav-press-time) var(--ease-settle),
+  transition: box-shadow var(--nav-press-time) var(--ease-settle),
     color var(--nav-press-time) var(--ease-settle),
     border-color var(--nav-press-time) var(--ease-settle);
 }
@@ -606,7 +784,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   content: '';
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   border-radius: inherit;
   background: linear-gradient(150deg, #ffffffb3, transparent 60%), var(--palette-main, #d9eafd);
   box-shadow: var(--glass-rim);
@@ -615,24 +793,49 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   transition: opacity var(--nav-press-time) var(--ease-settle);
 }
 
+.site-nav__drawer-link-text {
+  position: relative;
+  z-index: 2;
+  transition: transform 120ms var(--ease-settle);
+}
+
+/* Focus ring is painted above the shared indicator (the link itself is not a
+   stacking context, so the ring can escape it). */
+.site-nav__drawer-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 @media (hover: hover) {
   .site-nav__drawer-link:hover::before { opacity: 0.36; }
 }
 
-.site-nav__drawer-link.is-selected,
-.site-nav__drawer-link:active {
-  color: var(--accent-ink);
-  border-color: color-mix(in srgb, var(--accent-ink) 42%, var(--glass-border));
+.site-nav__drawer-link.is-selected {
+  color: #0f4a77;
+  border-color: color-mix(in srgb, var(--color-brand) 38%, var(--glass-border));
 }
 
-.site-nav__drawer-link.is-selected::before,
-.site-nav__drawer-link:active::before { opacity: 1; }
+.site-nav__drawer-link:active {
+  border-color: color-mix(in srgb, var(--color-brand) 34%, var(--glass-border));
+  box-shadow: inset 0 1px 3px #12305229, var(--glass-rim);
+}
 
-.site-nav__drawer-link:active { scale: 0.97; }
+/* Press feedback stays off the measured box: the label nudges and the card
+   shadows in, so the shared indicator never measures a shifted target. */
+.site-nav__drawer-link:active .site-nav__drawer-link-text {
+  transform: translateY(1px);
+}
 
 .site-nav__drawer-link:focus-visible {
-  outline: 2px solid var(--accent-ink);
-  outline-offset: -2px;
+  outline: none;
+}
+
+.site-nav__drawer-link:focus-visible::after {
+  border: 2px solid var(--accent-ink);
 }
 
 /* Drawer sections */
@@ -656,6 +859,8 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 }
 
 .site-nav__drawer-section-title {
+  position: relative;
+  z-index: 2;
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-caption);
   font-weight: 600;
@@ -699,11 +904,14 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   }
 
   .site-nav__drawer-link,
-  .site-nav__drawer-link::before {
+  .site-nav__drawer-link::before,
+  .site-nav__drawer-link-text {
     transition: none;
   }
 
-  .site-nav__drawer-link:active { scale: none; }
+  .site-nav__drawer-link:active .site-nav__drawer-link-text { transform: none; }
+
+  .site-nav__indicator.can-slide { transition: opacity 160ms var(--ease-smooth); }
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
@@ -719,5 +927,27 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   .site-nav__drawer-link:active {
     border-color: currentColor;
   }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .site-nav__indicator {
+    background: #cfe5f8;
+    border-color: #175588;
+    box-shadow: none;
+  }
+
+  .site-nav__indicator::before { display: none; }
+}
+
+@media (forced-colors: active) {
+  .site-nav__indicator {
+    background: Canvas;
+    border: 2px solid Highlight;
+    box-shadow: none;
+  }
+
+  .site-nav__indicator::before { display: none; }
+
+  .site-nav__drawer-link:focus-visible::after { border-color: Highlight; }
 }
 </style>

@@ -23,6 +23,7 @@ interface Activity {
   statusLabel: string
   statusClass: string
   duration: number
+  hasDuration: boolean
   creator: string
 }
 
@@ -35,7 +36,7 @@ const TYPE_LABELS: Record<ActivityType, string> = {
   hybrid: '混合活动'
 }
 
-const pageSize = 8
+const pageSize = 10
 
 const activeTab = ref<ActivityScope>('mine')
 const searchWord = ref('')
@@ -45,10 +46,11 @@ const loading = ref(true)
 const listLoading = ref(false)
 const activities = ref<Activity[]>([])
 const totalActivities = ref(0)
-const deckIndex = ref(0)
 const error = ref('')
 const unauthenticated = ref(false)
 const classId = ref('')
+const detailDialogRef = ref<HTMLDialogElement | null>(null)
+const selectedActivityId = ref<string | null>(null)
 
 let requestSeq = 0
 
@@ -60,19 +62,15 @@ const visiblePages = computed(() => {
   return Array.from({ length: 7 }, (_, index) => start + index)
 })
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
-const selectedActivity = computed(() => activities.value[deckIndex.value] ?? null)
-
-function deckDepth(index: number) {
-  const count = activities.value.length
-  return (index - deckIndex.value + count) % count
-}
+const selectedActivity = computed(() =>
+  activities.value.find(a => a.id === selectedActivityId.value) ?? null
+)
 
 const pagerTrackRef = ref<HTMLElement | null>(null)
 const pagerThumbRef = ref<HTMLElement | null>(null)
 const pagerThumbState = ref({ left: 0, width: 0, ready: false })
 const pagerDragging = ref(false)
 const pagerDragOffset = ref(0)
-const detailDialogRef = ref<HTMLDialogElement | null>(null)
 const pagerPages = new Map<number, HTMLElement>()
 let pagerObserver: ResizeObserver | null = null
 let pagerObserverHost: HTMLElement | null = null
@@ -241,6 +239,7 @@ function mapActivity(activity: CanaryActivity): Activity {
     statusLabel: getStatusLabel(status),
     statusClass: getStatusClass(status),
     duration: typeof mine?.duration === 'number' ? mine.duration : 0,
+    hasDuration: typeof mine?.duration === 'number',
     creator: activity.creator_name || ''
   }
 }
@@ -265,7 +264,7 @@ async function loadActivities() {
     error.value = ''
     activities.value = []
     totalActivities.value = 0
-    deckIndex.value = 0
+    selectedActivityId.value = null
     closeDetail()
     return
   }
@@ -302,16 +301,12 @@ async function loadActivities() {
     if (pageCount > 0 && activePage.value > pageCount) {
       activePage.value = pageCount
     }
-    if (deckIndex.value >= activities.value.length) {
-      deckIndex.value = Math.max(0, activities.value.length - 1)
-      closeDetail()
-    }
   } catch (reason) {
     if (seq !== requestSeq) return
     if (!isAuthError(reason)) {
       activities.value = []
       totalActivities.value = 0
-      deckIndex.value = 0
+      selectedActivityId.value = null
       closeDetail()
       error.value = readableError(reason, '活动加载失败，请稍后重试。')
     }
@@ -347,7 +342,7 @@ function handleSearch() {
   if (next === appliedSearch.value) return
   appliedSearch.value = next
   activePage.value = 1
-  deckIndex.value = 0
+  selectedActivityId.value = null
   closeDetail()
   void loadActivities()
 }
@@ -367,7 +362,7 @@ function handleTabChange(tab: ActivityScope) {
   if (activeTab.value === tab) return
   activeTab.value = tab
   activePage.value = 1
-  deckIndex.value = 0
+  selectedActivityId.value = null
   closeDetail()
   void loadActivities()
 }
@@ -376,7 +371,7 @@ function handlePageChange(page: number) {
   if (page === activePage.value || page < 1) return
   if (totalPages.value > 0 && page > totalPages.value) return
   activePage.value = page
-  deckIndex.value = 0
+  selectedActivityId.value = null
   closeDetail()
   void loadActivities()
 }
@@ -387,8 +382,8 @@ function handleRetry() {
 }
 
 function formatDetailDate(date: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
-  if (match) return `${match[1]}-${match[2]}-${match[3]}`
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(date)
+  if (match) return match[2] ? `${match[1]} ${match[2]}` : match[1]
   return date || '—'
 }
 
@@ -412,35 +407,16 @@ function getStatusClass(status: ActivityStatus) {
   return classes[status]
 }
 
-function openCard() {
+async function openCard(id: string) {
   const dialog = detailDialogRef.value
-  if (dialog && !dialog.open && !listLoading.value) dialog.showModal()
+  if (!dialog || dialog.open || listLoading.value) return
+  selectedActivityId.value = id
+  await nextTick()
+  if (dialog.isConnected && !dialog.open && selectedActivityId.value === id) dialog.showModal()
 }
 
 function closeDetail() {
   detailDialogRef.value?.close()
-}
-
-function navPrev() {
-  if (!listLoading.value && deckIndex.value > 0) deckIndex.value -= 1
-}
-
-function navNext() {
-  if (!listLoading.value && deckIndex.value < activities.value.length - 1) deckIndex.value += 1
-}
-
-async function handleDeckKeydown(event: KeyboardEvent) {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-
-  event.preventDefault()
-  const stage = (event.currentTarget as HTMLElement).querySelector('.deck-stage')
-  const focusCard = stage?.contains(document.activeElement)
-  if (event.key === 'ArrowLeft') navPrev()
-  else navNext()
-  if (focusCard) {
-    await nextTick()
-    stage?.querySelector<HTMLButtonElement>('.is-front')?.focus()
-  }
 }
 
 onMounted(() => {
@@ -607,56 +583,26 @@ onBeforeUnmount(() => {
 
     <div
       v-else
-      class="deck-container"
+      class="activity-stack"
       :class="{ 'is-refreshing': listLoading }"
       :aria-busy="listLoading"
-      @keydown="handleDeckKeydown"
     >
-      <div class="deck-stage">
-        <button
-          v-for="(activity, index) in activities"
-          :key="activity.id"
-          v-show="deckDepth(index) <= 3"
-          type="button"
-          class="deck-card glass-card"
-          :class="{ 'is-front': index === deckIndex, 'is-behind': index !== deckIndex }"
-          :style="{ '--deck-depth': deckDepth(index) }"
-          :inert="index !== deckIndex"
-          :disabled="listLoading"
-          aria-haspopup="dialog"
-          @click="openCard"
-        >
-          <span class="deck-card__title">{{ activity.name }}</span>
-        </button>
-      </div>
-
-      <div v-if="activities.length > 1" class="deck-nav" role="group" aria-label="卡片导航">
-        <button
-          class="deck-nav__btn"
-          type="button"
-          :aria-disabled="deckIndex === 0 || listLoading"
-          aria-label="上一张卡片"
-          @click="navPrev"
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M12 4L6 10L12 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <span class="deck-nav__counter" aria-live="polite">
-          {{ deckIndex + 1 }} / {{ activities.length }}
+      <button
+        v-for="activity in activities"
+        :key="activity.id"
+        type="button"
+        class="activity-card glass-card"
+        :disabled="listLoading"
+        aria-haspopup="dialog"
+        @click="openCard(activity.id)"
+      >
+        <span class="activity-card__title">{{ activity.name }}</span>
+        <span class="activity-card__meta">
+          <span class="activity-card__date">{{ activity.detailDate }}</span>
+          <span class="activity-card__type" :class="activity.typeClass">{{ activity.type }}</span>
+          <span v-if="activity.hasDuration" class="activity-card__duration">{{ activity.duration }} h</span>
         </span>
-        <button
-          class="deck-nav__btn"
-          type="button"
-          :aria-disabled="deckIndex === activities.length - 1 || listLoading"
-          aria-label="下一张卡片"
-          @click="navNext"
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M8 4L14 10L8 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </div>
+      </button>
     </div>
 
     <dialog
@@ -683,7 +629,7 @@ onBeforeUnmount(() => {
 
         <dl v-if="selectedActivity" class="detail-info">
           <div class="detail-info-row">
-            <dt>日期</dt>
+            <dt>活动时间</dt>
             <dd>{{ selectedActivity.detailDate }}</dd>
           </div>
           <div class="detail-info-row">
@@ -1052,141 +998,83 @@ onBeforeUnmount(() => {
   transform: scale(0.9);
 }
 
-.deck-container {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  align-items: center;
-  position: relative;
-  outline: none;
+.activity-stack {
+  --card-overlap: clamp(32px, 6vw, 52px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 620px);
+  margin-inline: auto;
+  isolation: isolate;
 }
 
-.deck-container.is-refreshing {
+.activity-stack.is-refreshing {
   opacity: 0.6;
   pointer-events: none;
 }
 
-.deck-stage {
+.activity-card {
   position: relative;
-  width: min(352px, calc(100% - 34px));
-  aspect-ratio: 1;
-  margin: var(--space-6) 0;
-}
-
-.deck-card {
-  position: absolute;
-  inset: 0;
-  padding: var(--space-6);
+  padding: 14px clamp(14px, 4vw, 28px) calc(var(--card-overlap) + 14px);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
+  gap: 6px;
   cursor: pointer;
   text-align: start;
-  background: linear-gradient(145deg, #fbfcff, var(--palette-edge, #dce9f5));
+  background: linear-gradient(125deg, #fbfcff 24%, var(--palette-edge, #dce9f5));
   border-color: color-mix(in srgb, var(--accent-ink) 22%, #fff);
-  transition:
-    transform 420ms cubic-bezier(0.34, 1.08, 0.64, 1),
-    opacity 320ms cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 320ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--glass-rim), 0 3px 12px #102c471f;
+  transition: border-color var(--duration-fast) var(--ease-settle);
 }
 
-.deck-card.is-behind {
-  pointer-events: none;
-  transform:
-    translate(calc(var(--deck-depth) * -8px), calc(var(--deck-depth) * -8px))
-    rotate(calc(var(--deck-depth) * -1deg));
-  z-index: calc(10 - var(--deck-depth));
-  background: color-mix(in srgb, var(--palette-main, #d9eafd) calc(var(--deck-depth) * 17%), #f8fbff);
-}
+.activity-card + .activity-card { margin-block-start: calc(-1 * var(--card-overlap)); }
+.activity-card:last-child { padding-block-end: clamp(32px, 8vw, 72px); }
+.activity-card:nth-child(even) { background: linear-gradient(125deg, #f9fbff 24%, var(--palette-main, #d9eafd)); }
 
-.deck-card.is-behind .deck-card__title { visibility: hidden; }
+.activity-card:hover:not(:disabled),
+.activity-card:focus-visible { border-color: var(--accent-ink); }
 
-.deck-card.is-front {
-  z-index: 10;
-}
-
-.deck-card.is-front:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.deck-card.is-front:active {
-  transform: translateY(0) scale(0.98);
-}
-
-.deck-card.is-front:focus-visible {
+.activity-card:focus-visible {
   outline: 2px solid var(--accent-ink);
-  outline-offset: 2px;
+  outline-offset: -3px;
 }
 
-.deck-card__title {
+.activity-card__title {
   margin: 0;
-  font-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+  font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.1875rem);
   font-weight: 700;
   color: var(--color-text-primary);
   line-height: 1.3;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
+  -webkit-line-clamp: 3;
   overflow: hidden;
 }
 
-.deck-nav {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3);
-  background: var(--surface-matte);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  box-shadow: var(--glass-shadow);
-}
-
-.deck-nav__btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 50%;
+.activity-card__date {
   color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color 180ms,
-    color 180ms,
-    transform 180ms;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
-.deck-nav__btn:hover:not([aria-disabled='true']) {
-  background: rgba(56, 189, 248, 0.1);
-  color: var(--accent-ink);
-  transform: scale(1.05);
+.activity-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--font-size-callout);
 }
 
-.deck-nav__btn:active:not([aria-disabled='true']) {
-  transform: scale(0.95);
+.activity-card__type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
-.deck-nav__btn[aria-disabled='true'] {
-  color: var(--color-text-tertiary);
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.deck-nav__counter {
-  min-width: 4rem;
-  text-align: center;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
+.activity-card__duration { color: var(--accent-ink); font-weight: 600; }
 
 .detail-dialog {
   max-width: min(480px, calc(100vw - var(--space-5) * 2));
@@ -1564,6 +1452,11 @@ onBeforeUnmount(() => {
     min-width: 0;
   }
 
+  .activities-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
   .pagination {
     flex-wrap: wrap;
   }
@@ -1586,10 +1479,24 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-width: 374px) {
+  .activity-card__title {
+    font-size: 1rem;
+  }
+
+  .activity-card__meta {
+    font-size: 0.8125rem;
+  }
+
+  .detail-info-row {
+    grid-template-columns: min(4.5rem, 30%) minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pagination-thumb,
-  .deck-card,
-  .deck-nav__btn {
+  .activity-card {
     transition: none;
   }
 
@@ -1601,9 +1508,5 @@ onBeforeUnmount(() => {
 
   .skeleton-line { animation: none; }
   .detail-dialog[open] { animation: none; }
-  .deck-card.is-front:hover,
-  .deck-card.is-front:active,
-  .deck-nav__btn:hover,
-  .deck-nav__btn:active { transform: none; }
 }
 </style>
