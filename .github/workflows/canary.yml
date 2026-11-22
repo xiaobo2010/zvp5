@@ -181,7 +181,7 @@ jobs:
       - workflow-security
       - dependency-security
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend
@@ -274,6 +274,11 @@ jobs:
             throw new Error("manifest icons must stay on the preview origin")
           }
           NODE
+      - name: Build theme apps (full branch frontends)
+        # 主题 = 整站多构建：canary2 / canary-pro 是另外两个分支的完整前端，
+        # 由脚本取 worktree 各自 install + build 后并入 dist/t/<id>/。
+        working-directory: .
+        run: bash zvp5/deployment/build-theme-apps.sh
       - name: Drop service worker from the preview bundle
         shell: bash
         run: |

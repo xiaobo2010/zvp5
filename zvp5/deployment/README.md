@@ -16,6 +16,7 @@ Oracle Autonomous Database。
 | `adb-backup/` | 数据库备份：安装脚本 + systemd timer + `sync_adb.py`，见 [`adb-backup/README.md`](./adb-backup/README.md) |
 | `github-actions/` | 服务端部署侧：免密账号引导、部署/回滚主脚本、Actions 配置说明，见 [`github-actions/README.md`](./github-actions/README.md) |
 | `preview-worker/` | canary 分支的前端预览站（Cloudflare Worker），见 [`preview-worker/README.md`](./preview-worker/README.md) |
+| `build-theme-apps.sh` | 主题子应用构建：用 worktree 取出 `v5-canary2` / `v5-canary-pro` 的完整前端，按 `/t/<id>/` 构建并并入根 canary 产物（CI 在根构建后调用） |
 
 ## 两种发布通道
 

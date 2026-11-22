@@ -13,7 +13,6 @@
 └── css/
     ├── main.css         ← 样式总入口（业务页面只需引入这一个文件）
     ├── design-tokens.css← 设计令牌（颜色/字体/间距/圆角/阴影/动效，唯一事实来源）
-    ├── theme-variants.css← 主题页面适配共享层（装饰收口/弹层字体/打印）
     ├── base.css         ← 基础样式（Reset、排版、栅格、布局骨架、毛玻璃/G2 工具）
     └── components/
         ├── buttons.css       ← 按钮、图标按钮、链接、按钮组
@@ -48,14 +47,20 @@
 
 - **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
   不设置则跟随系统。
-- **主题变体**：`<html data-theme-variant="canary|canary2|canary-pro">` 与明暗正交。
-  三个变体是**三套设计包**，不是配色方案：外壳 / 导航结构 / 卡片层次都会换。
-  - 外壳：`zvp5-frontend/src/themes/<id>/`（组件 + 导航表）
-  - 令牌与材质：`zvp5-frontend/src/assets/styles/themes/<id>/`（分支移植包 + adapt.css）
-  - 注册：`src/themes/registry.ts` 一条；账号偏好在 `/me` 切换，落到
-    `PUT /v1/themes/me`。
-  - 新增主题 = 复制一份设计包 + registry 加一条；不要在 `theme-variants.css`
-    里用几行 `--yg-*` 覆盖假装成新主题。
+- **主题变体（整站多构建）**：canary / canary2 / canary-pro 不是同一套页面换外壳，
+  而是**三份完整的前端构建**挂同一域名下的不同路径：
+  - `canary` → `/`（本仓库 `zvp5/zvp5-frontend`）
+  - `canary2` → `/t/canary2/`（`v5-canary2` 的 `zvms4-modified-main/zvms4-frontend`）
+  - `canary-pro` → `/t/canary-pro/`（`v5-canary-pro` 的 `zvp5/zvp5-frontend-pro`）
+  - 构建：CI 在根 canary 构建后跑 `zvp5/deployment/build-theme-apps.sh`，用 worktree
+    取出另两个分支各自 `pnpm install` + `vite build --base=/t/<id>/`，产物并入
+    `zvp5/zvp5-frontend/dist/t/<id>/`。
+  - 切换：`/me` 的主题下拉与子应用里的 `theme-switcher.js` 都只做
+    「写 `localStorage['zvms.theme']` + `PUT /v1/themes/me` + `location.assign(路径)`」；
+    同源所以 token 共享，登录态无缝。路径映射与缓存读写见 `src/utils/theme.ts`。
+  - 新增主题 = 新建一条分支的完整前端 + 在 `build-theme-apps.sh` 加一段构建 +
+    在 `THEME_PATHS`（以及子应用切换器）里加一条路径。**不要**再复制外壳组件或
+    用几行 `--yg-*` 覆盖冒充新主题。
 - **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
 
 ## 给智能体的三条底线

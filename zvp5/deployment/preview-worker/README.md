@@ -60,6 +60,17 @@ VITE_PAGE_BASE=https://canary.xiaobopisces.top/  # PWA start_url/scope 锚在预
 发布后自动冒烟：比对线上入口 chunk 与本地产物的 sha256、确认 `/sw.js` 回落到
 `text/html`（旧 service worker 不能被当成 JS 下发）、确认后端 CORS 回显预览域。
 
+## 同源多主题（`/t/canary2/`、`/t/canary-pro/`）
+
+主题不是同一套页面换外壳，而是另外两份完整前端构建。CI 在根 canary 构建之后跑
+`zvp5/deployment/build-theme-apps.sh`：用 `git worktree` 取出 `v5-canary2` /
+`v5-canary-pro` 的前端，各自 `vite build --base=/t/<id>/`，产物并入
+`zvp5/zvp5-frontend/dist/t/<id>/`，再由本 Worker 当静态资源托管。
+
+Worker 只对 `/t/<id>/...` 的 **HTML 导航请求**（`Accept` 含 `text/html` 且末段无扩展名）
+改写成该子应用自己的 `index.html`，这样深链接不会落到根 canary 的 index；
+静态资源仍按原路径取。根路径与 https 强制逻辑不变。
+
 ## 步骤（手工应急）
 
 分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：

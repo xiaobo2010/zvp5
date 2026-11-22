@@ -7,7 +7,7 @@ import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { useGroupsStore } from '@/stores/groups'
-import { readStoredTheme, setStoredTheme } from '@/utils/theme'
+import { readStoredTheme, setStoredTheme, themePath, isRootApp } from '@/utils/theme'
 
 interface UserTime {
   onCampus: number
@@ -179,16 +179,32 @@ export const useUserStore = defineStore('user', {
       }
       return strength >= 3
     },
-    /** 立即应用主题偏好：写 DOM 属性 + 落设备缓存。 */
-    applyThemePreference(theme: string) {
+    /**
+     * 立即应用主题偏好：落设备缓存并更新 store。
+     * 主题是整站多构建，只有跳转才能真的换掉应用，所以这里只记账不跳转。
+     */
+    applyThemePreference(theme: string): string {
       this.theme = setStoredTheme(theme)
+      return this.theme
     },
-    /** 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。 */
+    /**
+     * 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。
+     * 若当前跑在根 canary 应用里而账号偏好是别的主题，整页跳转到那份完整应用；
+     * 子应用（/t/canary2/、/t/canary-pro/）不执行这段逻辑，避免互相踢。
+     */
     async syncThemeFromServer() {
       try {
         const { theme } = await api.theme.getMyTheme()
-        if (theme) {
-          this.applyThemePreference(theme)
+        if (!theme) {
+          return
+        }
+        const resolved = this.applyThemePreference(theme)
+        if (typeof window === 'undefined' || !isRootApp(window.location.pathname)) {
+          return
+        }
+        const target = themePath(resolved)
+        if (resolved !== 'canary' && target !== window.location.pathname) {
+          window.location.assign(target)
         }
       } catch {
         // 同步失败不影响登录流程，保留设备缓存的主题

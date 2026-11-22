@@ -37,6 +37,7 @@ import {
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import { formatDateTime } from '@/utils/dateTime'
+import { currentThemeId, themePath } from '@/utils/theme'
 import { normalizeRenderMode, readRenderMode, setRenderMode } from '@/utils/renderMode'
 import {
   emptyNotificationState,
@@ -85,14 +86,16 @@ async function loadThemeOptions() {
 }
 
 async function changeTheme() {
-  // 先在本设备生效：主题是显示偏好，账号同步失败（后端未升级、断网）不该
-  // 把用户刚选的配色弹回去——那会让人误以为切换功能坏了。
-  user.applyThemePreference(themeVariant.value)
-  try {
-    await api.theme.setMyTheme(themeVariant.value)
-  } catch {
-    // 已写入 localStorage；账号侧这次没记住，下次登录会以服务器值为准。
+  // 主题 = 整站多构建：先记设备缓存 + store，再尽力同步账号。
+  // PUT 失败（后端未升级、断网）不阻断跳转——主题只是显示偏好，
+  // 而且目标应用读的是同一份 localStorage。
+  const themeId = user.applyThemePreference(themeVariant.value)
+  await api.theme.setMyTheme(themeId).catch(() => {
     ElMessage({ type: 'warning', message: t('profile.actions.themeSyncFailed') })
+  })
+  // 只有跨应用才跳整页；同一应用内换主题（如 canary 内部）不需要刷新。
+  if (currentThemeId(window.location.pathname) !== themeId) {
+    window.location.assign(themePath(themeId))
   }
 }
 
