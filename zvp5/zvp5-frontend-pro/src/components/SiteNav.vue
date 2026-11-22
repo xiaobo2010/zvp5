@@ -47,6 +47,7 @@ let navigationSequence = 0
 
 function isNavActive(path: string): boolean {
   if (path === '/volunteers/create') return activePath.value.startsWith('/volunteers/create')
+  if (path === '/volunteers' && route.name === 'volunteer-detail') return true
   return activePath.value === path
 }
 

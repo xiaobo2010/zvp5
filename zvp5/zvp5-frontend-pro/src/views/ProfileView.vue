@@ -492,6 +492,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Prefer the inline picker once its catalog is ready. Other pages keep the injected fallback. */
+:global(body:has(.profile-page #appearance[data-theme-catalog='ready']) > #zvms-theme-switcher) {
+  display: none;
+}
+
 .profile-password-dialog {
   width: min(440px, calc(100% - 32px));
   margin: auto;

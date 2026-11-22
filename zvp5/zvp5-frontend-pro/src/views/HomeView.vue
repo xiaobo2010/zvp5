@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   CanaryApiError,
   fetchActivities,
@@ -10,6 +10,8 @@ import {
   isLoggedIn
 } from '@/api/canary'
 import type { CanaryActivity, CanaryTime, CanaryUser } from '@/api/canary'
+import { fetchPendingReviews, fetchRecentAgentRuns, fetchSuspiciousLogs, LOG_TYPE_LABELS } from '@/api/home'
+import { ApiError } from '@/api/http'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 type HourKey = keyof CanaryTime
@@ -41,7 +43,7 @@ const ROLE_LABELS: Record<string, string> = {
   student: '学生',
   volunteer: '志愿者',
   admin: '管理员',
-  department: '部门',
+  department: '学生会',
   secretary: '秘书',
   auditor: '审计',
   teacher: '教师',
@@ -52,9 +54,8 @@ const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四
 const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
-// 后端单页最多 100 条。首页只展示前 3 条，但待审核/最近记录是在前端按状态
-// 过滤的，只取 6 条会把较早的待审核活动漏掉，所以这里取满一页再切片。
-const ACTIVITY_FETCH_LIMIT = 100
+const RECENT_RECORD_LIMIT = 3
+const router = useRouter()
 
 const homeRef = ref<HTMLElement | null>(null)
 const hoursPanelRef = ref<HTMLElement | null>(null)
@@ -64,6 +65,12 @@ const refreshIconRef = ref<SVGSVGElement | null>(null)
 const profile = ref<CanaryUser | null>(null)
 const time = ref<CanaryTime | null>(null)
 const activities = ref<CanaryActivity[]>([])
+const recentError = ref('')
+const pendingReviews = ref<CanaryActivity[]>([])
+const agentRuns = ref<Awaited<ReturnType<typeof fetchRecentAgentRuns>>>([])
+const suspiciousLogs = ref<Awaited<ReturnType<typeof fetchSuspiciousLogs>>>([])
+const workErrors = ref({ pending: '', agent: '', logs: '' })
+const expandedActivityId = ref<string | null>(null)
 const groupName = ref('')
 
 // 首帧即确定登录状态，避免先闪骨架再跳到「需要登录」。
@@ -99,6 +106,10 @@ let loadSequence = 0
 let disposed = false
 
 const displayName = computed(() => profile.value?.name?.trim() ?? '')
+const isAdmin = computed(() => profile.value?.roles?.includes('admin') ?? false)
+const isDepartment = computed(() => profile.value?.roles?.includes('department') ?? false)
+const showPending = computed(() => isDepartment.value && !isAdmin.value)
+const showAgent = computed(() => isDepartment.value || isAdmin.value)
 
 const avatarInitial = computed(() => displayName.value.slice(0, 1) || '—')
 
@@ -195,27 +206,36 @@ function progressTone(percent: number): string {
   return 'rose'
 }
 
-function activityStatus(activity: CanaryActivity): string {
-  return activity.mine?.status ?? activity.status
+const recentActivities = computed(() =>
+  activities.value.filter((activity) => activity.mine).slice(0, RECENT_RECORD_LIMIT)
+)
+
+const ACTIVITY_TYPES: Record<CanaryActivity['type'], string> = {
+  'on-campus': '校内', 'off-campus': '校外', 'social-practice': '社会实践', hybrid: '混合'
 }
 
-const pendingActivities = computed(() =>
-  activities.value
-    .filter((activity) => {
-      const status = activityStatus(activity)
-      return status === 'pending' || status === 'draft'
-    })
-    .slice(0, 3)
-)
+const RUN_STATUSES: Record<string, string> = {
+  queued: '排队中', running: '运行中', succeeded: '已完成', failed: '失败',
+  cancelled: '已取消', interrupted: '已中断'
+}
 
-const recentActivities = computed(() =>
-  activities.value
-    .filter((activity) => {
-      const status = activityStatus(activity)
-      return status === 'effective' || status === 'refused'
-    })
-    .slice(0, 3)
-)
+function pendingLink(id: string) {
+  return { name: 'volunteer-detail', params: { id } }
+}
+
+function toggleRecentCard(activity: CanaryActivity) {
+  const id = activity.mine?._id || activity._id
+  expandedActivityId.value = expandedActivityId.value === id ? null : id
+}
+
+function closeRecentCard(event: KeyboardEvent, id: string) {
+  if (event.key !== 'Escape' || expandedActivityId.value !== id) return
+  expandedActivityId.value = null
+  event.stopPropagation()
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.querySelector('summary')?.focus()
+  }
+}
 
 function formatHours(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : '0.0'
@@ -247,13 +267,15 @@ function recentMeta(activity: CanaryActivity): string {
 }
 
 function recentStatusLabel(activity: CanaryActivity): string {
-  return activityStatus(activity) === 'refused' ? '已拒绝' : '已确认'
+  if (activity.mine?.status === 'refused') return '已拒绝'
+  if (activity.mine?.status === 'effective') return '已确认'
+  return '待确认'
 }
 
 function recentStatusClass(activity: CanaryActivity): string {
-  return activityStatus(activity) === 'refused'
-    ? 'work-item__status--refused'
-    : 'work-item__status--done'
+  if (activity.mine?.status === 'refused') return 'work-item__status--refused'
+  if (activity.mine?.status === 'effective') return 'work-item__status--done'
+  return 'work-item__status--pending'
 }
 
 function reduceMotion(): boolean {
@@ -261,11 +283,20 @@ function reduceMotion(): boolean {
 }
 
 function readableError(reason: unknown, fallback: string): string {
-  return reason instanceof CanaryApiError ? reason.message : fallback
+  return reason instanceof CanaryApiError || reason instanceof ApiError ? reason.message : fallback
 }
 
 function isAuthError(reason: unknown): boolean {
-  return reason instanceof CanaryApiError && reason.status === 401
+  return (reason instanceof CanaryApiError || reason instanceof ApiError) && reason.status === 401
+}
+
+function activityRows(page: { activities: CanaryActivity[] }): CanaryActivity[] {
+  if (!Array.isArray(page?.activities)) throw new Error('Invalid activity page')
+  return page.activities
+}
+
+function fetchRecentRecords() {
+  return fetchActivities('mine', 1, RECENT_RECORD_LIMIT, '').then(activityRows)
 }
 
 function cancelRefreshAnimations() {
@@ -305,7 +336,7 @@ function observeSections() {
           observer?.unobserve(entry.target)
         })
       },
-      { threshold: 0.1, rootMargin: '-60px' }
+      { threshold: 0, rootMargin: '-60px' }
     )
   }
 
@@ -322,23 +353,22 @@ async function loadPage() {
   loading.value = true
   error.value = ''
   unauthenticated.value = false
+  recentError.value = ''
+  workErrors.value = { pending: '', agent: '', logs: '' }
+  expandedActivityId.value = null
 
   try {
     const [profileResult, timeResult, activitiesResult] = await Promise.allSettled([
       fetchProfile(),
       fetchTime(),
-      fetchActivities('mine', 1, ACTIVITY_FETCH_LIMIT, '')
+      fetchRecentRecords()
     ])
 
     if (sequence !== loadSequence || disposed) return
 
-    const failure = [
-      profileResult,
-      timeResult,
-      activitiesResult
-    ].find((result): result is PromiseRejectedResult => result.status === 'rejected')
-
-    if (failure && isAuthError(failure.reason)) {
+    if ([profileResult, timeResult, activitiesResult].some(
+      (result) => result.status === 'rejected' && isAuthError(result.reason)
+    )) {
       profile.value = null
       time.value = null
       activities.value = []
@@ -347,21 +377,45 @@ async function loadPage() {
       return
     }
 
-    if (profileResult.status === 'fulfilled') profile.value = profileResult.value
-    if (timeResult.status === 'fulfilled') time.value = timeResult.value
-    if (activitiesResult.status === 'fulfilled') {
-      activities.value = activitiesResult.value.activities ?? []
-    }
-
+    const failure = [profileResult, timeResult].find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
     if (failure) {
       error.value = readableError(failure.reason, '首页数据加载失败，请稍后重试。')
       return
     }
 
-    const classId = profile.value?.class_id
-    if (classId) {
-      groupName.value = await fetchGroupName(classId)
+    if (profileResult.status === 'fulfilled') profile.value = profileResult.value
+    if (timeResult.status === 'fulfilled') time.value = timeResult.value
+    activities.value = activitiesResult.status === 'fulfilled' ? activitiesResult.value : []
+    if (activitiesResult.status === 'rejected') {
+      recentError.value = readableError(activitiesResult.reason, '最近记录加载失败，请稍后重试。')
     }
+
+    const classId = profile.value?.class_id
+    const [pending, agent, logs, className] = await Promise.allSettled([
+      showPending.value ? fetchPendingReviews() : Promise.resolve([]),
+      showAgent.value ? fetchRecentAgentRuns() : Promise.resolve([]),
+      isAdmin.value ? fetchSuspiciousLogs() : Promise.resolve([]),
+      classId ? fetchGroupName(classId) : Promise.resolve('')
+    ])
+    if (sequence !== loadSequence || disposed) return
+
+    if ([pending, agent, logs].some(
+      (result) => result.status === 'rejected' && isAuthError(result.reason)
+    )) {
+      profile.value = null
+      unauthenticated.value = true
+      return
+    }
+
+    pendingReviews.value = pending.status === 'fulfilled' ? pending.value : []
+    agentRuns.value = agent.status === 'fulfilled' ? agent.value : []
+    suspiciousLogs.value = logs.status === 'fulfilled' ? logs.value : []
+    if (className.status === 'fulfilled') groupName.value = className.value
+    if (pending.status === 'rejected') workErrors.value.pending = readableError(pending.reason, '待审核活动加载失败。')
+    if (agent.status === 'rejected') workErrors.value.agent = readableError(agent.reason, 'Agent 结果加载失败。')
+    if (logs.status === 'rejected') workErrors.value.logs = readableError(logs.reason, '可疑日志加载失败。')
   } finally {
     if (sequence === loadSequence && !disposed) {
       loading.value = false
@@ -469,19 +523,22 @@ async function handleHoursRefresh() {
   try {
     const [timeResult, activitiesResult] = await Promise.allSettled([
       fetchTime(),
-      fetchActivities('mine', 1, ACTIVITY_FETCH_LIMIT, '')
+      fetchRecentRecords()
     ])
 
     if (disposed) return
 
-    const failure = [timeResult, activitiesResult].find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected'
-    )
-
-    if (failure && isAuthError(failure.reason)) {
+    if ([timeResult, activitiesResult].some(
+      (result) => result.status === 'rejected' && isAuthError(result.reason)
+    )) {
       unauthenticated.value = true
       profile.value = null
       return
+    }
+
+    if (activitiesResult.status === 'fulfilled') {
+      activities.value = activitiesResult.value
+      recentError.value = ''
     }
 
     if (timeResult.status === 'rejected') {
@@ -493,9 +550,6 @@ async function handleHoursRefresh() {
     }
 
     time.value = timeResult.value
-    if (activitiesResult.status === 'fulfilled') {
-      activities.value = activitiesResult.value.activities ?? []
-    }
     refreshFeedback.value = activitiesResult.status === 'fulfilled'
       ? { text: '义工时长与活动记录已更新。', tone: 'success' }
       : { text: '义工时长已更新，活动记录暂未刷新。', tone: 'warn' }
@@ -571,7 +625,7 @@ onUnmounted(() => {
     <section v-if="unauthenticated" class="state-panel glass-panel" role="alert">
       <h2 class="state-panel__title">需要登录</h2>
       <BubbleFeedback class="glass-feedback--warn">
-        登录后即可查看你的义工时长、待审核活动与最近记录。
+        登录后即可查看你的义工时长与最近记录。
       </BubbleFeedback>
       <RouterLink class="glass-button state-panel__action" to="/login?redirect=/">
         去登录
@@ -632,7 +686,7 @@ onUnmounted(() => {
       </section>
 
       <section class="work-lists visible" aria-hidden="true">
-        <article v-for="n in 2" :key="n" class="work-list glass-panel">
+        <article class="work-list glass-panel work-list--wide">
           <div class="skeleton-block skeleton-line--heading skeleton-heading-gap"></div>
           <div v-for="row in 3" :key="row" class="skeleton-row">
             <div class="skeleton-row__content">
@@ -821,14 +875,18 @@ onUnmounted(() => {
         :class="{ visible: sectionsVisible.work }"
       >
         <!-- Pending activities -->
-        <article class="work-list glass-panel">
+        <article v-if="showPending" class="work-list glass-panel">
           <h2 class="work-list__title">待审核活动</h2>
-          <div v-if="pendingActivities.length" class="work-list__items">
+          <div v-if="workErrors.pending" role="alert">
+            <BubbleFeedback class="glass-feedback--error">{{ workErrors.pending }}</BubbleFeedback>
+            <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
+          </div>
+          <div v-else-if="pendingReviews.length" class="work-list__items">
             <RouterLink
-              v-for="activity in pendingActivities"
+              v-for="activity in pendingReviews"
               :key="activity._id"
               class="work-item"
-              to="/volunteers"
+              :to="pendingLink(activity._id)"
             >
               <div class="work-item__content">
                 <p class="work-item__name">{{ activity.name }}</p>
@@ -840,29 +898,74 @@ onUnmounted(() => {
           <BubbleFeedback v-else>暂无待审核活动</BubbleFeedback>
         </article>
 
-        <!-- Recent records -->
-        <article class="work-list glass-panel">
-          <h2 class="work-list__title">最近记录</h2>
-          <div v-if="recentActivities.length" class="work-list__items">
-            <RouterLink
-              v-for="activity in recentActivities"
-              :key="activity._id"
-              class="work-item"
-              to="/volunteers"
-            >
-              <div class="work-item__content">
-                <p class="work-item__name">{{ activity.name }}</p>
-                <p class="work-item__meta">{{ recentMeta(activity) }}</p>
-              </div>
-              <span
-                class="work-item__status"
-                :class="recentStatusClass(activity)"
-              >
-                {{ recentStatusLabel(activity) }}
-              </span>
-            </RouterLink>
+        <article v-if="showAgent" class="work-list glass-panel">
+          <h2 class="work-list__title">最近 Agent 结果</h2>
+          <div v-if="workErrors.agent" role="alert">
+            <BubbleFeedback class="glass-feedback--error">{{ workErrors.agent }}</BubbleFeedback>
+            <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
           </div>
-          <BubbleFeedback v-else>还没有已确认的记录</BubbleFeedback>
+          <ul v-else-if="agentRuns.length" class="work-list__items work-list__entries">
+            <li v-for="run in agentRuns" :key="run.oid" class="work-item">
+              <div class="work-item__content">
+                <p class="work-item__name">{{ RUN_STATUSES[run.status] ?? run.status }}</p>
+                <p class="work-item__meta">{{ [run.model, formatActivityDate(run.created_at ?? '')].filter(Boolean).join(' · ') }}</p>
+                <p v-if="run.result || run.error_message || run.resultUnavailable" class="work-item__result">{{ run.result || run.error_message || '结果内容暂不可用' }}</p>
+              </div>
+            </li>
+          </ul>
+          <BubbleFeedback v-else>暂无 Agent 运行记录</BubbleFeedback>
+        </article>
+
+        <article v-if="isAdmin" class="work-list glass-panel">
+          <h2 class="work-list__title">可疑日志</h2>
+          <div v-if="workErrors.logs" role="alert">
+            <BubbleFeedback class="glass-feedback--error">{{ workErrors.logs }}</BubbleFeedback>
+            <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
+          </div>
+          <ul v-else-if="suspiciousLogs.length" class="work-list__items work-list__entries">
+            <li v-for="log in suspiciousLogs" :key="log._id" class="work-item">
+              <div class="work-item__content">
+                <p class="work-item__name">{{ LOG_TYPE_LABELS[log.type ?? ''] ?? '可疑事件' }}</p>
+                <p class="work-item__meta">{{ [log.user_name || log.user_id, log.level].filter(Boolean).join(' · ') }}</p>
+                <p v-if="log.data" class="work-item__result">{{ log.data }}</p>
+              </div>
+            </li>
+          </ul>
+          <BubbleFeedback v-else>暂无可疑日志</BubbleFeedback>
+        </article>
+
+        <article class="work-list glass-panel work-list--wide">
+          <h2 class="work-list__title">最近记录</h2>
+          <div v-if="recentError" role="alert">
+            <BubbleFeedback class="glass-feedback--error">{{ recentError }}</BubbleFeedback>
+            <button class="glass-button glass-button--compact" type="button" @click="handleRetry">重试</button>
+          </div>
+          <div v-else-if="recentActivities.length" class="recent-stack">
+            <details
+              v-for="activity in recentActivities"
+               :key="activity.mine?._id || activity._id"
+               class="recent-card glass-card"
+               :open="expandedActivityId === (activity.mine?._id || activity._id)"
+               @keydown="closeRecentCard($event, activity.mine?._id || activity._id)"
+            >
+              <summary
+                class="recent-card__summary"
+                 @click.prevent="toggleRecentCard(activity)"
+              >
+                <span class="work-item__content">
+                  <span class="work-item__name">{{ activity.name }}</span>
+                   <span class="work-item__meta">{{ recentMeta(activity) }} · {{ ACTIVITY_TYPES[activity.mine?.mode ?? activity.type] }}</span>
+                </span>
+                <span class="work-item__status" :class="recentStatusClass(activity)">{{ recentStatusLabel(activity) }}</span>
+              </summary>
+              <dl class="recent-card__details">
+                <div><dt>地点</dt><dd>{{ activity.place || '—' }}</dd></div>
+                <div><dt>类型</dt><dd>{{ ACTIVITY_TYPES[activity.mine?.mode ?? activity.type] }}</dd></div>
+                <div v-if="activity.creator_name"><dt>创建者</dt><dd>{{ activity.creator_name }}</dd></div>
+              </dl>
+            </details>
+          </div>
+          <BubbleFeedback v-else>暂无个人活动记录</BubbleFeedback>
         </article>
       </section>
     </template>
@@ -1734,6 +1837,71 @@ onUnmounted(() => {
   z-index: 1;
 }
 
+.work-list--wide { grid-column: 1 / -1; }
+.work-list__entries { list-style: none; margin: 0; padding: 0; }
+.work-item__result { overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.recent-stack {
+  --recent-overlap: 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 620px);
+  margin-inline: auto;
+  isolation: isolate;
+}
+
+.recent-card {
+  position: relative;
+  padding: 0 0 var(--recent-overlap);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(125deg, #fbfcff, var(--palette-edge, #dce9f5));
+  box-shadow: var(--glass-rim), 0 3px 12px #102c471f;
+}
+
+.recent-card:nth-child(even) {
+  background: linear-gradient(125deg, #f9fbff, var(--palette-main, #d9eafd));
+}
+
+.recent-card + .recent-card { margin-block-start: calc(-1 * var(--recent-overlap)); }
+.recent-card:last-child { padding-block-end: 0; }
+
+.recent-card__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: inherit;
+  list-style: none;
+  cursor: pointer;
+}
+
+.recent-card__summary::-webkit-details-marker { display: none; }
+.recent-card__summary .work-item__name,
+.recent-card__summary .work-item__meta { display: block; }
+
+.recent-card__summary::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.recent-card[open] .recent-card__summary::after { transform: rotate(225deg); }
+
+.recent-card__summary:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -3px;
+}
+
+.recent-card__details { margin: 0 var(--space-4) var(--space-4); }
+.recent-card__details > div { display: grid; grid-template-columns: 5em 1fr; gap: var(--space-2); }
+.recent-card__details dd { margin: 0; overflow-wrap: anywhere; }
+
 .work-item {
   display: flex;
   align-items: center;
@@ -2053,6 +2221,13 @@ onUnmounted(() => {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  .work-item,
+  .work-item:hover,
+  .work-item:active {
+    transition: none;
+    transform: none;
+  }
+
   .greeting,
   .identity-row,
   .hours-panel,

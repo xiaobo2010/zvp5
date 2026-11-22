@@ -754,7 +754,9 @@ watch(activeTab, ensureTab, { immediate: true })
                 <div class="panel__header">
                   <div>
                     <h2 class="panel__title">AI 对话</h2>
-                    <p class="panel__subtitle">直接调用网关模型进行对话测试</p>
+                    <p class="panel__subtitle">
+                      选择或新建持久会话；消息与回答写入服务端，刷新后可继续
+                    </p>
                   </div>
                 </div>
                 <AiChatPanel />

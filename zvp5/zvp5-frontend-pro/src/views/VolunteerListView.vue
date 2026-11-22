@@ -8,26 +8,43 @@ import {
   isLoggedIn
 } from '@/api/canary'
 import type { ActivityScope, CanaryActivity } from '@/api/canary'
+import { ApiError as VolunteerApiError } from '@/api/http'
+import { currentRoles } from '@/api/permissions'
+import {
+  updateVolunteerActivityStatus
+} from '@/api/volunteer-detail'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 type ActivityStatus = 'draft' | 'pending' | 'refused' | 'effective'
+type AuditableStatus = Exclude<ActivityStatus, 'draft'>
 type ActivityType = CanaryActivity['type']
 
 interface Activity {
+  rowKey: string
   id: string
   name: string
   detailDate: string
   place: string
   type: string
   typeClass: string
+  status: ActivityStatus
   statusLabel: string
   statusClass: string
   duration: number
   hasDuration: boolean
   creator: string
+  memberStatus: ActivityStatus | null
 }
 
+const AUDIT_TARGETS: AuditableStatus[] = ['effective', 'pending', 'refused']
+
 const router = useRouter()
+
+// `department` is 学生会 in this codebase (see docs/AI_GATEWAY_API.md). Only
+// these two roles may audit; the backend enforces the same list.
+const viewerRoles = currentRoles()
+const isAdminViewer = viewerRoles.includes('admin')
+const isDepartmentViewer = viewerRoles.includes('department')
 
 const TYPE_LABELS: Record<ActivityType, string> = {
   'on-campus': '校内活动',
@@ -50,6 +67,13 @@ const error = ref('')
 const unauthenticated = ref(false)
 const classId = ref('')
 const expandedActivityId = ref<string | null>(null)
+
+const auditOpenId = ref<string | null>(null)
+const auditingId = ref<string | null>(null)
+const auditErrorId = ref<string | null>(null)
+const auditErrorMessage = ref('')
+const auditResultId = ref<string | null>(null)
+const auditResultMessage = ref('')
 
 let requestSeq = 0
 
@@ -190,6 +214,7 @@ function handlePagerClick(page: number) {
 }
 
 watch(activePage, () => void syncPager())
+watch(expandedActivityId, () => resetAuditState())
 watch(totalPages, () => void syncPager(false))
 watch(
   () => visiblePages.value.join(','),
@@ -223,20 +248,23 @@ function normalizeStatus(value: string | undefined): ActivityStatus {
 
 function mapActivity(activity: CanaryActivity): Activity {
   const mine = activity.mine
-  const status = normalizeStatus(mine?.status ?? activity.status)
+  const status = normalizeStatus(activity.status)
   const date = activity.date || ''
   return {
+    rowKey: mine?._id || activity._id,
     id: activity._id,
     name: activity.name || '未命名活动',
     detailDate: formatDetailDate(date),
     place: activity.place || '',
-    type: TYPE_LABELS[activity.type] ?? activity.type ?? '活动',
-    typeClass: `activity-type--${activity.type}`,
+    type: TYPE_LABELS[mine?.mode ?? activity.type] ?? '活动',
+    typeClass: `activity-type--${mine?.mode ?? activity.type}`,
+    status,
     statusLabel: getStatusLabel(status),
     statusClass: getStatusClass(status),
     duration: typeof mine?.duration === 'number' ? mine.duration : 0,
     hasDuration: typeof mine?.duration === 'number',
-    creator: activity.creator_name || ''
+    creator: activity.creator_name || '',
+    memberStatus: mine ? normalizeStatus(mine.status) : null
   }
 }
 
@@ -348,6 +376,7 @@ function handleSearchBlur(event: FocusEvent) {
 
 function handleRefresh() {
   if (loading.value || listLoading.value) return
+  resetAuditState()
   void bootstrap()
 }
 
@@ -398,19 +427,95 @@ function getStatusClass(status: ActivityStatus) {
   return classes[status]
 }
 
+function canAudit(activity: Activity): boolean {
+  if (isAdminViewer) return true
+  return isDepartmentViewer && activity.status === 'pending'
+}
+
+function auditTargets(activity: Activity): AuditableStatus[] {
+  return AUDIT_TARGETS.filter((status) => status !== activity.status)
+}
+
+function auditErrorText(reason: unknown): string {
+  if (reason instanceof VolunteerApiError) {
+    if (reason.status === 401) return '登录状态已失效，请重新登录。'
+    if (reason.status === 403) return '没有审核权限：仅学生会或管理员可修改审核状态。'
+    if (reason.status === 409) return reason.message || '状态已被其他操作修改，请刷新后重试。'
+    if (reason.status === 400) return reason.message || '当前状态不支持该操作。'
+    return reason.message || '审核状态更新失败，请稍后重试。'
+  }
+  return '审核状态更新失败，请稍后重试。'
+}
+
+function resetAuditState() {
+  auditOpenId.value = null
+  auditErrorId.value = null
+  auditErrorMessage.value = ''
+  auditResultId.value = null
+  auditResultMessage.value = ''
+}
+
+function toggleAudit(activity: Activity) {
+  if (auditingId.value) return
+  auditOpenId.value = auditOpenId.value === activity.rowKey ? null : activity.rowKey
+  auditErrorId.value = null
+  auditErrorMessage.value = ''
+  auditResultId.value = null
+  auditResultMessage.value = ''
+}
+
+async function applyAudit(activity: Activity, target: AuditableStatus) {
+  if (auditingId.value || !canAudit(activity)) return
+  auditingId.value = activity.rowKey
+  auditErrorId.value = null
+  auditErrorMessage.value = ''
+  auditResultId.value = null
+  auditResultMessage.value = ''
+  try {
+    await updateVolunteerActivityStatus(activity.id, target)
+    for (const row of activities.value) {
+      if (row.id !== activity.id) continue
+      row.status = target
+      row.statusLabel = getStatusLabel(target)
+      row.statusClass = getStatusClass(target)
+    }
+    if (expandedActivityId.value === activity.rowKey) {
+      auditOpenId.value = null
+      auditResultId.value = activity.rowKey
+      auditResultMessage.value = '活动审核状态已更新。'
+    }
+  } catch (reason) {
+    if (reason instanceof VolunteerApiError && reason.status === 401) {
+      unauthenticated.value = true
+      activities.value = []
+      totalActivities.value = 0
+      expandedActivityId.value = null
+      return
+    }
+    auditErrorId.value = activity.rowKey
+    auditErrorMessage.value = auditErrorText(reason)
+  } finally {
+    auditingId.value = null
+  }
+}
+
 function toggleCard(id: string) {
   if (listLoading.value) return
   expandedActivityId.value = expandedActivityId.value === id ? null : id
 }
 
 function handleCardKeydown(event: KeyboardEvent, id: string) {
-  if (event.key === 'Escape' && expandedActivityId.value === id) {
-    event.preventDefault()
-    event.stopPropagation()
-    expandedActivityId.value = null
-    const card = event.currentTarget as HTMLDetailsElement
-    card.querySelector('summary')?.focus()
+  if (event.key !== 'Escape' || expandedActivityId.value !== id) return
+  event.preventDefault()
+  event.stopPropagation()
+  const card = event.currentTarget as HTMLElement
+  if (auditOpenId.value === id) {
+    auditOpenId.value = null
+    card.querySelector<HTMLElement>(`[data-audit-toggle="${id}"]`)?.focus()
+    return
   }
+  expandedActivityId.value = null
+  card.querySelector('summary')?.focus()
 }
 
 onMounted(() => {
@@ -583,12 +688,12 @@ onBeforeUnmount(() => {
     >
       <details
         v-for="activity in activities"
-        :key="activity.id"
+        :key="activity.rowKey"
         class="activity-card glass-card"
-        :open="expandedActivityId === activity.id"
-        @keydown="handleCardKeydown($event, activity.id)"
+        :open="expandedActivityId === activity.rowKey"
+        @keydown="handleCardKeydown($event, activity.rowKey)"
       >
-        <summary class="activity-card__summary" :aria-disabled="listLoading || undefined" @click.prevent="toggleCard(activity.id)">
+        <summary class="activity-card__summary" :aria-disabled="listLoading || undefined" @click.prevent="toggleCard(activity.rowKey)">
           <span class="activity-card__title">{{ activity.name }}</span>
           <span class="activity-card__meta">
             <span class="activity-card__date">{{ activity.detailDate }}</span>
@@ -597,7 +702,7 @@ onBeforeUnmount(() => {
           </span>
         </summary>
 
-        <div v-if="expandedActivityId === activity.id" class="activity-card__details">
+        <div v-if="expandedActivityId === activity.rowKey" class="activity-card__details">
           <dl class="detail-info">
             <div class="detail-info-row">
               <dt>活动时间</dt>
@@ -616,18 +721,81 @@ onBeforeUnmount(() => {
               <dd>{{ activity.creator }}</dd>
             </div>
             <div class="detail-info-row">
-              <dt>状态</dt>
-              <dd>
-                <span class="detail-status" :class="activity.statusClass">
+              <dt>审核状态</dt>
+              <dd class="detail-status-cell">
+                <button
+                  v-if="canAudit(activity)"
+                   :data-audit-toggle="activity.rowKey"
+                  class="detail-status detail-status--action"
+                  :class="activity.statusClass"
+                  type="button"
+                  title="点击修改审核状态"
+                   :aria-expanded="auditOpenId === activity.rowKey"
+                   :aria-controls="auditOpenId === activity.rowKey ? `audit-actions-${activity.rowKey}` : undefined"
+                  @click="toggleAudit(activity)"
+                >
+                  {{ activity.statusLabel }}
+                </button>
+                <span v-else class="detail-status" :class="activity.statusClass">
                   {{ activity.statusLabel }}
                 </span>
+
+                <div
+                   v-if="auditOpenId === activity.rowKey"
+                   :id="`audit-actions-${activity.rowKey}`"
+                  class="audit-actions"
+                  role="group"
+                   :aria-busy="auditingId === activity.rowKey"
+                  :aria-label="`将审核状态改为（当前：${activity.statusLabel}）`"
+                >
+                  <button
+                    v-for="target in auditTargets(activity)"
+                    :key="target"
+                    class="audit-action"
+                    :class="getStatusClass(target)"
+                    type="button"
+                     :disabled="auditingId === activity.rowKey"
+                    @click="applyAudit(activity, target)"
+                  >
+                    改为{{ getStatusLabel(target) }}
+                  </button>
+                  <button
+                    class="audit-action audit-action--cancel"
+                    type="button"
+                     :disabled="auditingId === activity.rowKey"
+                    @click="auditOpenId = null"
+                  >
+                    取消
+                  </button>
+                </div>
+
+                 <div v-if="auditErrorId === activity.rowKey" class="audit-feedback" role="alert">
+                  <BubbleFeedback class="glass-feedback--error">{{ auditErrorMessage }}</BubbleFeedback>
+                </div>
+                 <div v-else-if="auditResultId === activity.rowKey" class="audit-feedback" aria-live="polite">
+                  <BubbleFeedback class="glass-feedback--success">{{ auditResultMessage }}</BubbleFeedback>
+                </div>
               </dd>
+            </div>
+            <div v-if="activity.memberStatus" class="detail-info-row">
+              <dt>个人记录状态</dt>
+              <dd><span class="detail-status" :class="getStatusClass(activity.memberStatus)">{{ getStatusLabel(activity.memberStatus) }}</span></dd>
             </div>
             <div class="detail-info-row">
               <dt>时长</dt>
-              <dd>{{ activity.duration }}h</dd>
+              <dd>{{ activity.hasDuration ? `${activity.duration}h` : '—' }}</dd>
             </div>
           </dl>
+
+          <div class="detail-actions">
+            <RouterLink
+              class="liquid-btn liquid-btn--secondary liquid-btn--sm"
+               :to="{ name: 'volunteer-detail', params: { id: activity.id } }"
+              :aria-label="`查看${activity.name}的详情`"
+            >
+              查看详情
+            </RouterLink>
+          </div>
         </div>
       </details>
     </div>
@@ -1166,6 +1334,76 @@ onBeforeUnmount(() => {
 .status-refused { background: rgba(239, 68, 68, 0.1); color: rgb(185, 28, 28); }
 .status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
 
+.detail-status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.detail-status--action {
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    box-shadow var(--duration-fast) var(--ease-smooth);
+}
+
+.detail-status--action:hover {
+  box-shadow: 0 2px 8px rgba(16, 44, 71, 0.14);
+}
+
+.detail-status--action:active { transform: scale(0.96); }
+
+.detail-status--action:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.audit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  width: 100%;
+  margin-block-start: var(--space-1);
+}
+
+.audit-action {
+  padding: 0.2rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-spring),
+    opacity var(--duration-fast) var(--ease-smooth);
+}
+
+.audit-action:hover:not(:disabled) { transform: translateY(-1px); }
+.audit-action:active:not(:disabled) { transform: scale(0.96); }
+.audit-action:disabled { opacity: 0.55; cursor: progress; }
+
+.audit-action:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.audit-action--cancel {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--color-text-secondary);
+}
+
+.audit-feedback { width: 100%; margin-block-start: var(--space-2); }
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--color-border-hairline);
+}
+
 .activities-skeleton {
   display: grid;
   gap: var(--space-3);
@@ -1462,14 +1700,18 @@ onBeforeUnmount(() => {
   .pagination-thumb,
   .activity-card,
   .activity-card__summary::after,
-  .activity-card__details {
+  .activity-card__details,
+  .audit-action,
+  .detail-status--action {
     transition: none;
     animation: none;
   }
 
   .liquid-btn:active,
   .search-clear:active,
-  .back-btn:active {
+  .back-btn:active,
+  .audit-action:active,
+  .detail-status--action:active {
     transform: none;
   }
 

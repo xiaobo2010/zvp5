@@ -48,6 +48,12 @@ const router = createRouter({
       meta: { title: '义工登记', requiresAuth: true, roles: ['admin', 'department'] }
     },
     {
+      path: '/volunteers/:id',
+      name: 'volunteer-detail',
+      component: () => import('@/views/VolunteerDetailView.vue'),
+      meta: { title: '义工详情', requiresAuth: true }
+    },
+    {
       path: '/server',
       name: 'server',
       component: () => import('@/views/ServerView.vue'),
