@@ -49,8 +49,7 @@ const totalActivities = ref(0)
 const error = ref('')
 const unauthenticated = ref(false)
 const classId = ref('')
-const detailDialogRef = ref<HTMLDialogElement | null>(null)
-const selectedActivityId = ref<string | null>(null)
+const expandedActivityId = ref<string | null>(null)
 
 let requestSeq = 0
 
@@ -62,9 +61,6 @@ const visiblePages = computed(() => {
   return Array.from({ length: 7 }, (_, index) => start + index)
 })
 const needsClass = computed(() => activeTab.value === 'class' && !classId.value)
-const selectedActivity = computed(() =>
-  activities.value.find(a => a.id === selectedActivityId.value) ?? null
-)
 
 const pagerTrackRef = ref<HTMLElement | null>(null)
 const pagerThumbRef = ref<HTMLElement | null>(null)
@@ -264,8 +260,7 @@ async function loadActivities() {
     error.value = ''
     activities.value = []
     totalActivities.value = 0
-    selectedActivityId.value = null
-    closeDetail()
+    expandedActivityId.value = null
     return
   }
 
@@ -306,8 +301,7 @@ async function loadActivities() {
     if (!isAuthError(reason)) {
       activities.value = []
       totalActivities.value = 0
-      selectedActivityId.value = null
-      closeDetail()
+      expandedActivityId.value = null
       error.value = readableError(reason, '活动加载失败，请稍后重试。')
     }
   } finally {
@@ -342,8 +336,7 @@ function handleSearch() {
   if (next === appliedSearch.value) return
   appliedSearch.value = next
   activePage.value = 1
-  selectedActivityId.value = null
-  closeDetail()
+  expandedActivityId.value = null
   void loadActivities()
 }
 
@@ -362,8 +355,7 @@ function handleTabChange(tab: ActivityScope) {
   if (activeTab.value === tab) return
   activeTab.value = tab
   activePage.value = 1
-  selectedActivityId.value = null
-  closeDetail()
+  expandedActivityId.value = null
   void loadActivities()
 }
 
@@ -371,8 +363,7 @@ function handlePageChange(page: number) {
   if (page === activePage.value || page < 1) return
   if (totalPages.value > 0 && page > totalPages.value) return
   activePage.value = page
-  selectedActivityId.value = null
-  closeDetail()
+  expandedActivityId.value = null
   void loadActivities()
 }
 
@@ -407,16 +398,19 @@ function getStatusClass(status: ActivityStatus) {
   return classes[status]
 }
 
-async function openCard(id: string) {
-  const dialog = detailDialogRef.value
-  if (!dialog || dialog.open || listLoading.value) return
-  selectedActivityId.value = id
-  await nextTick()
-  if (dialog.isConnected && !dialog.open && selectedActivityId.value === id) dialog.showModal()
+function toggleCard(id: string) {
+  if (listLoading.value) return
+  expandedActivityId.value = expandedActivityId.value === id ? null : id
 }
 
-function closeDetail() {
-  detailDialogRef.value?.close()
+function handleCardKeydown(event: KeyboardEvent, id: string) {
+  if (event.key === 'Escape' && expandedActivityId.value === id) {
+    event.preventDefault()
+    event.stopPropagation()
+    expandedActivityId.value = null
+    const card = event.currentTarget as HTMLDetailsElement
+    card.querySelector('summary')?.focus()
+  }
 }
 
 onMounted(() => {
@@ -587,78 +581,56 @@ onBeforeUnmount(() => {
       :class="{ 'is-refreshing': listLoading }"
       :aria-busy="listLoading"
     >
-      <button
+      <details
         v-for="activity in activities"
         :key="activity.id"
-        type="button"
         class="activity-card glass-card"
-        :disabled="listLoading"
-        aria-haspopup="dialog"
-        @click="openCard(activity.id)"
+        :open="expandedActivityId === activity.id"
+        @keydown="handleCardKeydown($event, activity.id)"
       >
-        <span class="activity-card__title">{{ activity.name }}</span>
-        <span class="activity-card__meta">
-          <span class="activity-card__date">{{ activity.detailDate }}</span>
-          <span class="activity-card__type" :class="activity.typeClass">{{ activity.type }}</span>
-          <span v-if="activity.hasDuration" class="activity-card__duration">{{ activity.duration }} h</span>
-        </span>
-      </button>
+        <summary class="activity-card__summary" :aria-disabled="listLoading || undefined" @click.prevent="toggleCard(activity.id)">
+          <span class="activity-card__title">{{ activity.name }}</span>
+          <span class="activity-card__meta">
+            <span class="activity-card__date">{{ activity.detailDate }}</span>
+            <span class="activity-card__type" :class="activity.typeClass">{{ activity.type }}</span>
+            <span v-if="activity.hasDuration" class="activity-card__duration">{{ activity.duration }} h</span>
+          </span>
+        </summary>
+
+        <div v-if="expandedActivityId === activity.id" class="activity-card__details">
+          <dl class="detail-info">
+            <div class="detail-info-row">
+              <dt>活动时间</dt>
+              <dd>{{ activity.detailDate }}</dd>
+            </div>
+            <div class="detail-info-row">
+              <dt>地点</dt>
+              <dd>{{ activity.place || '—' }}</dd>
+            </div>
+            <div class="detail-info-row">
+              <dt>类型</dt>
+              <dd><span class="detail-type" :class="activity.typeClass">{{ activity.type }}</span></dd>
+            </div>
+            <div v-if="activity.creator" class="detail-info-row">
+              <dt>创建者</dt>
+              <dd>{{ activity.creator }}</dd>
+            </div>
+            <div class="detail-info-row">
+              <dt>状态</dt>
+              <dd>
+                <span class="detail-status" :class="activity.statusClass">
+                  {{ activity.statusLabel }}
+                </span>
+              </dd>
+            </div>
+            <div class="detail-info-row">
+              <dt>时长</dt>
+              <dd>{{ activity.duration }}h</dd>
+            </div>
+          </dl>
+        </div>
+      </details>
     </div>
-
-    <dialog
-      ref="detailDialogRef"
-      class="detail-dialog"
-      aria-labelledby="detail-title"
-      @click.self="closeDetail"
-    >
-      <div class="detail-panel glass-card">
-        <header class="detail-header">
-          <h2 id="detail-title" class="detail-title">{{ selectedActivity?.name }}</h2>
-          <button
-            class="detail-close"
-            type="button"
-            aria-label="关闭详情"
-            autofocus
-            @click="closeDetail"
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M5 5L15 15M15 5L5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </header>
-
-        <dl v-if="selectedActivity" class="detail-info">
-          <div class="detail-info-row">
-            <dt>活动时间</dt>
-            <dd>{{ selectedActivity.detailDate }}</dd>
-          </div>
-          <div class="detail-info-row">
-            <dt>地点</dt>
-            <dd>{{ selectedActivity.place || '—' }}</dd>
-          </div>
-          <div class="detail-info-row">
-            <dt>类型</dt>
-            <dd><span class="detail-type" :class="selectedActivity.typeClass">{{ selectedActivity.type }}</span></dd>
-          </div>
-          <div v-if="selectedActivity.creator" class="detail-info-row">
-            <dt>创建者</dt>
-            <dd>{{ selectedActivity.creator }}</dd>
-          </div>
-          <div class="detail-info-row">
-            <dt>状态</dt>
-            <dd>
-              <span class="detail-status" :class="selectedActivity.statusClass">
-                {{ selectedActivity.statusLabel }}
-              </span>
-            </dd>
-          </div>
-          <div class="detail-info-row">
-            <dt>时长</dt>
-            <dd>{{ selectedActivity.duration }}h</dd>
-          </div>
-        </dl>
-      </div>
-    </dialog>
 
     <nav
       v-if="totalPages > 1 && !loading && !error && !unauthenticated && !needsClass"
@@ -1015,28 +987,73 @@ onBeforeUnmount(() => {
 .activity-card {
   position: relative;
   padding: 14px clamp(14px, 4vw, 28px) calc(var(--card-overlap) + 14px);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  cursor: pointer;
-  text-align: start;
   background: linear-gradient(125deg, #fbfcff 24%, var(--palette-edge, #dce9f5));
   border-color: color-mix(in srgb, var(--accent-ink) 22%, #fff);
   box-shadow: var(--glass-rim), 0 3px 12px #102c471f;
-  transition: border-color var(--duration-fast) var(--ease-settle);
+  transition:
+    transform 280ms var(--ease-settle),
+    border-color var(--duration-fast) var(--ease-settle),
+    box-shadow 280ms var(--ease-settle);
 }
 
 .activity-card + .activity-card { margin-block-start: calc(-1 * var(--card-overlap)); }
 .activity-card:last-child { padding-block-end: clamp(32px, 8vw, 72px); }
 .activity-card:nth-child(even) { background: linear-gradient(125deg, #f9fbff 24%, var(--palette-main, #d9eafd)); }
 
-.activity-card:hover:not(:disabled),
-.activity-card:focus-visible { border-color: var(--accent-ink); }
+.activity-card[open] {
+  padding-block-end: var(--space-5);
+  border-color: var(--accent-ink);
+  box-shadow: var(--glass-rim), 0 8px 28px rgba(16, 44, 71, 0.15);
+}
 
-.activity-card:focus-visible {
+.activity-card[open] + .activity-card { margin-block-start: var(--space-3); }
+
+.activity-card__summary {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  -webkit-user-select: none;
+  user-select: none;
+  padding-inline-end: 20px;
+}
+
+.activity-card__summary::after {
+  content: '';
+  position: absolute;
+  inset-block-start: 7px;
+  inset-inline-end: 3px;
+  width: 7px;
+  height: 7px;
+  border-inline-end: 1.5px solid var(--accent-ink);
+  border-block-end: 1.5px solid var(--accent-ink);
+  rotate: 45deg;
+  transition: rotate var(--duration-fast) var(--ease-settle);
+}
+
+.activity-card[open] > .activity-card__summary::after { rotate: 225deg; }
+
+.activity-card__summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .activity-card:not([open]):hover {
+    border-color: var(--accent-ink);
+    box-shadow: var(--glass-rim), 0 6px 20px rgba(16, 44, 71, 0.12);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .activity-card:not([open]):hover { transform: translateY(-2px) scale(1.02); }
+}
+
+.activity-card__summary:focus-visible {
   outline: 2px solid var(--accent-ink);
   outline-offset: -3px;
+  border-radius: var(--radius-md);
 }
 
 .activity-card__title {
@@ -1050,6 +1067,10 @@ onBeforeUnmount(() => {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
+}
+
+.activity-card[open] .activity-card__title {
+  display: block;
 }
 
 .activity-card__date {
@@ -1076,75 +1097,18 @@ onBeforeUnmount(() => {
 
 .activity-card__duration { color: var(--accent-ink); font-weight: 600; }
 
-.detail-dialog {
-  max-width: min(480px, calc(100vw - var(--space-5) * 2));
-  max-height: calc(100vh - var(--space-5) * 2);
-  margin: auto;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-xl);
-  background: transparent;
-  overflow: visible;
+.activity-card__details {
+  margin-block-start: var(--space-4);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--color-border-hairline);
+  animation: card-expand 320ms var(--ease-settle) backwards;
 }
 
-.detail-dialog::backdrop {
-  background: rgb(16 27 50 / 42%);
-}
-
-.detail-dialog[open] { animation: deck-detail-in 260ms var(--ease-settle) backwards; }
-
-@keyframes deck-detail-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.94); }
-}
-
-.detail-panel {
-  width: 100%;
-  max-height: calc(100vh - var(--space-5) * 2);
-  overflow-y: auto;
-  padding: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.detail-title {
-  flex: 1;
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-
-.detail-close {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 50%;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color 180ms,
-    color 180ms;
-}
-
-.detail-close:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--color-text-primary);
+@keyframes card-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
 }
 
 .detail-info {
@@ -1496,8 +1460,11 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .pagination-thumb,
-  .activity-card {
+  .activity-card,
+  .activity-card__summary::after,
+  .activity-card__details {
     transition: none;
+    animation: none;
   }
 
   .liquid-btn:active,
@@ -1507,6 +1474,5 @@ onBeforeUnmount(() => {
   }
 
   .skeleton-line { animation: none; }
-  .detail-dialog[open] { animation: none; }
 }
 </style>
