@@ -87,11 +87,31 @@ onBeforeUnmount(() => {
   height: var(--topbar-height);
   padding: 0 var(--gutter);
   border-bottom: 1px solid color-mix(in srgb, var(--glass-border) 55%, transparent);
-  transition: box-shadow var(--dur-base) var(--ease-out);
+  transition:
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
 
 .topbar.is-scrolled {
   box-shadow: 0 12px 30px -24px rgba(40, 30, 16, 0.38);
+}
+
+/* 桌面端：与左侧浮起侧栏同一种材质语言——离边、圆角、整圈描边。
+   移动端保留通栏顶栏，和底部 Dock 组成一套上下夹持的结构。 */
+@media (min-width: 1081px) {
+  .topbar {
+    top: 12px;
+    width: min(calc(100% - var(--space-4) * 2), var(--content-max));
+    height: 60px;
+    margin: 12px auto 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .topbar.is-scrolled {
+    box-shadow: var(--glass-shadow);
+  }
 }
 
 .left {

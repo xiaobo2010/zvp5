@@ -26,7 +26,7 @@ const tabs = computed(() => {
 })
 
 const root = ref<HTMLElement | null>(null)
-const pill = reactive({ x: 0, width: 0, height: 0, ready: false })
+const pill = reactive({ x: 0, y: 0, width: 0, height: 0, ready: false })
 
 function measure() {
   const container = root.value
@@ -37,6 +37,7 @@ function measure() {
     return
   }
   pill.x = active.offsetLeft
+  pill.y = active.offsetTop
   pill.width = active.offsetWidth
   pill.height = active.offsetHeight
   pill.ready = true
@@ -70,7 +71,7 @@ watch(
       :class="{ 'is-ready': pill.ready }"
       aria-hidden="true"
       :style="{
-        transform: `translateX(${pill.x}px)`,
+        transform: `translate(${pill.x}px, ${pill.y}px)`,
         width: `${pill.width}px`,
         height: `${pill.height}px`
       }"

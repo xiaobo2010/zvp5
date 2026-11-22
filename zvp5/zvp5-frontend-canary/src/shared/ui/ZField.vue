@@ -137,6 +137,14 @@ function onInput(event: Event) {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-danger) 14%, transparent);
 }
 
+/* 焦点指示由外层 .control 统一表达：内层 input / 按钮不再叠加第二道强调环，
+   否则会出现「外圈强调色 + 内圈强调色」的双重描边。 */
+input:focus-visible,
+.reveal:focus-visible {
+  box-shadow: none;
+  border-radius: inherit;
+}
+
 .leading {
   color: var(--ink-faint);
   flex: none;
