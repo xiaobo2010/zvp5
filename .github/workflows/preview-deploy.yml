@@ -269,13 +269,25 @@ jobs:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
           cache-dependency-path: ${{ inputs.frontend_dir }}/pnpm-lock.yaml
-      - name: Verify preview frontend directory
+      - name: Verify preview inputs
         working-directory: .
         run: |
+          set -euo pipefail
           [[ -d "${{ inputs.frontend_dir }}" ]] || {
             echo "${{ inputs.frontend_dir }} is missing on $(git rev-parse --abbrev-ref HEAD)" >&2
             exit 1
           }
+          # 少一个字母就把域名指到别人家去了（xiaoboisces.top vs xiaobopisces.top），
+          # 症状是冒烟一直报 could not resolve host，而线上产物还会去调一个
+          # 不存在的 API。这里先把拼写钉死。
+          case "${{ inputs.host }}" in
+            *xiaobopisces.top) ;;
+            *) echo "preview host spelling looks wrong: ${{ inputs.host }}" >&2; exit 1 ;;
+          esac
+          case "$VITE_API_BASE" in
+            *xiaobopisces.top*) ;;
+            *) echo "api base spelling looks wrong: $VITE_API_BASE" >&2; exit 1 ;;
+          esac
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Unit tests
@@ -297,6 +309,13 @@ jobs:
           # SPA fallback 接走（200 + index.html），前端直接炸。
           grep -R -F -q "$VITE_API_BASE" dist/assets || {
             echo "built bundle does not contain the absolute API base $VITE_API_BASE" >&2
+            exit 1
+          }
+          # 域名拼写护栏：少个字母的 xiaoboisces.top / xiaobopolisces.top 是真踩过的
+          # 坑——线上产物因此指向一个不存在的域名，页面能开但所有 API 全挂。
+          bad_hosts="$(grep -R -o -h 'xiaobo[a-z]*\.top' dist/assets | sort -u | grep -v '^xiaobopisces\.top$' || true)"
+          [[ -z "$bad_hosts" ]] || {
+            echo "built bundle contains misspelled domain(s): $bad_hosts" >&2
             exit 1
           }
       - name: Deploy to Cloudflare Worker
