@@ -14,6 +14,16 @@ name: Bootstrap canary-claude custom domain
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - canary-anthropic
+    paths:
+      - ".github/workflows/bootstrap-canary-claude-domain.yml"
+  push:
+    branches:
+      - canary-anthropic
+    paths:
+      - ".github/workflows/bootstrap-canary-claude-domain.yml"
 
 permissions:
   contents: read
