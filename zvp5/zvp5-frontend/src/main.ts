@@ -42,6 +42,29 @@ import './assets/styles/yg/phi-portals.css'
 // 必须放在 phi-theme / phi-portals 之后：同名令牌靠后者 + 更高特异性一起取胜。
 import './assets/styles/yg/theme-variants.css'
 
+// 主题设计包：canary2（来自 v5-canary2 的 v2 样式库）。全部选择器已收窄到
+// html[data-theme-variant='canary2']，不参与 canary 主题的层叠。
+import './assets/styles/themes/canary2/tokens.css'
+import './assets/styles/themes/canary2/base.css'
+import './assets/styles/themes/canary2/materials.css'
+import './assets/styles/themes/canary2/typography.css'
+import './assets/styles/themes/canary2/controls.css'
+import './assets/styles/themes/canary2/liquid.css'
+import './assets/styles/themes/canary2/card.css'
+import './assets/styles/themes/canary2/patterns.css'
+import './assets/styles/themes/canary2/shell.css'
+import './assets/styles/themes/canary2/ep-bridge.css'
+import './assets/styles/themes/canary2/ux.css'
+import './assets/styles/themes/canary2/glass.css'
+import './assets/styles/themes/canary2/table.css'
+// canary2 适配层：--yg-* / .yg-* / EP 组件 → yg2 浅色玻璃令牌
+import './assets/styles/themes/canary2/adapt.css'
+
+// 主题设计包：canary-pro（来自 v5-canary-pro 的工作台令牌与基线）
+import './assets/styles/themes/canary-pro/base.css'
+// canary-pro 适配层：--yg-* / .yg-* / EP 组件 → 深色工作台玻璃令牌
+import './assets/styles/themes/canary-pro/adapt.css'
+
 // 平板滚动流畅层：滚动进行中暂停纯装饰动画（性能规则，不承载视觉设计）
 import './assets/styles/perf-tablet.css'
 

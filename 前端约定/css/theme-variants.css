@@ -1,171 +1,59 @@
-/*
- * 主题变体：运行时主题切换（运行于明暗两套之上）
- * - canary：默认，不覆盖（保持现网视觉）
- * - canary-pro：紫金强调 + 更深底色 + 更强面板层次
- * - canary2：冷蓝强调（克制实验变体）
- * 新增主题只需在此文件加一段 html[data-theme-variant='...'] 规则。
- *
- * 作用域必须落在 `.yg-phi` / `body.yg-phi-portals` 上：`--yg-*`、`--phi-*`
- * 令牌是在这两个选择器里定义的，只写 html 会被它们的声明盖回去。
- */
+/* ==========================================================================
+   主题页面适配（共享层）
+   --------------------------------------------------------------------------
+   三套主题是三套设计包，不是配色变体：
+   - 外壳与导航：src/themes/<id>/*.vue（由 src/themes/registry.ts 注册）
+   - 设计令牌与材质：src/assets/styles/themes/<id>/*.css
+     （canary2 = yg2 浅色玻璃，canary-pro = 深色工作台玻璃）
 
-/* ===== canary-pro ===== */
-html[data-theme-variant='canary-pro'] .yg-phi,
-html[data-theme-variant='canary-pro'] body.yg-phi-portals {
-  /* 更深底色：比默认 Phi 再压一档，衬出紫金强调 */
-  --yg-bg-page: #07040f;
-  --yg-bg-surface: #100a1c;
-  --yg-bg-surface-raised: #171026;
-  --yg-bg-surface-sunken: #090512;
-  --yg-bg-hover: rgba(168, 85, 247, 0.12);
-  --yg-bg-active: rgba(168, 85, 247, 0.2);
+   本文件不再定义任何「紫金 / 冷蓝」配色。这里只保留与具体设计包无关、
+   但会影响页面层的共享收口；主题专属令牌与组件皮肤一律回到各自的
+   adapt.css，避免再次退化成「只换 CSS 变量」的伪主题。
+   ========================================================================== */
 
-  --yg-text-primary: #f6f0ff;
-  --yg-text-secondary: #c9b8e6;
-  --yg-text-tertiary: #9d8ab8;
-
-  --yg-border-subtle: rgba(214, 188, 255, 0.1);
-  --yg-border-default: rgba(214, 188, 255, 0.2);
-  --yg-border-strong: rgba(214, 188, 255, 0.32);
-
-  /* 主强调：紫；次强调：金（--phi-pink 在 Phi 里是装饰性色带） */
-  --yg-color-primary: #a855f7;
-  --yg-color-primary-hover: #bd7cff;
-  --yg-color-primary-active: #9333ea;
-  --yg-color-primary-soft: rgba(168, 85, 247, 0.14);
-  --yg-color-primary-strong: #7e22ce;
-  --yg-color-primary-strong-hover: #6b21a8;
-  --yg-color-primary-strong-active: #581c87;
-
-  --phi-cyan: #c084fc;
-  --phi-breathe: #d8b4fe;
-  --phi-breathe-strong: rgba(192, 132, 252, 0.14);
-  --phi-breathe-soft: rgba(192, 132, 252, 0.09);
-  --phi-pink: #f5c451;
-  --phi-accent: #a855f7;
-  --phi-accent-ink: #a855f7;
-  --phi-accent-soft: rgba(168, 85, 247, 0.2);
-  --phi-accent-glow: rgba(168, 85, 247, 0.45);
-  --phi-panel: #100a1c;
-  --phi-panel-hi: #171026;
-  --phi-sunken: #090512;
-  --phi-grid: rgba(216, 180, 254, 0.06);
-  --phi-scan: rgba(168, 85, 247, 0.04);
-  --phi-shadow: rgba(168, 85, 247, 0.18);
-  --yg-focus-ring-color: #a855f7;
-
-  /* body 级弹层（Select 下拉、Dialog、Message）的 --p-* 令牌 */
-  --p-bg: #07040f;
-  --p-surface: #100a1c;
-  --p-sunken: #090512;
-  --p-ink: #f6f0ff;
-  --p-muted: #c9b8e6;
-  --p-cyan: #c084fc;
-  --p-magenta: #f5c451;
-  --p-hover: rgba(168, 85, 247, 0.12);
-  --p-line: rgba(214, 188, 255, 0.2);
-  --p-line-soft: rgba(214, 188, 255, 0.1);
+/* 1. Phi 的纯装饰（六边形底纹 / 速度线 / 判定线 / 徽记）只属于 canary。
+      用 :not 统一兜住所有非默认主题，新增主题不必再抄一遍。 */
+html:not([data-theme-variant='canary']) .z-hex-grid,
+html:not([data-theme-variant='canary']) .yg-page-hex,
+html:not([data-theme-variant='canary']) .yg-phi-velocity,
+html:not([data-theme-variant='canary']) .yg-phi-judgment,
+html:not([data-theme-variant='canary']) .yg-phi-emblem,
+html:not([data-theme-variant='canary']) .yg-phi-hero::before,
+html:not([data-theme-variant='canary']) .yg-phi-hero::after {
+  display: none;
 }
 
-html[data-theme='light'][data-theme-variant='canary-pro'] .yg-phi,
-html[data-theme='light'][data-theme-variant='canary-pro'] body.yg-phi-portals {
-  --yg-bg-page: #f4efff;
-  --yg-bg-surface: #fbf9ff;
-  --yg-bg-surface-raised: #ffffff;
-  --yg-bg-surface-sunken: #ece4f7;
-  --yg-bg-hover: rgba(109, 40, 217, 0.08);
-  --yg-bg-active: rgba(109, 40, 217, 0.14);
-
-  --yg-text-primary: #180f2a;
-  --yg-text-secondary: #4c3d63;
-  --yg-text-tertiary: #6b5a82;
-
-  --yg-border-subtle: rgba(24, 15, 42, 0.08);
-  --yg-border-default: rgba(24, 15, 42, 0.16);
-  --yg-border-strong: rgba(24, 15, 42, 0.26);
-
-  --yg-color-primary: #6d28d9;
-  --yg-color-primary-hover: #7c3aed;
-  --yg-color-primary-active: #5b21b6;
-  --yg-color-primary-soft: rgba(109, 40, 217, 0.1);
-  --yg-color-primary-strong: #5b21b6;
-  --yg-color-primary-strong-hover: #4c1d95;
-  --yg-color-primary-strong-active: #3b0f7a;
-
-  --phi-cyan: #7c3aed;
-  --phi-breathe: #8b5cf6;
-  --phi-breathe-strong: rgba(124, 58, 237, 0.13);
-  --phi-breathe-soft: rgba(124, 58, 237, 0.09);
-  --phi-pink: #b7791f;
-  --phi-accent: #6d28d9;
-  --phi-accent-ink: #6d28d9;
-  --phi-accent-soft: rgba(109, 40, 217, 0.13);
-  --phi-accent-glow: rgba(109, 40, 217, 0.34);
-  --phi-panel: #ffffff;
-  --phi-panel-hi: #fbf9ff;
-  --phi-sunken: #ece4f7;
-  --phi-grid: rgba(24, 15, 42, 0.05);
-  --phi-scan: rgba(109, 40, 217, 0.03);
-  --phi-shadow: rgba(109, 40, 217, 0.14);
-  --yg-focus-ring-color: #6d28d9;
-
-  --p-bg: #f4efff;
-  --p-surface: #fbf9ff;
-  --p-sunken: #ece4f7;
-  --p-ink: #180f2a;
-  --p-muted: #4c3d63;
-  --p-cyan: #7c3aed;
-  --p-magenta: #b7791f;
-  --p-hover: rgba(109, 40, 217, 0.08);
-  --p-line: rgba(24, 15, 42, 0.16);
-  --p-line-soft: rgba(24, 15, 42, 0.08);
+/* 2. 登录页 / 维护页不套登录后外壳，但仍复用内容滚动容器：
+      非 canary 主题下由各自的设计包给出底色，这里只保证路由视图撑满。 */
+html[data-theme-variant='canary2'] .yg-layout__content > .yg-view,
+html[data-theme-variant='canary-pro'] .yg-layout__content > .yg-view {
+  min-height: 100%;
 }
 
-/* ===== canary2 ===== */
-html[data-theme-variant='canary2'] .yg-phi,
-html[data-theme-variant='canary2'] body.yg-phi-portals {
-  --yg-color-primary: #0ea5e9;
-  --yg-color-primary-hover: #38bdf8;
-  --yg-color-primary-active: #0284c7;
-  --yg-color-primary-soft: rgba(14, 165, 233, 0.14);
-  --yg-color-primary-strong: #0369a1;
-  --yg-color-primary-strong-hover: #075985;
-  --yg-color-primary-strong-active: #0c4a6e;
-
-  --phi-cyan: #22d3ee;
-  --phi-breathe: #67e8f9;
-  --phi-breathe-strong: rgba(34, 211, 238, 0.14);
-  --phi-breathe-soft: rgba(34, 211, 238, 0.09);
-  --phi-accent: #0ea5e9;
-  --phi-accent-ink: #0ea5e9;
-  --phi-accent-soft: rgba(14, 165, 233, 0.18);
-  --phi-accent-glow: rgba(14, 165, 233, 0.4);
-  --yg-focus-ring-color: #0ea5e9;
-
-  --p-cyan: #22d3ee;
-  --p-hover: rgba(34, 211, 238, 0.12);
+/* 3. body 级弹层（Dialog / Message / Popper 被 Teleport 到 body）：
+      重新挂回各主题的字体与文字色，避免弹层落回 v1 的基线字体。 */
+html[data-theme-variant='canary2'] body,
+html[data-theme-variant='canary2'] body .el-message,
+html[data-theme-variant='canary2'] body .el-message-box,
+html[data-theme-variant='canary2'] body .el-dialog {
+  font-family: var(--yg2-font-sans);
 }
 
-html[data-theme='light'][data-theme-variant='canary2'] .yg-phi,
-html[data-theme='light'][data-theme-variant='canary2'] body.yg-phi-portals {
-  --yg-color-primary: #0369a1;
-  --yg-color-primary-hover: #0284c7;
-  --yg-color-primary-active: #075985;
-  --yg-color-primary-soft: rgba(3, 105, 161, 0.1);
-  --yg-color-primary-strong: #075985;
-  --yg-color-primary-strong-hover: #0c4a6e;
-  --yg-color-primary-strong-active: #082f49;
+html[data-theme-variant='canary-pro'] body,
+html[data-theme-variant='canary-pro'] body .el-message,
+html[data-theme-variant='canary-pro'] body .el-message-box,
+html[data-theme-variant='canary-pro'] body .el-dialog {
+  font-family: var(--font-system);
+}
 
-  --phi-cyan: #0891b2;
-  --phi-breathe: #22d3ee;
-  --phi-breathe-strong: rgba(8, 145, 178, 0.12);
-  --phi-breathe-soft: rgba(8, 145, 178, 0.08);
-  --phi-accent: #0369a1;
-  --phi-accent-ink: #0369a1;
-  --phi-accent-soft: rgba(3, 105, 161, 0.12);
-  --phi-accent-glow: rgba(3, 105, 161, 0.3);
-  --yg-focus-ring-color: #0369a1;
-
-  --p-cyan: #0891b2;
-  --p-hover: rgba(3, 105, 161, 0.1);
+/* 4. 打印：三套外壳都收起导航，只留内容。 */
+@media print {
+  .yg-glass-nav,
+  .yg2-sidebar,
+  .yg2-topbar,
+  .yg2-mobile-tabs,
+  .pro-rail,
+  .pro-topbar {
+    display: none;
+  }
 }

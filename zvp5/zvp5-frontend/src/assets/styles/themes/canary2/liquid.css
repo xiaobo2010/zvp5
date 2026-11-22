@@ -1,0 +1,626 @@
+/* 移植自 origin/v5-canary2:zvms4-modified-main/zvms4-frontend/src/assets/styles/v2，
+   为免影响 canary 主题，选择器已统一收窄到 html[data-theme-variant='canary2'] 作用域。 */
+/* ==========================================================================
+   Liquid Glass v2 —— 严格遵循《Apple Liquid Glass 网页前端设计准则 v1.0》
+
+   核心：Glass is a layer, not a theme.
+   - L4 导航层（顶栏 / 侧栏 / 底部栏）：玻璃
+   - L5 浮层（Dialog / Popover / Dropdown / Tooltip / Toast）：玻璃
+   - L3 控件（按钮 / 输入 / 分段）：以实体为主，玻璃只在轻量控件上少量使用
+   - L2 内容层（卡片 / 表格 / 列表 / 图表）：实体，禁止默认加 backdrop-filter
+
+   材质参数集中在 :root 的 --yg2-glass-* 令牌里，组件不写死数值。
+   ========================================================================== */
+
+html[data-theme-variant='canary2'] {
+  /* 玻璃表面：透射率 / 模糊 / 饱和 / 描边 / 高光 */
+  --yg2-glass-nav-fill: color-mix(in srgb, #ffffff 62%, transparent);
+  --yg2-glass-nav-blur: 28px;
+  --yg2-glass-overlay-fill: color-mix(in srgb, #ffffff 80%, transparent);
+  --yg2-glass-overlay-blur: 30px;
+  --yg2-glass-control-fill: color-mix(in srgb, #ffffff 55%, transparent);
+  --yg2-glass-control-blur: 14px;
+  --yg2-glass-saturate: 180%;
+  --yg2-glass-stroke: color-mix(in srgb, #ffffff 46%, transparent);
+  --yg2-glass-highlight: color-mix(in srgb, #ffffff 70%, transparent);
+  --yg2-glass-shadow: 0 1px 2px color-mix(in srgb, #000 5%, transparent),
+    0 12px 28px color-mix(in srgb, #000 8%, transparent);
+}
+
+html[data-theme-variant='canary2'][data-theme='dark'] {
+  --yg2-glass-nav-fill: color-mix(in srgb, #24252d 64%, transparent);
+  --yg2-glass-overlay-fill: color-mix(in srgb, #24252d 84%, transparent);
+  --yg2-glass-control-fill: color-mix(in srgb, #ffffff 8%, transparent);
+  --yg2-glass-stroke: color-mix(in srgb, #ffffff 12%, transparent);
+  --yg2-glass-highlight: color-mix(in srgb, #ffffff 16%, transparent);
+  --yg2-glass-shadow: 0 1px 2px color-mix(in srgb, #000 40%, transparent),
+    0 14px 32px color-mix(in srgb, #000 45%, transparent);
+}
+
+/* ==========================================================================
+   L4 导航层
+   ========================================================================== */
+
+.yg2-sidebar,
+.yg2-topbar {
+  background: var(--yg2-glass-nav-fill);
+  backdrop-filter: blur(var(--yg2-glass-nav-blur)) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--yg2-glass-nav-blur)) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    inset 0 0 0 1px var(--yg2-glass-stroke),
+    var(--yg2-glass-shadow);
+}
+
+/* 内侧描边 + 顶部高光：一层即可，不再叠加其它发光 */
+.yg2-sidebar::after,
+.yg2-topbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--yg2-glass-stroke);
+}
+
+.yg2-mobile-tabs {
+  background: var(--yg2-glass-nav-fill);
+  backdrop-filter: blur(24px) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(24px) saturate(var(--yg2-glass-saturate));
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    inset 0 0 0 1px var(--yg2-glass-stroke),
+    var(--yg2-glass-shadow);
+}
+
+/* ==========================================================================
+   L5 浮层
+   ========================================================================== */
+
+html[data-theme-variant='canary2'] .el-popper.is-light,
+html[data-theme-variant='canary2'] .el-dropdown__popper,
+html[data-theme-variant='canary2'] .el-select__popper,
+html[data-theme-variant='canary2'] .el-picker__popper,
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-message-box,
+html[data-theme-variant='canary2'] .el-message,
+html[data-theme-variant='canary2'] .el-notification,
+html[data-theme-variant='canary2'] .el-drawer {
+  background: var(--yg2-glass-overlay-fill);
+  backdrop-filter: blur(var(--yg2-glass-overlay-blur)) saturate(var(--yg2-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--yg2-glass-overlay-blur)) saturate(var(--yg2-glass-saturate));
+  border: 1px solid var(--yg2-glass-stroke);
+  box-shadow:
+    inset 0 1px 0 var(--yg2-glass-highlight),
+    var(--yg2-shadow-float);
+}
+
+html[data-theme-variant='canary2'] .el-popper__arrow::before {
+  background: var(--yg2-glass-overlay-fill) !important;
+  border-color: var(--yg2-glass-stroke) !important;
+}
+
+/* 浮层上不做膨胀动效，只做轻微淡入与 2px 位移 */
+html[data-theme-variant='canary2'] .el-popper,
+html[data-theme-variant='canary2'] .el-dialog {
+  transition: opacity 180ms var(--yg2-ease-out), transform 180ms var(--yg2-ease-out);
+}
+
+/* ==========================================================================
+   L3 控件：实体为主，交互做亮度/阴影的轻微变化 + 指针跟随的柔光
+   ========================================================================== */
+
+/* 悬停流光：跟着指针的一团柔光（--lx/--ly 由 liquidPointer 写入）。
+   属于准则 4.8 的 Dynamic Lighting，只在 hover / 按下时出现。 */
+.yg2-nav-item,
+.yg2-btn,
+.yg2-icon-btn,
+.yg2-seg__item,
+.yg2-mobile-tabs__item {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.yg2-nav-item::before,
+.yg2-btn::before,
+.yg2-icon-btn::before,
+.yg2-seg__item::before,
+.yg2-mobile-tabs__item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    150px circle at var(--lx, 50%) var(--ly, 0%),
+    color-mix(in srgb, #fff 46%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 180ms var(--yg2-ease-out);
+  pointer-events: none;
+}
+
+.yg2-nav-item:hover::before,
+.yg2-btn:hover::before,
+.yg2-icon-btn:hover::before,
+.yg2-seg__item:hover::before,
+.yg2-mobile-tabs__item:hover::before,
+.yg2-nav-item.is-pressed::before,
+.yg2-btn.is-pressed::before,
+.yg2-icon-btn.is-pressed::before {
+  opacity: 1;
+}
+
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-nav-item::before,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-btn::before,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-icon-btn::before,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-seg__item::before,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-mobile-tabs__item::before {
+  background: radial-gradient(
+    150px circle at var(--lx, 50%) var(--ly, 0%),
+    color-mix(in srgb, #fff 16%, transparent),
+    transparent 62%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-nav-item::before,
+.yg2-btn::before,
+.yg2-icon-btn::before,
+.yg2-seg__item::before,
+.yg2-mobile-tabs__item::before {
+    transition: none;
+  }
+}
+
+.yg2-btn,
+.yg2-icon-btn,
+.yg2-nav-item,
+.yg2-seg__item,
+.yg2-mobile-tabs__item {
+  position: relative;
+  isolation: isolate;
+  transition:
+    background-color 180ms var(--yg2-ease-out),
+    color 180ms var(--yg2-ease-out),
+    box-shadow 180ms var(--yg2-ease-out),
+    transform 120ms var(--yg2-ease-out);
+}
+
+.yg2-btn {
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 60%, transparent),
+    0 1px 2px color-mix(in srgb, #000 6%, transparent);
+}
+
+.yg2-btn--primary {
+  background: var(--yg2-accent);
+  color: var(--yg2-text-on-accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    0 2px 8px color-mix(in srgb, var(--yg2-accent) 28%, transparent);
+}
+
+.yg2-btn--primary:hover {
+  background: var(--yg2-accent-hover);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    0 3px 12px color-mix(in srgb, var(--yg2-accent) 34%, transparent);
+}
+
+.yg2-btn--secondary {
+  background: var(--yg2-surface);
+  color: var(--yg2-text);
+  box-shadow:
+    inset 0 0 0 1px var(--yg2-line),
+    0 1px 2px color-mix(in srgb, #000 5%, transparent);
+}
+
+.yg2-btn--secondary:hover {
+  background: color-mix(in srgb, var(--yg2-text) 4%, var(--yg2-surface));
+}
+
+.yg2-btn--quiet {
+  background: transparent;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-btn--quiet:hover {
+  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
+  color: var(--yg2-text);
+}
+
+.yg2-btn.is-pressed,
+.yg2-btn:active,
+.yg2-icon-btn.is-pressed,
+.yg2-icon-btn:active {
+  transform: scale(0.974);
+}
+
+.yg2-icon-btn {
+  border-radius: 999px;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-icon-btn:hover {
+  background: color-mix(in srgb, var(--yg2-text) 6%, transparent);
+  color: var(--yg2-text);
+}
+
+/* 导航项：选中态用浅底 + 主色文字，不使用发光 */
+.yg2-nav-item {
+  border-radius: var(--yg2-r-12);
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-nav-item:hover {
+  background: color-mix(in srgb, var(--yg2-text) 5%, transparent);
+  color: var(--yg2-text);
+}
+
+.yg2-nav-item.is-active {
+  background: var(--yg2-accent-soft);
+  color: var(--yg2-accent);
+}
+
+/* 分段控件：滑块是实体白，靠阴影浮起（iOS 的做法），不用玻璃 */
+.yg2-seg__thumb {
+  background: var(--yg2-surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-text) 7%, transparent),
+    0 1px 3px color-mix(in srgb, #000 10%, transparent);
+}
+
+.yg2-seg__item {
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-seg__item.is-active {
+  color: var(--yg2-text);
+}
+
+/* 输入控件：允许「轻量玻璃」，但必须保证文字对比度 */
+.yg2-input,
+html[data-theme-variant='canary2'] .el-input .el-input__wrapper,
+html[data-theme-variant='canary2'] .el-select .el-select__wrapper,
+html[data-theme-variant='canary2'] .el-textarea .el-textarea__inner {
+  background: var(--yg2-surface);
+  box-shadow: inset 0 0 0 1px var(--yg2-line);
+  transition: box-shadow 180ms var(--yg2-ease-out), background-color 180ms var(--yg2-ease-out);
+}
+
+html[data-theme-variant='canary2'] .el-input .el-input__wrapper.is-focus,
+html[data-theme-variant='canary2'] .el-input .el-input__wrapper:focus-within,
+html[data-theme-variant='canary2'] .el-select .el-select__wrapper.is-focused,
+.yg2-input:focus,
+.yg2-input:focus-visible,
+html[data-theme-variant='canary2'] .el-textarea .el-textarea__inner:focus {
+  background: var(--yg2-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--yg2-accent),
+    0 0 0 3px var(--yg2-accent-soft);
+  outline: none;
+}
+
+/* ==========================================================================
+   L2 内容层：卡片 / 面板 / 表格保持实体，覆盖主题里任何玻璃化默认值
+   ========================================================================== */
+
+.yg2-card,
+.yg2-xcard,
+.yg2-panel,
+html[data-theme-variant='canary2'] .el-card {
+  background: var(--yg2-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--yg2-line);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent),
+    0 1px 2px color-mix(in srgb, #000 4%, transparent),
+    0 10px 24px color-mix(in srgb, #000 5%, transparent);
+}
+
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-card,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-xcard,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-panel,
+html[data-theme-variant='canary2'][data-theme='dark'] .el-card {
+  background: var(--yg2-surface);
+  border-color: var(--yg2-line);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, #000 35%, transparent),
+    0 12px 26px color-mix(in srgb, #000 35%, transparent);
+}
+
+/* 卡片内部的装饰层（网格/噪点/点阵）默认关闭，只在设计演示里显式开启 */
+.yg2-card::before,
+.yg2-panel::before,
+.yg2-xcard::before,
+.yg2-card::after,
+.yg2-panel::after,
+.yg2-xcard::after {
+  content: none;
+}
+
+.yg2-card--deco::before,
+.yg2-xcard.yg2-card--deco::before {
+  content: '';
+}
+
+/* ==========================================================================
+   降级：不支持 backdrop-filter / 要求减少透明 / 减少动效
+   ========================================================================== */
+
+@supports not (backdrop-filter: blur(1px)) {
+  .yg2-sidebar,
+.yg2-topbar,
+.yg2-mobile-tabs,
+html[data-theme-variant='canary2'] .el-popper.is-light,
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-message-box,
+html[data-theme-variant='canary2'] .el-message,
+html[data-theme-variant='canary2'] .el-notification,
+html[data-theme-variant='canary2'] .el-drawer {
+    background: var(--yg2-surface);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .yg2-sidebar,
+.yg2-topbar,
+.yg2-mobile-tabs,
+html[data-theme-variant='canary2'] .el-popper.is-light,
+html[data-theme-variant='canary2'] .el-dropdown__popper,
+html[data-theme-variant='canary2'] .el-select__popper,
+html[data-theme-variant='canary2'] .el-picker__popper,
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-message-box,
+html[data-theme-variant='canary2'] .el-message,
+html[data-theme-variant='canary2'] .el-notification,
+html[data-theme-variant='canary2'] .el-drawer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--yg2-surface);
+    box-shadow: inset 0 0 0 1px var(--yg2-line), var(--yg2-shadow-ambient);
+  }
+
+  .yg2-lens-clip {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-btn,
+.yg2-btn.is-pressed,
+.yg2-btn:active,
+.yg2-icon-btn,
+.yg2-nav-item,
+.yg2-seg__item,
+html[data-theme-variant='canary2'] .el-popper,
+html[data-theme-variant='canary2'] .el-dialog {
+    transition: none;
+    transform: none;
+  }
+
+  .yg2-lens-clip__blob {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   动态光照：只作用于导航玻璃内部自绘的光场（真实位移），
+   不叠加在内容层，也不产生持续闪烁。
+   ========================================================================== */
+
+.yg2-lens-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  filter: url(#yg2-lens-lg);
+  opacity: 0.7;
+  contain: paint;
+}
+
+.yg2-lens-clip__blob {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  filter: blur(40px);
+  will-change: transform;
+}
+
+.yg2-lens-clip__blob--1 {
+  top: -110px;
+  left: -90px;
+  background: radial-gradient(circle, var(--yg2-ambient-1), transparent 68%);
+  animation: yg2-lens-drift-1 26s var(--yg2-ease-in-out) infinite alternate;
+}
+
+.yg2-lens-clip__blob--2 {
+  bottom: -130px;
+  left: 10%;
+  background: radial-gradient(circle, var(--yg2-ambient-2), transparent 68%);
+  animation: yg2-lens-drift-2 34s var(--yg2-ease-in-out) infinite alternate;
+}
+
+.yg2-lens-clip__blob--3 {
+  top: 38%;
+  right: -120px;
+  background: radial-gradient(circle, var(--yg2-ambient-3), transparent 70%);
+  animation: yg2-lens-drift-3 30s var(--yg2-ease-in-out) infinite alternate;
+}
+
+@keyframes yg2-lens-drift-1 {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(38px, 26px, 0) scale(1.12); }
+}
+
+@keyframes yg2-lens-drift-2 {
+  from { transform: translate3d(0, 0, 0) scale(1.06); }
+  to { transform: translate3d(-32px, -20px, 0) scale(0.96); }
+}
+
+@keyframes yg2-lens-drift-3 {
+  from { transform: translate3d(0, 0, 0) scale(0.98); }
+  to { transform: translate3d(22px, -34px, 0) scale(1.1); }
+}
+
+.yg2-topbar .yg2-lens-clip {
+  filter: url(#yg2-lens-sm);
+  opacity: 0.5;
+}
+
+
+/* ==========================================================================
+   主题切换过渡（《深浅色自适应配色规范》第 7 节）
+   只覆盖容器与文字/边框/描边，不做全局 * 过渡。
+   ========================================================================== */
+
+html[data-theme-variant='canary2'],
+html[data-theme-variant='canary2'] body,
+.yg2-app,
+.yg2-sidebar,
+.yg2-topbar,
+.yg2-mobile-tabs,
+.yg2-page,
+.yg2-card,
+.yg2-xcard,
+.yg2-panel,
+html[data-theme-variant='canary2'] .el-card,
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-popper,
+html[data-theme-variant='canary2'] .tr__svg circle,
+html[data-theme-variant='canary2'] .tr__item,
+html[data-theme-variant='canary2'] .tr__total,
+html[data-theme-variant='canary2'] .tr__hint {
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    border-color 200ms ease,
+    stroke 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme-variant='canary2'],
+html[data-theme-variant='canary2'] body,
+.yg2-app,
+.yg2-sidebar,
+.yg2-topbar,
+.yg2-mobile-tabs,
+.yg2-page,
+.yg2-card,
+.yg2-xcard,
+.yg2-panel,
+html[data-theme-variant='canary2'] .el-card,
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-popper,
+html[data-theme-variant='canary2'] .tr__svg circle,
+html[data-theme-variant='canary2'] .tr__item,
+html[data-theme-variant='canary2'] .tr__total,
+html[data-theme-variant='canary2'] .tr__hint {
+    transition: none;
+  }
+}
+
+/* ── Living Interface：环境光场升级为动态光源 ─────────────────────────── */
+.yg2-ambient {
+  background:
+    radial-gradient(46% 42% at var(--yg2-mx, 22%) var(--yg2-my, 18%), var(--yg2-ambient-1), transparent 72%),
+    radial-gradient(40% 38% at calc(100% - var(--yg2-mx, 22%)) 24%, var(--yg2-ambient-2), transparent 74%),
+    radial-gradient(50% 46% at 58% calc(100% - var(--yg2-my, 18%)), var(--yg2-ambient-3), transparent 72%);
+  transition: background 1200ms linear;
+  will-change: background;
+}
+/* 三团光斑各自不同速度，避免同频 */
+.yg2-ambient .yg2-ambient__blob:nth-child(1) { animation-duration: 34s; }
+.yg2-ambient .yg2-ambient__blob:nth-child(2) { animation-duration: 46s; }
+.yg2-ambient .yg2-ambient__blob:nth-child(3) { animation-duration: 58s; }
+
+/* 鼠标跟随的环境光：只改 CSS 变量，由 AmbientField 用 rAF 插值写入 */
+.yg2-ambient__cursor {
+  position: absolute;
+  width: 52vmax;
+  height: 52vmax;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--yg2-ambient-cursor, rgba(120,170,245,.28)), transparent 68%);
+  transform: translate3d(calc(var(--yg2-cx, 50vw) - 26vmax), calc(var(--yg2-cy, 40vh) - 26vmax), 0);
+  transition: transform 900ms cubic-bezier(.22,.61,.36,1);
+  pointer-events: none;
+  opacity: .9;
+}
+@media (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .yg2-ambient__cursor { display: none; }
+  .yg2-ambient { transition: none; }
+}
+
+/* ── 首屏进入动画：环境 → 导航 → 标题 → 主面板 → 次级内容 ───────────── */
+@keyframes yg2-rise {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to { opacity: 1; transform: none; }
+}
+.yg2-enter { animation: yg2-rise 560ms cubic-bezier(.22,.61,.36,1) both; }
+.yg2-enter--2 { animation-delay: 90ms; }
+.yg2-enter--3 { animation-delay: 160ms; }
+.yg2-enter--4 { animation-delay: 240ms; }
+@media (prefers-reduced-motion: reduce) {
+  .yg2-enter,
+.yg2-enter--2,
+.yg2-enter--3,
+.yg2-enter--4 { animation: none; }
+}
+
+/* 首页主面板错峰进入（只影响首屏，不参与交互布局） */
+.yg2-page > .yg2-enter-seq:nth-child(1) { animation-delay: 60ms; }
+.yg2-page > .yg2-enter-seq:nth-child(2) { animation-delay: 150ms; }
+.yg2-page > .yg2-enter-seq:nth-child(3) { animation-delay: 230ms; }
+.yg2-enter-seq { animation: yg2-rise 560ms cubic-bezier(.22,.61,.36,1) both; }
+@media (prefers-reduced-motion: reduce) { .yg2-enter-seq { animation: none; } }
+
+/* ── 空间运动：只给 1–2 个主面板，异速、幅度 4px，不影响布局 ─────────── */
+@keyframes yg2-float-a {
+  from { transform: translate3d(0, -2px, 0); }
+  to   { transform: translate3d(0, 2px, 0); }
+}
+@keyframes yg2-float-b {
+  from { transform: translate3d(0, 2px, 0); }
+  to   { transform: translate3d(0, -2px, 0); }
+}
+.yg2-float {
+  animation: yg2-float-a 9s var(--yg2-ease-in-out) infinite alternate;
+  will-change: transform;
+}
+.yg2-float--slow { animation-name: yg2-float-b; animation-duration: 12s; }
+
+/* 鼠标视差：位移 ±3px，用 CSS 变量，不触发重排 */
+.yg2-parallax {
+  transform: translate3d(calc(var(--yg2-px, 0) * 3px), calc(var(--yg2-py, 0) * 3px), 0);
+  transition: transform 240ms var(--yg2-ease-out);
+}
+
+/* 悬停抬升：只作用在玻璃面板上，2px，不改变点击区域 */
+.yg2-lift {
+  transition: transform 220ms var(--yg2-ease-out), box-shadow 220ms var(--yg2-ease-out);
+}
+.yg2-lift:hover {
+  transform: translate3d(0, -2px, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-float,
+.yg2-parallax { animation: none; transform: none; }
+  .yg2-lift:hover { transform: none; }
+}
+@media (max-width: 767px) {
+  .yg2-float { animation: none; }
+  .yg2-parallax { transform: none; }
+}

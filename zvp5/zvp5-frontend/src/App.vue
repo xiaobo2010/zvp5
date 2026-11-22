@@ -6,12 +6,10 @@ import { ElConfigProvider } from 'element-plus/es/components/config-provider/ind
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ElWatermark } from 'element-plus/es/components/watermark/index.mjs'
 
-import { RouterView } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRouter, useRoute } from 'vue-router'
-import UserNav from '@/views/user-v2/UserNav.vue'
 import { useHeaderStore } from './stores/header'
-import { useWindowSize, useDark, useOnline, usePreferredDark } from '@vueuse/core'
+import { useDark, useOnline, usePreferredDark } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { computed, watch, ref, onMounted, onUnmounted, h, reactive } from 'vue'
 import type { WatermarkFontType } from 'element-plus'
@@ -20,7 +18,9 @@ import ZNotificationReminder from '@/components/notification/ZNotificationRemind
 import ZPrimaryDeviceGate from '@/components/notification/ZPrimaryDeviceGate.vue'
 import ZLoginReveal from '@/components/system/ZLoginReveal.vue'
 import ZBanScreen from '@/components/system/ZBanScreen.vue'
-import ZHexGrid from '@/components/decor/ZHexGrid.vue'
+import ThemeContent from '@/themes/ThemeContent.vue'
+import { getThemeShell } from '@/themes/registry'
+import { isPhiPath } from '@/themes/phiRoutes'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { CarbonCloudOffline } from '@/icons'
 // 直接从定义模块引入：绕过 @/views barrel，避免主 chunk 打包全部路由视图
@@ -31,7 +31,6 @@ import {
   setPlatformGuardAccount,
   clearPlatformGuardData
 } from '@/utils/platformGuard'
-import { startPhiEdgePhase, stopPhiEdgePhase } from '@/utils/phiEdgePhase'
 import { loginRoleKey } from '@/utils/loginRole'
 import { installScrollActivityFlag, uninstallScrollActivityFlag } from '@/utils/scrollActivity'
 import { installPageVisibilityFlag } from '@/utils/devicePerf'
@@ -442,54 +441,33 @@ watch(
 
 locale.value = 'zh-CN'
 
-const { width, height } = useWindowSize()
+// 主题外壳：只换外壳与设计令牌，页面组件、router、stores、api 三套共用。
+// 外壳按 `userStore.theme` 响应式替换（不刷新页面）；切换入口仍在 /me。
+const themeShell = computed(() => getThemeShell(userStore.theme))
 
-// 竖屏（窄高比）时 UserNav 自带底部悬浮药丸导航，App 外壳只需给底部 dock 让位；
-// 横屏时 UserNav 走左侧玻璃栏。折叠/抽屉状态已随旧侧边栏一并移除。
-const verticalMode = ref<boolean>(width.value < height.value * 1.2)
+// 登录页 / 维护页不套登录后外壳（左侧栏、顶栏、底栏都不出现）。
+const isAuthPage = computed(
+  () => route.path === '/user/login' || route.path === '/maintenance'
+)
+const showShell = computed(() => !isAuthPage.value)
 
-// 宽高都要看：旋转屏幕或浏览器地址栏收起时高度会变，只听 width 会漏判。
-watch([width, height], ([w, h]) => {
-  verticalMode.value = w < h * 1.2
-})
+// 登录页与其它 Phi 页面一样吃 .yg-phi 令牌；维护页不属于 Phi。
+const showAuthPhi = computed(() => isPhiPath(route.path) && themeShell.value.id === 'canary')
 
-// Phi 主题：整个应用（普通用户端 + 后台三个管理区）统一挂 .yg-phi 类
-const isPhiRoute = computed(() => {
-  const path = route.path
-  return (
-    path === '/user' ||
-    path.startsWith('/user/') ||
-    path.startsWith('/activities') ||
-    path.startsWith('/activity/') ||
-    path === '/me' ||
-    path === '/about' ||
-    path === '/ai' ||
-    path.startsWith('/ai/') ||
-    path === '/server' ||
-    path.startsWith('/server/') ||
-    path === '/manage' ||
-    path.startsWith('/manage/') ||
-    path.startsWith('/group/')
-  )
-})
+function toggleAppearance() {
+  // useDark 的 setter 会把 'dark' / 'light' 写进 vueuse-color-scheme，
+  // 与个人主页的深色开关共用同一个偏好。
+  dark.value = !effectiveDark.value
+}
 
-// 服务端/管理台已在各自外壳内挂蜂窝底纹；其余 Phi 页面与独立通知页由 App 统一补一层。
-// 登录页有自己的缓存背景，不重复叠。
-const hasLocalHexGrid = computed(() => {
-  const path = route.path
-  return (
-    path === '/server' ||
-    path.startsWith('/server/') ||
-    path === '/manage' ||
-    path.startsWith('/manage/')
-  )
-})
-
-const showPageHex = computed(
-  () =>
-    (isPhiRoute.value || route.path === '/notifications') &&
-    !hasLocalHexGrid.value &&
-    route.path !== '/user/login'
+// Teleport 到 body 的弹层/下拉不在 .yg-phi 内，用 body 标记把 Phi 令牌和样式带出去。
+// 只有 canary 主题需要；canary2 / canary-pro 有自己的令牌命名空间。
+watch(
+  [() => isPhiPath(route.path), () => themeShell.value.id] as const,
+  ([phiRoute, themeId]) => {
+    document.body.classList.toggle('yg-phi-portals', phiRoute && themeId === 'canary')
+  },
+  { immediate: true }
 )
 
 // 页内页签（义工列表 / 平台管理 / 服务器管理 / AI 网关）切换只改路径末段。
@@ -517,23 +495,6 @@ const viewKey = computed(() => {
   }
   return VIEW_FAMILY[name] ?? route.path
 })
-
-// Teleport 到 body 的弹层/下拉不在 .yg-phi 内，用 body 标记把 Phi 令牌和样式带出去。
-// 仅普通用户路由生效，后台页面保持原样。
-watch(
-  isPhiRoute,
-  (value) => {
-    document.body.classList.toggle('yg-phi-portals', value)
-  },
-  { immediate: true }
-)
-
-onUnmounted(() => {
-  document.body.classList.remove('yg-phi-portals')
-  stopPhiEdgePhase()
-})
-
-onMounted(startPhiEdgePhase)
 
 const locales: Record<
   (typeof locale)['value'],
@@ -637,29 +598,28 @@ onUnmounted(() => {
           :lock-scroll="false"
           @ack="finalizeBan"
         />
-        <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
-          <UserNav v-if="userStore.isLogin" />
+        <!--
+          主题外壳：三套设计包结构完全不同，只共享 RouterView 内容块。
+          外壳根节点接收统一协议：:dark 当前生效深浅色，@toggle-dark 请求切换。
+        -->
+        <component
+          :is="themeShell.shell"
+          v-if="showShell"
+          :key="themeShell.id"
+          :dark="effectiveDark"
+          :class="themeShell.className"
+          @toggle-dark="toggleAppearance"
+        >
+          <ThemeContent :view-key="viewKey" />
+        </component>
+        <!-- 登录页 / 维护页：全屏页面，不套登录后外壳；canary 的登录页保留 Phi 令牌。 -->
+        <div
+          v-else
+          :class="['yg-layout', 'yg-layout--app', { 'yg-phi': showAuthPhi }]"
+        >
           <div class="yg-layout__main">
-            <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
-              <!-- 全局蜂窝底纹：服务端/管理台已有自己的底纹，其余页面统一补上 -->
-              <div v-if="showPageHex" class="yg-page-hex" aria-hidden="true">
-                <ZHexGrid
-                  :size="64"
-                  color="var(--phi-breathe, #1de9b6)"
-                  :opacity="0.07"
-                  drift
-                  sweep
-                />
-              </div>
-              <!-- 速度线挂在滚动内容里，随页面上下滚动；不再 fixed 浮在视口上。 -->
-              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
-              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
-              <div v-if="isPhiRoute" class="yg-phi-velocity" aria-hidden="true"></div>
-              <RouterView v-slot="{ Component }">
-                <Transition name="yg-route" mode="out-in">
-                  <component :is="Component" :key="viewKey" class="yg-view" />
-                </Transition>
-              </RouterView>
+            <main class="yg-layout__content">
+              <ThemeContent :view-key="viewKey" />
             </main>
           </div>
         </div>
@@ -684,38 +644,11 @@ onUnmounted(() => {
   height: 100%;
 }
 
-/* 全局蜂窝底纹：固定在视口上，负 z-index 落在内容区底色之上、卡片之下。
-   内容区自身有 isolation + overflow，这里必须 fixed 才不会被滚动内容带跑。 */
-.yg-page-hex {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
-  pointer-events: none;
-  contain: layout paint style;
-}
-
 .disconnected {
   position: relative;
   top: 40%;
   transform: translateY(16%);
   font-size: 1.2rem;
-}
-
-/* 竖屏底部 dock（UserNav 悬浮药丸）让位：药丸 56px(--yg-header-height 令牌同值)
-   + 离底 12px(--yg-space-3) + 手势/刘海安全区 + 内容自身 16px 留白(--yg-space-4)。
-   抽成 --yg-content-bottom-inset 是为了让页面（如服务器页）算自身高度时引用同一份
-   数值，不必各自硬编码 96px；横屏不挂 is-portrait，padding 仍是 base.css 的 24px。 */
-.yg-layout__content {
-  --yg-content-bottom-inset: 0px;
-}
-
-.yg-layout__content.is-portrait {
-  --yg-content-bottom-inset: calc(
-    var(--yg-header-height) + var(--yg-space-3) + env(safe-area-inset-bottom, 0px) +
-      var(--yg-space-4)
-  );
-  padding-bottom: var(--yg-content-bottom-inset);
 }
 </style>
 

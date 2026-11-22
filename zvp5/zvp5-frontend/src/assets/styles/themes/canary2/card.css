@@ -1,0 +1,543 @@
+/* 移植自 origin/v5-canary2:zvms4-modified-main/zvms4-frontend/src/assets/styles/v2，
+   为免影响 canary 主题，选择器已统一收窄到 html[data-theme-variant='canary2'] 作用域。 */
+/* ==========================================================================
+   卡片体系 v3：底子（排版/网格/纹理/边缘）→ 材质 → 光效 → 动效
+   令牌：--yg2-card-r（外圆角）、--yg2-card-p（内边距）、
+        --mx/--my（指针位置，0–100%），由 utils/cardPointer.ts 写入。
+   ========================================================================== */
+
+.yg2-card,
+.yg2-panel,
+.yg2-xcard {
+  --yg2-card-r: 26px;
+  --yg2-card-p: 24px;
+  --yg2-card-rad: color-mix(in srgb, var(--yg2-accent) 16%, transparent);
+  --yg2-card-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+
+  position: relative;
+  border-radius: var(--yg2-card-r);
+  padding: var(--yg2-card-p);
+  isolation: isolate;
+  overflow: hidden;
+
+  /* 22) 顶部 1px 内高光 + 两层很淡的阴影 */
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 85%, transparent),
+    0 1px 2px color-mix(in srgb, #000 4%, transparent),
+    0 12px 32px color-mix(in srgb, #000 7%, transparent);
+}
+
+/* 19) 网格渐变：三团相近的品牌色慢慢游动（仅演示卡开启） */
+.yg2-card--deco::before,
+.yg2-panel--deco::before,
+.yg2-xcard.yg2-card--deco::before {
+  content: '';
+  position: absolute;
+  inset: -30%;
+  z-index: -3;
+  background:
+    radial-gradient(42% 46% at 18% 22%, color-mix(in srgb, var(--yg2-accent) 16%, transparent), transparent 72%),
+    radial-gradient(38% 42% at 78% 30%, color-mix(in srgb, var(--yg2-accent) 11%, transparent), transparent 74%),
+    radial-gradient(46% 48% at 46% 88%, color-mix(in srgb, var(--yg2-accent) 8%, transparent), transparent 72%);
+  filter: blur(6px);
+  animation: yg2-mesh-drift 26s var(--yg2-ease-in-out) infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes yg2-mesh-drift {
+  0% { transform: translate3d(-2%, -1%, 0) scale(1); }
+  50% { transform: translate3d(2%, 1.5%, 0) scale(1.06); }
+  100% { transform: translate3d(-1%, 2%, 0) scale(1.02); }
+}
+
+/* 21) 点阵纹理：往右下角渐渐消失（仅演示卡开启） */
+.yg2-card--deco::after,
+.yg2-panel--deco::after,
+.yg2-xcard.yg2-card--deco::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in srgb, var(--yg2-text) 16%, transparent) 1px,
+    transparent 0
+  );
+  background-size: 14px 14px;
+  -webkit-mask-image: linear-gradient(135deg, #000 0%, transparent 62%);
+  mask-image: linear-gradient(135deg, #000 0%, transparent 62%);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+/* 20) 噪点：5% 透明 */
+.yg2-card .yg2-card__noise,
+.yg2-xcard .yg2-card__noise {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--yg2-card-noise);
+  opacity: 0.05;
+  pointer-events: none;
+}
+
+/* ---------- 默认材质：实体 ----------------------------------------------
+   按《Apple Liquid Glass 设计准则》2.2 / 10.2：卡片属于内容层，
+   不得默认使用 backdrop-filter；玻璃只能通过 .yg2-card--glass 显式选择，
+   且仅用于设计演示或确有悬浮属性的场景。
+   ---------------------------------------------------------------------- */
+.yg2-card,
+.yg2-xcard,
+.yg2-panel {
+  background: var(--yg2-surface);
+}
+
+/* ---------- 1) 毛玻璃 ---------------------------------------------------- */
+.yg2-card--glass {
+  background: color-mix(in srgb, #fff 15%, transparent);
+  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 70%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, #fff 38%, transparent),
+    0 1px 2px color-mix(in srgb, #000 5%, transparent),
+    0 18px 40px color-mix(in srgb, #000 9%, transparent);
+}
+
+/* ---------- 2) 液态玻璃：边缘折射 + 高光 --------------------------------- */
+.yg2-card--liquid {
+  background: color-mix(in srgb, #fff 12%, transparent);
+  backdrop-filter: blur(18px) saturate(190%) brightness(1.04);
+  -webkit-backdrop-filter: blur(18px) saturate(190%) brightness(1.04);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 80%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 8%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, #fff 42%, transparent),
+    0 20px 44px color-mix(in srgb, #000 10%, transparent);
+}
+
+/* 边缘折射：沿边框一圈随指针偏移的冷暖过渡，玻璃才有厚度 */
+.yg2-card--liquid::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  background: conic-gradient(
+    from calc(120deg + var(--mx, 50%) * 1.8deg) at 50% 50%,
+    color-mix(in srgb, #fff 92%, transparent) 0deg,
+    color-mix(in srgb, var(--yg2-accent) 42%, transparent) 60deg,
+    color-mix(in srgb, #fff 20%, transparent) 130deg,
+    color-mix(in srgb, #000 38%, transparent) 210deg,
+    color-mix(in srgb, #fff 55%, transparent) 300deg,
+    color-mix(in srgb, #fff 92%, transparent) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.9;
+}
+
+/* 折射环：跟随指针的镜面高光 + 一圈厚边 */
+.yg2-card--liquid > .yg2-card__spec {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      220px circle at var(--mx, 50%) var(--my, 0%),
+      color-mix(in srgb, #fff 55%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, #fff 30%, transparent) 0%,
+      transparent 34%,
+      transparent 66%,
+      color-mix(in srgb, #fff 18%, transparent) 100%
+    );
+  opacity: 0.75;
+  mix-blend-mode: screen;
+}
+
+/* ---------- 3) 全息卡片 -------------------------------------------------- */
+.yg2-card--holo > .yg2-card__holo {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    conic-gradient(
+      from calc(var(--mx, 50%) * 3.6deg) at var(--mx, 50%) var(--my, 50%),
+      #ff0080, #ffb300, #4ade80, #22d3ee, #818cf8, #ff0080
+    );
+  background-size: 220% 220%;
+  background-position: calc(var(--mx, 50%) * 1%) calc(var(--my, 50%) * 1%);
+  filter: blur(18px) saturate(140%);
+  opacity: 0.28;
+  mix-blend-mode: screen;
+}
+
+.yg2-card--holo > .yg2-card__sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    calc(120deg + var(--mx, 50%) * 1.2deg),
+    transparent 30%,
+    color-mix(in srgb, #fff 40%, transparent) 46%,
+    transparent 62%
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.8;
+}
+
+/* ---------- 4) 拉丝金属 -------------------------------------------------- */
+.yg2-card--metal {
+  background:
+    linear-gradient(115deg, transparent 42%, color-mix(in srgb, #fff 55%, transparent) 50%, transparent 58%),
+    repeating-linear-gradient(
+      102deg,
+      color-mix(in srgb, #dfe3e8 90%, #fff) 0 1px,
+      color-mix(in srgb, #c9cfd6 90%, #000) 1px 2px
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 85%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 18%, transparent),
+    0 14px 30px color-mix(in srgb, #000 18%, transparent);
+  color: #2b2f36;
+}
+
+.yg2-card--metal .yg2-card__emboss {
+  text-shadow:
+    0 1px 0 color-mix(in srgb, #fff 80%, transparent),
+    0 -1px 0 color-mix(in srgb, #000 22%, transparent);
+}
+
+/* ---------- 5/6/7) 描边三态 --------------------------------------------- */
+@property --yg2-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.yg2-card--border-grad::before,
+.yg2-card--border-spin::before,
+.yg2-card--border-marquee::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    var(--yg2-accent) 0%,
+    color-mix(in srgb, var(--yg2-accent) 55%, transparent) 28%,
+    transparent 64%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: none;
+}
+
+/* 6) 流光边框：8 秒转一圈 */
+.yg2-card--border-spin::before {
+  background: conic-gradient(
+    from var(--yg2-border-angle),
+    color-mix(in srgb, var(--yg2-accent) 12%, transparent) 0deg,
+    var(--yg2-accent) 54deg,
+    color-mix(in srgb, var(--yg2-accent) 62%, transparent) 96deg,
+    color-mix(in srgb, var(--yg2-accent) 12%, transparent) 168deg,
+    color-mix(in srgb, var(--yg2-accent) 12%, transparent) 360deg
+  );
+  animation: yg2-border-rotate 8s linear infinite;
+}
+
+/* 7) 跑马灯：暗灰底 + 一段亮光 4 秒一圈 */
+.yg2-card--border-marquee::before {
+  background: conic-gradient(
+    from var(--yg2-border-angle),
+    color-mix(in srgb, var(--yg2-text) 22%, transparent) 0deg,
+    color-mix(in srgb, var(--yg2-text) 22%, transparent) 286deg,
+    color-mix(in srgb, #fff 96%, var(--yg2-accent)) 322deg,
+    color-mix(in srgb, var(--yg2-accent) 85%, #fff) 344deg,
+    color-mix(in srgb, var(--yg2-text) 22%, transparent) 360deg
+  );
+  animation: yg2-border-rotate 4s linear infinite;
+}
+
+@keyframes yg2-border-rotate {
+  to { --yg2-border-angle: 360deg; }
+}
+
+/* ---------- 8) 聚光灯 ---------------------------------------------------- */
+.yg2-card--spotlight > .yg2-card__spot {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    240px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, #fff 34%, transparent),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+.yg2-card--spotlight:hover > .yg2-card__spot {
+  opacity: 1;
+}
+
+/* 边框跟着一起亮 */
+.yg2-card--spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: radial-gradient(
+    220px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--yg2-accent) 85%, transparent),
+    transparent 70%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity var(--yg2-dur-2) var(--yg2-ease-out);
+}
+
+.yg2-card--spotlight:hover::before {
+  opacity: 1;
+}
+
+/* ---------- 9) 光晕 ------------------------------------------------------ */
+.yg2-card--glow {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 60%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 85%, transparent),
+    0 1px 2px color-mix(in srgb, #000 4%, transparent),
+    0 18px 34px color-mix(in srgb, #000 6%, transparent),
+    0 26px 64px -12px color-mix(in srgb, var(--yg2-accent) 42%, transparent);
+}
+
+.yg2-card--glow > .yg2-card__glow {
+  position: absolute;
+  z-index: -4;
+  left: 50%;
+  bottom: -40px;
+  width: 70%;
+  height: 120px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--yg2-accent);
+  filter: blur(60px);
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+/* ---------- 10) 发光分割线 ---------------------------------------------- */
+.yg2-divider-glow {
+  height: 1px;
+  border: 0;
+  margin: 16px 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--yg2-accent) 65%, transparent) 50%,
+    transparent
+  );
+}
+
+/* ---------- 11) 3D 倾斜 -------------------------------------------------- */
+.yg2-card--tilt {
+  height: 100%;
+  transform:
+    perspective(900px)
+    rotateX(calc(var(--ry, 0) * -1))
+    rotateY(var(--rx, 0));
+  transform-style: preserve-3d;
+  transition: transform 220ms var(--yg2-ease-out);
+  will-change: transform;
+}
+
+.yg2-card--tilt > .yg2-xcard {
+  height: 100%;
+}
+
+.yg2-card--tilt > .yg2-card__spec {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    260px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, #fff 40%, transparent),
+    transparent 60%
+  );
+  opacity: 0.9;
+  mix-blend-mode: soft-light;
+}
+
+/* ---------- 12) 翻转 ---------------------------------------------------- */
+.yg2-flip {
+  height: 100%;
+  perspective: 1200px;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.yg2-flip__inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 620ms cubic-bezier(0.34, 1.24, 0.64, 1);
+}
+
+.yg2-flip.is-flipped .yg2-flip__inner {
+  transform: rotateY(180deg);
+}
+
+.yg2-flip__face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: var(--yg2-card-r);
+  overflow: hidden;
+}
+
+.yg2-flip__face--back {
+  transform: rotateY(180deg);
+}
+
+/* ---------- 14/15) 卡片结构 -------------------------------------------- */
+.yg2-xcard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  min-height: 100%;
+}
+
+.yg2-xcard__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 17) 图标底座：统一品牌浅色 */
+.yg2-xcard__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--yg2-accent) 12%, transparent);
+  color: var(--yg2-accent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 45%, transparent);
+}
+
+.yg2-xcard__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.yg2-xcard__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--yg2-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.yg2-xcard__foot {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 23) 嵌套圆角：内层 = 外层 - 内边距 */
+.yg2-xcard__inset {
+  border-radius: calc(var(--yg2-card-r) - var(--yg2-card-p));
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--yg2-line) 80%, transparent);
+}
+
+/* ---------- 18) 同色渐变（深→浅） -------------------------------------- */
+.yg2-grad-brand {
+  background: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--yg2-accent) 92%, #000) 0%,
+    var(--yg2-accent) 46%,
+    color-mix(in srgb, var(--yg2-accent) 46%, #fff) 100%
+  );
+  color: #fff;
+}
+
+/* ---------- 20/21 在暗色下减弱 ------------------------------------------ */
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-card,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-xcard,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-panel {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px color-mix(in srgb, #000 40%, transparent),
+    0 14px 34px color-mix(in srgb, #000 45%, transparent);
+}
+
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-card::after,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-panel::after,
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-xcard::after {
+  opacity: 0.28;
+}
+
+html[data-theme-variant='canary2'][data-theme='dark'] .yg2-card--glass {
+  background: color-mix(in srgb, #fff 6%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 14%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, #fff 10%, transparent),
+    0 18px 40px color-mix(in srgb, #000 50%, transparent);
+}
+
+/* ---------- 无障碍：减少动效 ------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .yg2-card::before,
+.yg2-card--border-spin::before,
+.yg2-card--border-marquee::before,
+.yg2-flip__inner,
+.yg2-card--tilt {
+  height: 100%;
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}

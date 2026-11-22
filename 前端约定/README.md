@@ -13,7 +13,7 @@
 └── css/
     ├── main.css         ← 样式总入口（业务页面只需引入这一个文件）
     ├── design-tokens.css← 设计令牌（颜色/字体/间距/圆角/阴影/动效，唯一事实来源）
-    ├── theme-variants.css← 运行时主题变体（canary / canary2 / canary-pro）
+    ├── theme-variants.css← 主题页面适配共享层（装饰收口/弹层字体/打印）
     ├── base.css         ← 基础样式（Reset、排版、栅格、布局骨架、毛玻璃/G2 工具）
     └── components/
         ├── buttons.css       ← 按钮、图标按钮、链接、按钮组
@@ -48,9 +48,14 @@
 
 - **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
   不设置则跟随系统。
-- **主题变体**：`<html data-theme-variant="canary|canary2|canary-pro">` 切换配色
-  变体，与明暗正交；新增变体 = 后端 `services/theme_registry.py` 加一条 +
-  `css/theme-variants.css` 加一段 `html[data-theme-variant='...'] .yg-phi`。
+- **主题变体**：`<html data-theme-variant="canary|canary2|canary-pro">` 与明暗正交。
+  三个变体是**三套设计包**，不是配色方案：外壳 / 导航结构 / 卡片层次都会换。
+  - 外壳：`zvp5-frontend/src/themes/<id>/`（组件 + 导航表）
+  - 令牌与材质：`zvp5-frontend/src/assets/styles/themes/<id>/`（分支移植包 + adapt.css）
+  - 注册：`src/themes/registry.ts` 一条；账号偏好在 `/me` 切换，落到
+    `PUT /v1/themes/me`。
+  - 新增主题 = 复制一份设计包 + registry 加一条；不要在 `theme-variants.css`
+    里用几行 `--yg-*` 覆盖假装成新主题。
 - **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
 
 ## 给智能体的三条底线

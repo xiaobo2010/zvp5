@@ -1,0 +1,235 @@
+/* ==========================================================================
+   canary2 适配层：把当前页面使用的 --yg-* / .yg-* / Element Plus 组件
+   映射到 yg2 设计令牌（浅色玻璃、圆角卡片、分组侧栏）。
+   只在 html[data-theme-variant='canary2'] 下生效，canary 主题零影响。
+   不使用 !important：靠属性作用域 + 更高的选择器权重覆盖原皮肤。
+   ========================================================================== */
+
+html[data-theme-variant='canary2'] {
+  /* ---- 基础色：页面底色交给 AmbientField，表面用玻璃/哑光材质 ---- */
+  --yg-bg-page: var(--yg2-bg);
+  --yg-bg-surface: var(--yg2-surface);
+  --yg-bg-surface-raised: var(--yg2-surface-raised);
+  --yg-bg-surface-sunken: var(--yg2-surface-sunken);
+  --yg-bg-hover: var(--yg2-accent-soft);
+  --yg-bg-active: color-mix(in srgb, var(--yg2-accent) 18%, transparent);
+
+  --yg-text-primary: var(--yg2-text);
+  --yg-text-secondary: var(--yg2-text-secondary);
+  --yg-text-tertiary: var(--yg2-text-tertiary);
+  --yg-text-inverse: var(--yg2-text-on-accent);
+
+  --yg-border-subtle: var(--yg2-line);
+  --yg-border-default: var(--yg2-line-strong);
+  --yg-border-strong: color-mix(in srgb, var(--yg2-text) 26%, transparent);
+
+  /* ---- 强调色 ---- */
+  --yg-color-primary: var(--yg2-accent);
+  --yg-color-primary-hover: var(--yg2-accent-hover);
+  --yg-color-primary-active: var(--yg2-accent-press);
+  --yg-color-primary-soft: var(--yg2-accent-soft);
+  --yg-color-on-primary: var(--yg2-text-on-accent);
+  --yg-color-primary-strong: var(--yg2-accent-press);
+  --yg-color-primary-strong-hover: color-mix(in srgb, var(--yg2-accent-press) 88%, #000);
+  --yg-color-primary-strong-active: color-mix(in srgb, var(--yg2-accent-press) 76%, #000);
+  --yg-focus-ring-color: var(--yg2-focus);
+
+  /* ---- 圆角 / 阴影 / 动效：整体换成 yg2 的同心圆角与柔和投影 ---- */
+  --yg-radius-xs: var(--yg2-r-8);
+  --yg-radius-sm: var(--yg2-r-8);
+  --yg-radius-md: var(--yg2-r-12);
+  --yg-radius-lg: var(--yg2-r-16);
+  --yg-radius-xl: var(--yg2-r-20);
+  --yg-radius-2xl: var(--yg2-r-26);
+  --yg-radius-pill: var(--yg2-r-pill);
+
+  --yg-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --yg-shadow-sm: var(--yg2-shadow-ambient);
+  --yg-shadow-md: var(--yg2-shadow-raised);
+  --yg-shadow-lg: var(--yg2-shadow-float);
+  --yg-shadow-xl: var(--yg2-lens-overlay-cast);
+
+  --yg-dur-fast: var(--yg2-dur-1);
+  --yg-dur-base: var(--yg2-dur-2);
+  --yg-dur-slow: var(--yg2-dur-3);
+  --yg-ease-out: var(--yg2-ease-out);
+  --yg-ease-in-out: var(--yg2-ease-in-out);
+  --yg-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---- Phi 令牌别名：server/manage 等页面仍引用 --phi-* ---- */
+  --phi-panel: var(--yg2-surface);
+  --phi-panel-hi: var(--yg2-surface-raised);
+  --phi-sunken: var(--yg2-surface-sunken);
+  --phi-ink: var(--yg2-text);
+  --phi-ink-2: var(--yg2-text-secondary);
+  --phi-ink-3: var(--yg2-text-tertiary);
+  --phi-frame: var(--yg2-line);
+  --phi-line: var(--yg2-line);
+  --phi-accent: var(--yg2-accent);
+  --phi-accent-ink: var(--yg2-accent);
+  --phi-accent-soft: var(--yg2-accent-soft);
+  --phi-shadow: rgba(15, 23, 42, 0.12);
+  --phi-hud: var(--yg2-font-sans);
+  --phi-breathe: var(--yg2-accent);
+}
+
+/* 无外壳页面（关于页等）也铺 v2 底色 */
+html[data-theme-variant='canary2'] .yg-bg-page.full {
+  background-color: transparent;
+}
+
+/* ---- Phi 纯装饰：canary2 一律不出现 ---- */
+html[data-theme-variant='canary2'] .z-hex-grid,
+html[data-theme-variant='canary2'] .yg-page-hex,
+html[data-theme-variant='canary2'] .yg-phi-velocity,
+html[data-theme-variant='canary2'] .yg-phi-judgment,
+html[data-theme-variant='canary2'] .yg-phi-emblem {
+  display: none;
+}
+
+/* ---- 卡片：浅色玻璃 + 大圆角，取代棱角/切角面板 ---- */
+html[data-theme-variant='canary2'] .yg-card,
+html[data-theme-variant='canary2'] .el-card,
+html[data-theme-variant='canary2'] .yg-tile {
+  border: 1px solid var(--yg2-lens-matte-hairline);
+  border-radius: var(--yg2-r-20);
+  background: var(--yg2-lens-matte-fill);
+  box-shadow: var(--yg2-lens-matte-cast);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-matte-blur)) saturate(var(--yg2-lens-sat));
+  clip-path: none;
+  overflow: hidden;
+}
+
+html[data-theme-variant='canary2'] .yg-card__body,
+html[data-theme-variant='canary2'] .el-card__body {
+  color: var(--yg2-text-secondary);
+}
+
+html[data-theme-variant='canary2'] .yg-card__title,
+html[data-theme-variant='canary2'] .yg-card__header h3,
+html[data-theme-variant='canary2'] .el-card__header {
+  color: var(--yg2-text);
+}
+
+/* 表格：去掉 Phi 的硬边框与斜切，保留功能分隔线 */
+html[data-theme-variant='canary2'] .el-table,
+html[data-theme-variant='canary2'] .yg-table {
+  border-radius: var(--yg2-r-16);
+  background: transparent;
+}
+
+html[data-theme-variant='canary2'] .el-table th.el-table__cell,
+html[data-theme-variant='canary2'] .yg-table th {
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text-tertiary);
+  border-bottom-color: var(--yg2-line);
+}
+
+html[data-theme-variant='canary2'] .el-table td.el-table__cell,
+html[data-theme-variant='canary2'] .yg-table td {
+  border-bottom-color: var(--yg2-sep);
+}
+
+/* server / manage 外壳的切角卡片与斜切投影在这里收回圆角 */
+html[data-theme-variant='canary2'] .phi-srv .yg-card,
+html[data-theme-variant='canary2'] .phi-srv .el-card,
+html[data-theme-variant='canary2'] .manage-shell .yg-card,
+html[data-theme-variant='canary2'] .manage-shell .el-card,
+html[data-theme-variant='canary2'] .server-shell .yg-card,
+html[data-theme-variant='canary2'] .server-shell .el-card {
+  clip-path: none;
+  border: 1px solid var(--yg2-lens-matte-hairline);
+  border-radius: var(--yg2-r-20);
+  background: var(--yg2-lens-matte-fill);
+  box-shadow: var(--yg2-lens-matte-cast);
+}
+
+/* MAGI 六边形读数单元：保留信息，改成圆角玻璃块，不再出现六边形切角 */
+html[data-theme-variant='canary2'] .phi-srv-hex,
+html[data-theme-variant='canary2'] .phi-srv-hex::before {
+  clip-path: none;
+  border-radius: var(--yg2-r-16);
+}
+
+html[data-theme-variant='canary2'] .phi-srv .yg-card__title,
+html[data-theme-variant='canary2'] .phi-srv .el-card__header .font-medium,
+html[data-theme-variant='canary2'] .phi-srv .el-card__extra {
+  color: var(--yg2-text);
+  font-family: var(--yg2-font-sans);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* ---- 按钮 / 输入：浅玻璃、胶囊或 12px 圆角 ---- */
+html[data-theme-variant='canary2'] .yg-btn,
+html[data-theme-variant='canary2'] .yg-btn--secondary {
+  border: 1px solid var(--yg2-lens-control-sheath);
+  border-radius: var(--yg2-r-12);
+  background: var(--yg2-lens-control-fill);
+  box-shadow: var(--yg2-lens-control-cast);
+  color: var(--yg2-text);
+  clip-path: none;
+}
+
+html[data-theme-variant='canary2'] .yg-btn--primary,
+html[data-theme-variant='canary2'] .el-button--primary {
+  border-color: transparent;
+  background: var(--yg2-accent);
+  color: var(--yg2-text-on-accent);
+  box-shadow: 0 6px 18px -8px var(--yg2-accent);
+}
+
+html[data-theme-variant='canary2'] .yg-btn--ghost,
+html[data-theme-variant='canary2'] .yg-btn--text {
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme-variant='canary2'] .el-button {
+  border-radius: var(--yg2-r-12);
+}
+
+html[data-theme-variant='canary2'] .el-input__wrapper,
+html[data-theme-variant='canary2'] .el-select__wrapper,
+html[data-theme-variant='canary2'] .el-textarea__inner {
+  border-radius: var(--yg2-r-12);
+  background: var(--yg2-lens-input-fill);
+  box-shadow: 0 0 0 1px var(--yg2-lens-input-sheath) inset;
+}
+
+html[data-theme-variant='canary2'] .el-input__wrapper.is-focus,
+html[data-theme-variant='canary2'] .el-select__wrapper.is-focused {
+  background: var(--yg2-lens-input-fill-focus);
+  box-shadow: 0 0 0 2px var(--yg2-focus) inset;
+}
+
+/* ---- 弹层：浮层玻璃 ---- */
+html[data-theme-variant='canary2'] .el-dialog,
+html[data-theme-variant='canary2'] .el-message-box,
+html[data-theme-variant='canary2'] .el-popper {
+  border: 1px solid var(--yg2-lens-overlay-sheath);
+  border-radius: var(--yg2-r-20);
+  background: var(--yg2-lens-overlay-fill);
+  box-shadow: var(--yg2-lens-overlay-cast);
+  -webkit-backdrop-filter: blur(var(--yg2-lens-overlay-blur)) saturate(var(--yg2-lens-sat));
+  backdrop-filter: blur(var(--yg2-lens-overlay-blur)) saturate(var(--yg2-lens-sat));
+}
+
+/* ---- 页面级排版：大标题更轻，段落更松 ---- */
+html[data-theme-variant='canary2'] .yg-page-header__title,
+html[data-theme-variant='canary2'] .yg-v2-page h1 {
+  letter-spacing: -0.02em;
+  font-weight: 650;
+}
+
+html[data-theme-variant='canary2'] .yg-view {
+  min-height: 100%;
+}
+
+/* 没有外壳时（关于页）保留上下留白 */
+html[data-theme-variant='canary2'] .yg-layout__content {
+  padding: var(--yg2-sp-8) var(--yg2-gutter);
+  background: transparent;
+}

@@ -1,0 +1,88 @@
+/* 移植自 origin/v5-canary2:zvms4-modified-main/zvms4-frontend/src/assets/styles/v2，
+   为免影响 canary 主题，选择器已统一收窄到 html[data-theme-variant='canary2'] 作用域。 */
+/* ==========================================================================
+   v2 排版 · 系统字体栈，无 Web 字体
+   ========================================================================== */
+
+.yg2-display {
+  font-size: clamp(40px, 4.6vw, 56px);
+  line-height: 1.07;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.yg2-h1 {
+  font-size: 34px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.yg2-h2 {
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.yg2-h3 {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.yg2-headline {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.yg2-body {
+  font-size: 16px;
+  line-height: 26px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+
+.yg2-callout {
+  font-size: 15px;
+  line-height: 21px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.yg2-subhead {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  letter-spacing: 0.005em;
+}
+
+.yg2-caption {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* 数字：等宽数字，避免跳动 */
+.yg2-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 颜色角色 */
+.yg2-text-secondary { color: var(--yg2-text-secondary); }
+.yg2-text-tertiary { color: var(--yg2-text-tertiary); }
+.yg2-text-accent { color: var(--yg2-accent); }
+.yg2-text-amber { color: var(--yg2-amber); }
+
+/* 等宽（日志/代码） */
+.yg2-mono {
+  font-family: var(--yg2-font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-variant-ligatures: none;
+}

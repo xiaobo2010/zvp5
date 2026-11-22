@@ -32,19 +32,19 @@ THEMES: tuple[Theme, ...] = (
     Theme(
         id="canary",
         label="Canary",
-        description="默认 Phi 棱角主题（暗色、青色、锐利几何）",
+        description="经典 Phi 设计：暗色棱角、青色判定线与现有导航",
         status="stable",
     ),
     Theme(
         id="canary2",
         label="Canary 2",
-        description="第二代实验主题，留给灰度",
+        description="v2 浅色工作台：左侧边栏、顶栏与环境光玻璃",
         status="experimental",
     ),
     Theme(
         id="canary-pro",
         label="Canary Pro",
-        description="专业版（更深底色、更强玻璃质感、紫金强调色）",
+        description="Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",
         status="stable",
     ),
 )

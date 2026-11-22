@@ -1,12 +1,14 @@
 /**
- * 主题变体运行时：canary / canary2 / canary-pro 等主题在视觉层动态切换，
- * 通过 `data-theme-variant` 属性控制（与明暗 `data-theme` 正交）。
+ * 主题变体运行时：canary / canary2 / canary-pro 是三套设计包，
+ * 通过 `data-theme-variant` 属性切换（与明暗 `data-theme` 正交）。
  *
  * 这是**账号级**偏好，设备级缓存 + 账号级事实：设备上保留历史选择，
  * 但登录后从服务器同步该账号的选择覆盖本地值；切换后立即落后端。
  *
- * 生效方式：给 `<html>` 写 `data-theme-variant`，样式层
- * `assets/styles/yg/theme-variants.css` 按主题加载对应令牌覆盖。
+ * 属性有两个消费方：
+ * - `src/App.vue` 按 store 里的 theme 选择外壳（`src/themes/registry.ts`）；
+ * - 样式层用 `html[data-theme-variant='<id>']` 收窄各自的设计令牌与页面适配
+ *   （`src/assets/styles/themes/<id>/`、`前端约定/css/theme-variants.css`）。
  * 默认主题 canary 不写覆盖，保留现网视觉。
  *
  * 必须在 mount 之前调用 `installTheme()`：否则会先按默认主题渲染一帧，

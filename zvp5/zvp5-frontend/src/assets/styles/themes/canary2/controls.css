@@ -1,0 +1,261 @@
+/* 移植自 origin/v5-canary2:zvms4-modified-main/zvms4-frontend/src/assets/styles/v2，
+   为免影响 canary 主题，选择器已统一收窄到 html[data-theme-variant='canary2'] 作用域。 */
+/* ==========================================================================
+   v2 控件原语 · 按钮 / 输入框 / 字段
+   迁移中的页面直接用类名：<button class="yg2-btn yg2-btn--primary">
+   Element Plus 只保留表格、日期、上传、树等复杂控件。
+   ========================================================================== */
+
+/* ── 按钮 ───────────────────────────────────────────────── */
+.yg2-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 20px;
+  border: 1px solid transparent;
+  border-radius: var(--yg2-r-pill);
+  background: transparent;
+  color: var(--yg2-text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--yg2-dur-1) var(--yg2-ease-out),
+    color var(--yg2-dur-1) var(--yg2-ease-out),
+    border-color var(--yg2-dur-1) var(--yg2-ease-out),
+    transform var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.yg2-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.yg2-btn:focus-visible {
+  outline: 3px solid var(--yg2-focus);
+  outline-offset: 2px;
+}
+
+.yg2-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.yg2-btn--primary {
+  background: var(--yg2-accent);
+  color: #fff;
+}
+
+.yg2-btn--primary:hover:not(:disabled) {
+  background: var(--yg2-accent-hover);
+}
+
+.yg2-btn--primary:active:not(:disabled) {
+  background: var(--yg2-accent-press);
+}
+
+.yg2-btn--secondary {
+  background: var(--yg2-surface);
+  border-color: var(--yg2-line);
+  color: var(--yg2-text);
+}
+
+.yg2-btn--secondary:hover:not(:disabled) {
+  background: var(--yg2-surface-sunken);
+  border-color: var(--yg2-line-strong);
+}
+
+.yg2-btn--quiet {
+  color: var(--yg2-accent);
+}
+
+.yg2-btn--quiet:hover:not(:disabled) {
+  background: var(--yg2-accent-soft);
+}
+
+.yg2-btn--danger {
+  color: var(--yg2-danger);
+}
+
+.yg2-btn--danger:hover:not(:disabled) {
+  background: var(--yg2-danger-soft);
+}
+
+.yg2-btn--lg {
+  height: 52px;
+  padding: 0 26px;
+  font-size: 16px;
+}
+
+.yg2-btn--sm {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* 图标按钮 */
+.yg2-btn--icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* ── 字段 ───────────────────────────────────────────────── */
+.yg2-field {
+  display: grid;
+  gap: 8px;
+}
+
+.yg2-field__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--yg2-text-secondary);
+}
+
+.yg2-field__hint {
+  font-size: 12px;
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: var(--yg2-surface-sunken);
+  color: var(--yg2-text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  transition: border-color var(--yg2-dur-1) var(--yg2-ease-out),
+    box-shadow var(--yg2-dur-1) var(--yg2-ease-out),
+    background var(--yg2-dur-1) var(--yg2-ease-out);
+}
+
+.yg2-input::placeholder {
+  color: var(--yg2-text-tertiary);
+}
+
+.yg2-input:hover:not(:disabled) {
+  border-color: var(--yg2-line-strong);
+}
+
+.yg2-input:focus {
+  outline: none;
+  border-color: var(--yg2-accent);
+  background: var(--yg2-surface);
+  box-shadow: 0 0 0 3px var(--yg2-accent-soft);
+}
+
+.yg2-input:disabled {
+  opacity: 0.5;
+}
+
+.yg2-input--error {
+  border-color: var(--yg2-danger);
+}
+
+.yg2-input[type='number']::-webkit-inner-spin-button,
+.yg2-input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.yg2-input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ── 分段控件 ───────────────────────────────────────────── */
+/* ── 键盘焦点 ──────────────────────────────────────────────
+   v1 的 yg/base.css 用 box-shadow 画焦点环（--yg-focus-ring，天蓝），
+   这里用更高特异性改由 v2 的 outline 承担，避免两套环叠加。 */
+html[data-theme-variant='canary2'] a:focus-visible,
+html[data-theme-variant='canary2'] button:focus-visible,
+html[data-theme-variant='canary2'] [role='button']:focus-visible,
+html[data-theme-variant='canary2'] .el-button:focus-visible,
+html[data-theme-variant='canary2'] .yg2-nav-item:focus-visible {
+  /* 用实色 accent 而非 45% 透明的 --yg2-focus：焦点环需 ≥3:1 非文本对比度 */
+  outline: 3px solid var(--yg2-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+/* ── 液态玻璃分段控件（Segmented.vue） ──────────────────────
+   滑块是玻璃材质：背景取模糊后的环境色，边缘有一圈内高光，
+   移动曲线带轻微回弹（cubic-bezier 超调），拖动时跟随指针。 */
+.yg2-seg {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--yg2-r-pill);
+  background: color-mix(in srgb, var(--yg2-surface-sunken) 72%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent),
+    inset 0 0 0 1px var(--yg2-line);
+  isolation: isolate;
+}
+
+.yg2-seg__thumb {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: calc(100% - 6px);
+  border-radius: var(--yg2-r-pill);
+  background: color-mix(in srgb, var(--yg2-surface) 82%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 80%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 6%, transparent),
+    0 1px 2px color-mix(in srgb, #000 10%, transparent),
+    0 6px 16px color-mix(in srgb, #000 10%, transparent);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.46, 0.64, 1),
+    width 420ms cubic-bezier(0.34, 1.32, 0.64, 1);
+  will-change: transform, width;
+  z-index: 0;
+}
+
+.yg2-seg.is-dragging .yg2-seg__thumb {
+  transition: width 220ms var(--yg2-ease-out);
+}
+
+.yg2-seg__item {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--yg2-r-pill);
+  color: var(--yg2-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  transition: color var(--yg2-dur-2) var(--yg2-ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.yg2-seg__item.is-active {
+  color: var(--yg2-text);
+  font-weight: 600;
+}
+
+.yg2-seg__item:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg2-seg__thumb,
+.yg2-seg.is-dragging .yg2-seg__thumb {
+    transition: none;
+  }
+}
