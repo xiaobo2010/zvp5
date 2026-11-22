@@ -772,6 +772,10 @@ async def get_activity_members_v3(
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
     query: str = Query(''),
+    sort: Literal['', 'business_id', 'duration'] = Query(
+        '', description="Sort field: business_id（账号）/duration（时长）"
+    ),
+    asc: bool = Query(False, description="Sort ascending"),
     user=Depends(get_current_user)
 ):
     """
@@ -784,7 +788,7 @@ async def get_activity_members_v3(
     # 避免前端每张成员卡再回打 GET /api/v1/users/{id}。
     async with session_scope() as session:
         rows, total = await backends.get_members_repo(session).list_for_activity(
-            activity_id, query, page, size
+            activity_id, query, page, size, sort or None, asc
         )
         users = await backends.get_users_repo(session).get_many_by_oids(
             [row["member"] for row in rows]

@@ -85,7 +85,9 @@ class _MembersRepo:
     def __init__(self, rows, session=None) -> None:
         self.rows, self.session = rows, session
 
-    async def list_for_activity(self, activity_oid, query, page, size):
+    async def list_for_activity(
+        self, activity_oid, query, page, size, sort=None, asc=False
+    ):
         return [dict(row) for row in self.rows], len(self.rows)
 
 
