@@ -37,6 +37,7 @@ const { size, auto, columns, effectiveColumns, pageSizeOptions, setAuto, setPage
     listId: 'notifications',
     container: listRef,
     itemSelector: '.notice:not(.is-open)',
+    gridSelector: '.list',
     defaultPageSize: 6,
     allowColumns: true,
     defaultColumns: 1,

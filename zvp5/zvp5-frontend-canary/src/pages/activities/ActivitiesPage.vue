@@ -34,10 +34,11 @@ const { size, auto, columns, effectiveColumns, pageSizeOptions, setAuto, setPage
     listId: 'activities',
     container: listRef,
     itemSelector: '.card',
+    gridSelector: '.grid',
     defaultPageSize: 12,
     allowColumns: true,
     defaultColumns: 2,
-    min: 4,
+    min: 2,
     gap: 16,
     reserve: 96
   })

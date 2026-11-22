@@ -45,7 +45,7 @@ const { size, auto, pageSizeOptions, setAuto, setPageSize } = useAdaptivePaginat
   itemSelector: '.row',
   defaultPageSize: 20,
   gap: 0,
-  min: 8,
+  min: 5,
   reserve: 96,
   fallbackItemHeight: 66,
   max: 80
@@ -581,7 +581,5 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
-}
-
 }
 </style>

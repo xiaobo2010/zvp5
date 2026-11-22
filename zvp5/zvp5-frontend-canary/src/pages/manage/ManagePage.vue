@@ -44,7 +44,7 @@ const { size, auto, pageSizeOptions, setAuto, setPageSize } = useAdaptivePaginat
   itemSelector: '.row',
   defaultPageSize: 20,
   gap: 0,
-  min: 8,
+  min: 5,
   reserve: 96,
   fallbackItemHeight: 66,
   max: 80
@@ -386,7 +386,5 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 .hint {
   font-size: var(--text-xs);
   color: var(--ink-faint);
-}
-
 }
 </style>

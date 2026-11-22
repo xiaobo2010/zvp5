@@ -578,8 +578,6 @@ onMounted(load)
   color: var(--ink-soft);
 }
 
-}
-
 @media (max-width: 520px) {
   .row {
     gap: var(--space-2);

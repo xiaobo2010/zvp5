@@ -19,6 +19,10 @@ export interface AdaptivePaginationOptions {
   /** 列表底部需要为分页栏与页脚预留的高度（px） */
   reserve?: number
   fallbackItemHeight?: number
+  /** 容器宽度低于该值时双列降级为单列（需与页面 CSS 断点一致） */
+  stackWidth?: number
+  /** 网格元素选择器：直接读取实际渲染的列数，避免与 CSS 断点不一致 */
+  gridSelector?: string
   allowAuto?: boolean
   allowColumns?: boolean
   defaultColumns?: PageColumns
@@ -47,6 +51,7 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
   const gap = options.gap ?? 16
   const reserve = options.reserve ?? 96
   const fallbackItemHeight = options.fallbackItemHeight ?? 220
+  const stackWidth = options.stackWidth ?? 760
   const allowAuto = options.allowAuto !== false
   const allowColumns = options.allowColumns === true
 
@@ -105,7 +110,19 @@ export function useAdaptivePagination(options: AdaptivePaginationOptions) {
     const docTop = rect.top + window.scrollY
     const available = Math.max(itemHeight, window.innerHeight - docTop - reserve)
     const rows = Math.max(1, Math.floor((available + gap) / (itemHeight + gap)))
-    const nextColumns: PageColumns = rect.width < 760 ? 1 : columns.value
+
+    // 优先读取网格实际渲染轨道数，CSS 降级时自动跟随；否则按容器宽度判断。
+    const grid = options.gridSelector ? el.querySelector<HTMLElement>(options.gridSelector) : null
+    let nextColumns: PageColumns = columns.value
+    if (grid) {
+      const tracks = getComputedStyle(grid).gridTemplateColumns
+      const count = tracks
+        .split(' ')
+        .filter((token) => token && !token.startsWith('[')).length
+      nextColumns = count > 1 ? 2 : 1
+    } else if (rect.width < stackWidth) {
+      nextColumns = 1
+    }
 
     effectiveColumns.value = nextColumns
     const next = clamp(rows * nextColumns, min, max)

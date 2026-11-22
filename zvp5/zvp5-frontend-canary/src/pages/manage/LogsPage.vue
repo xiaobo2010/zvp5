@@ -49,7 +49,7 @@ const {
   itemSelector: '.row',
   defaultPageSize: 20,
   gap: 0,
-  min: 8,
+  min: 5,
   reserve: 96,
   fallbackItemHeight: 68,
   max: 80
@@ -322,7 +322,5 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   font-size: var(--text-2xs);
   color: var(--ink-faint);
   word-break: break-all;
-}
-
 }
 </style>
