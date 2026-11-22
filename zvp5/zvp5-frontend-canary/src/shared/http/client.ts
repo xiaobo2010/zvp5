@@ -8,8 +8,10 @@ import { readToken, writeToken } from '@/shared/lib/storage'
  * 只做四件事：带令牌、把错误归一成 ApiError、把 401/维护态广播给应用层、
  * 保持请求头集合稳定。业务缓存/单飞/竞速属于后续性能阶段，不在内核里堆。
  */
+export const API_BASE = (import.meta.env.VITE_API_BASE || '/api').replace(/\/+$/, '')
+
 export const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '/api',
+  baseURL: API_BASE,
   timeout: 15000,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' }
@@ -71,7 +73,9 @@ http.interceptors.response.use(
   (error: AxiosError) => {
     const apiError = normalize(error)
 
-    if (apiError.status === 401) {
+    const token = readToken()
+    if (apiError.status === 401 && token && !error.config?.url?.startsWith('/v1/users/auth') &&
+        error.config?.headers.get('Authorization') === `Bearer ${token}`) {
       writeToken('')
       window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
     }

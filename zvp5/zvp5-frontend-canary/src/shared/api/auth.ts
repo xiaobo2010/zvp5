@@ -46,7 +46,8 @@ export async function logout(): Promise<void> {
 }
 
 export async function fetchProfile(oid: string): Promise<UserProfile> {
-  return request<UserProfile>({ url: `/v1/users/${oid}`, method: 'GET' })
+  const payload = await request<unknown>({ url: `/v1/users/${encodeURIComponent(oid)}`, method: 'GET' })
+  return unwrap<UserProfile>(payload)
 }
 
 /**

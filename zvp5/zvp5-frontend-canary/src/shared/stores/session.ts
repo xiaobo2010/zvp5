@@ -8,7 +8,7 @@ import {
   loginWithTempPassword,
   logout as apiLogout
 } from '@/shared/api/auth'
-import { readJson, readToken, writeJson, writeToken } from '@/shared/lib/storage'
+import { readJson, readToken, tokenSubject, writeJson, writeToken } from '@/shared/lib/storage'
 
 const PROFILE_KEY = 'zvp5.profile'
 
@@ -18,7 +18,10 @@ const PROFILE_KEY = 'zvp5.profile'
  */
 export const useSessionStore = defineStore('session', () => {
   const token = ref(readToken())
-  const profile = ref<UserProfile | null>(readJson<UserProfile>(PROFILE_KEY))
+  const cachedProfile = readJson<UserProfile>(PROFILE_KEY)
+  const profile = ref<UserProfile | null>(
+    cachedProfile?._id === tokenSubject(token.value) ? cachedProfile : null
+  )
   const policy = ref<FeaturePolicy | null>(null)
   const busy = ref(false)
   const weakPassword = ref(false)
@@ -82,10 +85,18 @@ export const useSessionStore = defineStore('session', () => {
 
   async function bootstrap(): Promise<void> {
     if (!token.value) return
+    const current = token.value
     if (!profile.value) {
-      // 只有 token 没有身份快照（例如用户手动清了 localStorage），无法安全还原，按未登录处理。
-      reset()
-      return
+      const oid = tokenSubject(current)
+      if (!oid) return
+      try {
+        const next = await fetchProfile(oid)
+        if (token.value !== current) return
+        persistProfile(next)
+      } catch {
+        // 401 由 HTTP 层处理，临时网络故障保留会话等待重试。
+        return
+      }
     }
     await loadPolicy()
   }

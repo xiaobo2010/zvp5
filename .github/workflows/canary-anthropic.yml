@@ -424,7 +424,7 @@ jobs:
                       -H "Origin: $CANARY_URL" \
                       -H 'Access-Control-Request-Method: POST' \
                       -H 'Access-Control-Request-Headers: authorization,content-type' \
-                      "$VITE_API_BASE/users/login" || echo 000)"
+                      "$VITE_API_BASE/v1/users/auth" || echo 000)"
                     cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
                     rm -f "$cors_hdr"
                     [[ "$cors_origin" == "$CANARY_URL" ]] || {

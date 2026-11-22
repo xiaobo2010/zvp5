@@ -25,8 +25,6 @@ const ui = useUiStore(pinia)
 ui.applyTheme()
 
 const session = useSessionStore(pinia)
-void session.bootstrap()
-
 window.addEventListener(AUTH_EXPIRED_EVENT, () => {
   session.reset()
   const current = router.currentRoute.value
@@ -41,4 +39,5 @@ window.addEventListener(MAINTENANCE_EVENT, () => {
   }
 })
 
+void session.bootstrap()
 app.mount('#app')

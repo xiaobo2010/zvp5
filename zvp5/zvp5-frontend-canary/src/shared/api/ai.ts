@@ -1,4 +1,5 @@
 import { ApiError, kindOfStatus } from '@/shared/http/errors'
+import { API_BASE, AUTH_EXPIRED_EVENT, MAINTENANCE_EVENT } from '@/shared/http/client'
 import { readToken, writeToken } from '@/shared/lib/storage'
 import type {
   AiConversation,
@@ -23,10 +24,6 @@ import type {
  * 会话/消息/提案的**成功外壳**也不统一：会话与管理端点带 `{status,code,data}`，
  * 提案与 ack/unlock 是裸 JSON。这里按端点分别拆包，页面只拿领域对象。
  */
-
-const API_BASE = import.meta.env.VITE_API_BASE || '/api'
-const AUTH_EXPIRED_EVENT = 'zvp5:auth-expired'
-const MAINTENANCE_EVENT = 'zvp5:maintenance'
 
 interface AiErrorShape {
   message: string
@@ -113,7 +110,7 @@ async function aiFetch(path: string, init: RequestInit = {}): Promise<Response> 
     })
   }
 
-  if (response.status === 401) {
+  if (response.status === 401 && token && readToken() === token && headers.get('Authorization') === `Bearer ${token}`) {
     writeToken('')
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
   }

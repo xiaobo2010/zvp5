@@ -1,4 +1,7 @@
 <script setup lang="ts">
+const themePickerUrl = import.meta.env.BASE_URL === '/'
+  ? 'https://canary.xiaobopisces.top/themes/canary-anthropic/?choose-theme'
+  : '?choose-theme'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -462,6 +465,9 @@ onMounted(async () => {
           {{ locale === 'zh-CN' ? '浅色与深色分别调校，不只是颜色反转。' : 'Light and dark are tuned separately — not a color inversion.' }}
         </p>
         <ZSegmented :model-value="ui.themeMode" :options="themeOptions" @update:model-value="setTheme" />
+        <a class="site-theme-link" :href="themePickerUrl" data-zvms-theme-picker>
+          {{ locale === 'zh-CN' ? '切换站点主题' : 'Switch site theme' }}
+        </a>
       </ZCard>
 
       <ZCard class="setting">
@@ -782,6 +788,21 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.site-theme-link {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 44px;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+.site-theme-link:hover { background: var(--surface-sunken); }
+.site-theme-link:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+
 .page {
   display: flex;
   flex-direction: column;
