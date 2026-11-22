@@ -42,7 +42,7 @@ tzlocal==5.3.1
 tqdm~=4.67.1
 scipy~=1.16.2
 openpyxl==3.1.5
-sqlalchemy[asyncio]==2.0.*
+sqlalchemy[asyncio]==2.1.*
 oracledb>=2.0
 asyncssh==2.24.1
 # OCR 引擎（services/ai/ocr_engines.py）：SDK 延迟导入，装不上只影响对应引擎
