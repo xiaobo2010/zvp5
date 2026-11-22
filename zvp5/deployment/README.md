@@ -45,8 +45,8 @@ Cloudflare Worker 预览站，跨域直连正式 API。预览站的放行由 can
 - 其余主题 `build.kind: "vite"`，`base` 必须是 `/themes/<id>/`，由
   `build-theme-apps.mjs` 用 worktree 从 `source.ref`/`source.path` 取出源码构建，
   产物并入 `dist/themes/<id>/`；
-- 构建完生成运行清单 `dist/themes.json`（只含 `id/label/description/status/base`），
-  前端 `/me` 下拉与子应用 `theme-switcher.js` 都读它；
+- 构建完生成运行清单 `dist/themes.json`（含 `id/label/description/status/base`），
+  各主题个人页入口和首次引导共用注入的 `theme-switcher.js`；
 - Worker 只认通用前缀 `/themes/<slug>/`，不维护主题列表。
 
 源码要求、清单示例、后端注册和预览验收见 [新主题接入指南](../themes/README.md)。

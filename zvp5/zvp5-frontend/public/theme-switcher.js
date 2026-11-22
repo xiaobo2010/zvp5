@@ -1,297 +1,183 @@
-/* 全局主题切换器（整站多构建版）。
- *
- * 主题不是「同一套页面换外壳」，而是多份完整前端构建挂同域不同路径：
- *   默认主题（canary）→ /
- *   其它主题 <id>     → /themes/<id>/
- *
- * 菜单完全由构建产物里的运行清单 `/themes.json` 驱动（由
- * `zvp5/deployment/build-theme-apps.mjs` 按 `zvp5/themes/manifest.json` 生成），
- * 这里不写死任何主题 id / 路径。新增主题只需改清单。
- *
- * 这个脚本只被注入到子应用的 index.html（根 canary 不注入，它有自己的 /me
- * 主题下拉），作用是让用户在子应用里也能一键跳回其它应用。因为同源，
- * localStorage 里的 token 共享，跳转后仍是登录态。
- *
- * 依赖：
- *   - <meta name="zvms-api-base" content="..."> 由构建脚本注入，用来同步账号偏好；
- *   - localStorage['token'] 登录态；localStorage['zvms.theme'] 设备级主题缓存。
- *
- * 样式全部内联且不引用任何 --yg-* / --yg2-* / --pro-* 令牌，
- * 深浅色下都能看清，避免受各应用设计层影响。
- */
-(function () {
-  'use strict'
+// 同源部署的主题目录、切换和按版本记录的首次引导。各应用自行渲染入口按钮。
+;(function () {
+  const meta = document.querySelector('meta[name="zvms-api-base"]')
+  if (!meta || typeof HTMLDialogElement === 'undefined' || !HTMLDialogElement.prototype.showModal) return
 
-  if (window.__zvmsThemeSwitcherInstalled) {
-    return
-  }
-  window.__zvmsThemeSwitcherInstalled = true
+  const base = meta.content.replace(/\/+$/, '')
+  const active = /^\/themes\/([a-z0-9-]+)(?:\/|$)/.exec(location.pathname)?.[1] || 'canary'
+  const guideKey = `zvms.theme-guide.v1.${active}`
+  const english = document.documentElement.lang.toLowerCase().startsWith('en')
+  const text = english
+    ? { title: 'Choose a theme', guide: 'Pick a layout to get started. You can change it from your profile at any time.', dismiss: 'Not now', current: 'Current', loading: 'Loading themes…', error: 'Themes could not be loaded. Close and try again.', saving: 'Saving…', local: 'Saved on this device.' }
+    : { title: '选择站点主题', guide: '选一套你喜欢的界面。以后可以在个人主页随时切换。', dismiss: '稍后再选', current: '当前主题', loading: '正在加载主题…', error: '主题加载失败，请关闭后重试。', saving: '正在保存…', local: '已保存在此设备。' }
 
-  var STORAGE_KEY = 'zvms.theme'
-  var RUNTIME_MANIFEST_URL = '/themes.json'
-  var THEME_PREFIX = '/themes/'
-  var THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/
-  // 清单读不到（本地 dev、构建脚本没跑）时至少还能跳回根应用。
-  var FALLBACK_THEMES = [{ id: 'canary', label: 'Canary', base: '/' }]
-
-  /** 该 id 对应的站内路径：canary → /，其它 → /themes/<id>/。 */
-  function baseFor(id) {
-    return id === 'canary' ? '/' : THEME_PREFIX + id + '/'
+  function read(key) {
+    try { return localStorage.getItem(key) } catch { return null }
   }
 
-  function currentThemeId() {
-    var match = /^\/themes\/([a-z0-9][a-z0-9-]*)(?:\/|$)/.exec(window.location.pathname || '/')
-    return match ? match[1] : 'canary'
+  function write(key, value) {
+    try { localStorage.setItem(key, value) } catch { /* 隐私模式仍可切换 */ }
   }
 
-  /** 只接受合法 slug 与站内绝对路径，避免清单被污染时跳出站点。 */
-  function normalizeTheme(item) {
-    if (!item || typeof item.id !== 'string' || !THEME_ID_RE.test(item.id)) {
-      return null
+  function element(tag, className, content = '') {
+    const node = document.createElement(tag)
+    node.className = className
+    node.textContent = content
+    return node
+  }
+
+  const dialog = element('dialog', 'zvms-theme-dialog')
+  dialog.dataset.themeApp = active
+  dialog.setAttribute('aria-labelledby', 'zvms-theme-title')
+  const title = element('h2', 'zvms-theme-dialog__title', text.title)
+  title.id = 'zvms-theme-title'
+  title.tabIndex = -1
+  const guide = element('p', 'zvms-theme-dialog__guide', text.guide)
+  const list = element('div', 'zvms-theme-dialog__list')
+  const status = element('p', 'zvms-theme-dialog__status')
+  status.setAttribute('role', 'status')
+  const dismiss = element('button', 'zvms-theme-dialog__dismiss', text.dismiss)
+  dismiss.type = 'button'
+  dialog.append(title, guide, list, status, dismiss)
+  document.body.append(dialog)
+
+  let choices
+  let saving = false
+  let firstVisit = false
+  let opener = null
+
+  async function loadThemes() {
+    if (choices) return choices
+    const response = await fetch('/themes.json', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error('Theme catalog unavailable')
+    const manifest = await response.json()
+    choices = manifest.themes.filter((item) => {
+      if (!item || typeof item.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(item.id) || typeof item.label !== 'string') return false
+      const expected = item.id === manifest.default ? '/' : `/themes/${item.id}/`
+      return item.status !== 'deprecated' && item.base === expected
+    })
+    if (!choices.length) {
+      choices = undefined
+      throw new Error('Empty theme catalog')
     }
-    var base = typeof item.base === 'string' && item.base.charAt(0) === '/' ? item.base : baseFor(item.id)
-    if (base.charAt(base.length - 1) !== '/') {
-      base += '/'
-    }
-    return {
-      id: item.id,
-      label: typeof item.label === 'string' && item.label ? item.label : item.id,
-      base: base
-    }
+    return choices
   }
 
-  function loadThemes(callback) {
-    if (typeof window.fetch !== 'function') {
-      callback(FALLBACK_THEMES)
-      return
-    }
-    window
-      .fetch(RUNTIME_MANIFEST_URL, { headers: { Accept: 'application/json' } })
-      .then(function (response) {
-        if (!response.ok) {
-          throw new Error('manifest ' + response.status)
-        }
-        return response.json()
-      })
-      .then(function (manifest) {
-        var list = manifest && manifest.themes
-        if (!Array.isArray(list)) {
-          throw new Error('manifest has no themes')
-        }
-        var themes = list
-          .filter(function (item) {
-            return !item || item.status !== 'deprecated'
-          })
-          .map(normalizeTheme)
-          .filter(Boolean)
-        callback(themes.length ? themes : FALLBACK_THEMES)
-      })
-      .catch(function () {
-        callback(FALLBACK_THEMES)
-      })
-  }
-
-  function apiBase() {
-    var meta = document.querySelector('meta[name="zvms-api-base"]')
-    var value = meta && meta.getAttribute('content')
-    return (value || '').replace(/\/+$/, '')
-  }
-
-  function syncPreference(themeId) {
+  async function save(id) {
+    const token = read('token')
+    if (!token) return true
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 1800)
     try {
-      window.localStorage.setItem(STORAGE_KEY, themeId)
-    } catch (e) {
-      // 隐私模式/配额满：跳转照做，只是下次打开会回到默认
-    }
-    var token = null
-    try {
-      token = window.localStorage.getItem('token')
-    } catch (e) {
-      token = null
-    }
-    var base = apiBase()
-    if (!token || !base || typeof window.fetch !== 'function') {
-      return
-    }
-    window
-      .fetch(base + '/v1/themes/me', {
+      const response = await fetch(`${base}/v1/themes/me`, {
         method: 'PUT',
-        headers: {
-          Authorization: 'Bearer ' + token,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ theme: themeId })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme: id }),
+        signal: controller.signal
       })
-      .catch(function () {
-        // 账号侧没记住不影响本次跳转，目标应用读的是同一份 localStorage
-      })
+      return response.ok
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
-  function switchTo(theme) {
-    syncPreference(theme.id)
-    if (currentThemeId() === theme.id) {
-      close()
+  async function select(theme) {
+    if (saving) return
+    saving = true
+    write(guideKey, 'done')
+    write('zvms.theme', theme.id)
+    status.textContent = text.saving
+    list.querySelectorAll('button').forEach((button) => { button.disabled = true })
+    dismiss.disabled = true
+    const saved = await save(theme.id)
+    if (theme.id !== active) {
+      // 账号未保存时，从子应用切回根站也要尊重刚完成的设备选择。
+      if (!saved && theme.base === '/') {
+        try { sessionStorage.setItem('zvms.theme-manual-return', '1') } catch { /* 存储可能不可用 */ }
+      }
+      location.assign(theme.base)
       return
     }
-    window.location.assign(theme.base)
-  }
-
-  var themes = FALLBACK_THEMES
-  var panel = null
-  var trigger = null
-
-  function activeLabel() {
-    var active = currentThemeId()
-    for (var i = 0; i < themes.length; i += 1) {
-      if (themes[i].id === active) {
-        return themes[i].label
-      }
+    saving = false
+    dismiss.disabled = false
+    if (saved) {
+      dialog.close()
+    } else {
+      list.querySelectorAll('button').forEach((button) => { button.disabled = false })
+      status.textContent = text.local
+      dismiss.focus()
     }
-    return active
   }
 
-  function close() {
-    if (!panel || !trigger) return
-    panel.hidden = true
-    trigger.setAttribute('aria-expanded', 'false')
+  async function open(showGuide, trigger = null) {
+    if (dialog.open || saving) return
+    opener = trigger
+    firstVisit = showGuide
+    guide.hidden = !firstVisit
+    list.replaceChildren()
+    status.textContent = text.loading
+    const shell = active === 'canary' ? document.querySelector('.yg-phi') : null
+    const container = shell || document.body
+    container.append(dialog)
+    dialog.showModal()
+    title.focus()
+    try {
+      const themes = await loadThemes()
+      if (!dialog.open) return
+      list.replaceChildren(...themes.map((theme) => {
+        const button = element('button', 'zvms-theme-dialog__option')
+        button.type = 'button'
+        button.append(element('strong', '', theme.label))
+        if (theme.id === active) {
+          button.append(element('span', 'zvms-theme-dialog__current', text.current))
+        }
+        if (!english && typeof theme.description === 'string') {
+          button.append(element('span', 'zvms-theme-dialog__description', theme.description))
+        }
+        button.addEventListener('click', () => { void select(theme) })
+        return button
+      }))
+      status.textContent = ''
+    } catch {
+      status.textContent = text.error
+    }
   }
 
-  function open() {
-    if (!panel || !trigger) return
-    panel.hidden = false
-    trigger.setAttribute('aria-expanded', 'true')
-  }
+  dismiss.addEventListener('click', () => dialog.close())
+  dialog.addEventListener('cancel', (event) => {
+    if (saving) event.preventDefault()
+  })
+  dialog.addEventListener('close', () => {
+    if (firstVisit) write(guideKey, 'done')
+    const url = new URL(location.href)
+    if (url.searchParams.has('choose-theme')) {
+      url.searchParams.delete('choose-theme')
+      history.replaceState(history.state, '', url)
+    }
+    opener?.focus()
+  })
+  document.addEventListener('click', (event) => {
+    const trigger = event.target instanceof Element && event.target.closest('[data-zvms-theme-picker]')
+    if (!trigger || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+    event.preventDefault()
+    void open(false, trigger)
+  })
 
-  function build() {
-    var host = document.createElement('div')
-    host.id = 'zvms-theme-switcher'
-    // 内联样式：不依赖任何应用的令牌，避免被各设计层覆盖
-    host.setAttribute(
-      'style',
-      [
-        'position:fixed',
-        'right:12px',
-        'bottom:12px',
-        'z-index:2147483000',
-        'font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif',
-        'font-size:13px',
-        'line-height:1.4',
-        'color-scheme:light dark'
-      ].join(';')
-    )
-
-    panel = document.createElement('div')
-    panel.setAttribute('role', 'menu')
-    panel.setAttribute('aria-label', '切换主题应用')
-    panel.hidden = true
-    panel.setAttribute(
-      'style',
-      [
-        'position:absolute',
-        'right:0',
-        'bottom:calc(100% + 8px)',
-        'min-width:9.5rem',
-        'padding:4px',
-        'border-radius:10px',
-        'border:1px solid rgba(128,128,128,0.35)',
-        'background:Canvas',
-        'color:CanvasText',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.28)',
-        'overflow:hidden'
-      ].join(';')
-    )
-
-    var active = currentThemeId()
-    themes.forEach(function (theme) {
-      var item = document.createElement('button')
-      item.type = 'button'
-      item.setAttribute('role', 'menuitemradio')
-      item.setAttribute('aria-checked', theme.id === active ? 'true' : 'false')
-      item.textContent = theme.label
-      item.setAttribute(
-        'style',
-        [
-          'display:block',
-          'width:100%',
-          'padding:8px 10px',
-          'border:0',
-          'border-radius:6px',
-          'background:transparent',
-          'color:inherit',
-          'font:inherit',
-          'text-align:left',
-          'cursor:pointer',
-          theme.id === active ? 'font-weight:600' : 'font-weight:400'
-        ].join(';')
-      )
-      if (theme.id === active) {
-        item.setAttribute('aria-current', 'true')
-      }
-      item.addEventListener('mouseenter', function () {
-        item.style.background = 'rgba(128,128,128,0.18)'
-      })
-      item.addEventListener('mouseleave', function () {
-        item.style.background = 'transparent'
-      })
-      item.addEventListener('click', function () {
-        switchTo(theme)
-      })
-      panel.appendChild(item)
-    })
-
-    trigger = document.createElement('button')
-    trigger.type = 'button'
-    trigger.textContent = '主题'
-    trigger.setAttribute('aria-label', '切换主题应用（当前：' + activeLabel() + '）')
-    trigger.setAttribute('aria-haspopup', 'menu')
-    trigger.setAttribute('aria-expanded', 'false')
-    trigger.setAttribute(
-      'style',
-      [
-        'padding:7px 12px',
-        'border-radius:999px',
-        'border:1px solid rgba(128,128,128,0.45)',
-        'background:Canvas',
-        'color:CanvasText',
-        'font:inherit',
-        'cursor:pointer',
-        'box-shadow:0 2px 10px rgba(0,0,0,0.22)'
-      ].join(';')
-    )
-    trigger.addEventListener('click', function () {
-      if (panel.hidden) {
-        open()
-      } else {
-        close()
-      }
-    })
-
-    document.addEventListener('click', function (event) {
-      if (!host.contains(event.target)) {
-        close()
-      }
-    })
-    document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') {
-        close()
-      }
-    })
-
-    host.appendChild(panel)
-    host.appendChild(trigger)
-    document.body.appendChild(host)
-  }
-
-  function start() {
-    loadThemes(function (loaded) {
-      themes = loaded
-      build()
-    })
-  }
-
-  if (document.body) {
-    start()
-  } else {
-    document.addEventListener('DOMContentLoaded', start, { once: true })
+  const url = new URL(location.href)
+  if (url.searchParams.has('choose-theme')) {
+    void open(!read(guideKey))
+  } else if (!read(guideKey)) {
+    // 等候首屏完成，目录缺失时保持静默，不打断本地开发或独立部署。
+    const ready = () => {
+      setTimeout(() => {
+        void loadThemes().then((themes) => {
+          if (themes.length > 1 && !read(guideKey)) void open(true)
+        }).catch(() => {})
+      }, 650)
+    }
+    if (document.readyState === 'complete') ready()
+    else window.addEventListener('load', ready, { once: true })
   }
 })()

@@ -1,0 +1,101 @@
+/* 各版本只映射面板令牌，布局和无障碍行为共用。 */
+.zvms-theme-dialog {
+  --picker-bg: var(--yg-bg-surface-raised, Canvas);
+  --picker-text: var(--yg-text-primary, CanvasText);
+  --picker-muted: var(--yg-text-secondary, CanvasText);
+  --picker-line: var(--yg-border-default, GrayText);
+  --picker-accent: var(--yg-text-link, LinkText);
+  --picker-hover: var(--yg-bg-surface-sunken, Canvas);
+  --picker-radius: var(--yg-radius-lg, 1rem);
+  --picker-shadow: var(--yg-shadow-lg, none);
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  box-sizing: border-box;
+  width: min(32rem, calc(100% - 2rem));
+  max-height: min(85dvh, 44rem);
+  padding: var(--yg-space-6, 1.5rem);
+  border: 1px solid var(--picker-line);
+  border-radius: var(--picker-radius);
+  background: var(--picker-bg);
+  color: var(--picker-text);
+  box-shadow: var(--picker-shadow);
+}
+
+.zvms-theme-dialog[data-theme-app='canary'] {
+  --picker-bg: var(--phi-panel, Canvas);
+  --picker-text: var(--phi-ink, CanvasText);
+  --picker-muted: var(--phi-ink-3, CanvasText);
+  --picker-line: var(--phi-line-strong, GrayText);
+  --picker-accent: var(--phi-accent, LinkText);
+  --picker-hover: var(--phi-panel-hi, Canvas);
+  --picker-radius: 0;
+  border-block-start: 2px solid var(--picker-accent);
+}
+
+.zvms-theme-dialog[data-theme-app='canary2'] {
+  --picker-bg: var(--yg2-surface-raised, Canvas);
+  --picker-text: var(--yg2-text, CanvasText);
+  --picker-muted: var(--yg2-text-secondary, CanvasText);
+  --picker-line: var(--yg-border-default, GrayText);
+  --picker-accent: var(--yg2-accent, LinkText);
+  --picker-hover: var(--yg2-surface-sunken, Canvas);
+}
+
+.zvms-theme-dialog[data-theme-app='canary-anthropic'] {
+  --picker-bg: var(--surface-raised, Canvas);
+  --picker-text: var(--ink, CanvasText);
+  --picker-muted: var(--ink-soft, CanvasText);
+  --picker-line: var(--line, GrayText);
+  --picker-accent: var(--accent-strong, LinkText);
+  --picker-hover: var(--surface-sunken, Canvas);
+  --picker-radius: var(--radius-xl, 1rem);
+  --picker-shadow: var(--shadow-lg, none);
+}
+
+.zvms-theme-dialog[data-theme-app='canary-pro'] {
+  --picker-bg: var(--surface-matte, Canvas);
+  --picker-text: var(--color-text-primary, CanvasText);
+  --picker-muted: var(--color-text-secondary, CanvasText);
+  --picker-line: var(--color-border-moderate, GrayText);
+  --picker-accent: var(--color-brand, LinkText);
+  --picker-hover: var(--color-surface-muted, Canvas);
+  --picker-radius: var(--radius-xl, 1rem);
+  --picker-shadow: var(--glass-floating-shadow, none);
+}
+
+.zvms-theme-dialog[open] {
+  animation: zvms-theme-enter var(--yg-dur-slow, 260ms) var(--yg-ease-out, ease-out) both;
+}
+
+.zvms-theme-dialog::backdrop { background: color-mix(in srgb, CanvasText 32%, transparent); }
+.zvms-theme-dialog__title { margin: 0 0 var(--yg-space-2, 0.5rem); font-size: var(--yg-font-size-xl, 1.25rem); }
+.zvms-theme-dialog__guide, .zvms-theme-dialog__status { color: var(--picker-muted); margin: 0 0 var(--yg-space-4, 1rem); }
+.zvms-theme-dialog__status:empty { display: none; }
+.zvms-theme-dialog__list { display: grid; gap: var(--yg-space-2, 0.5rem); margin-block-end: var(--yg-space-4, 1rem); }
+.zvms-theme-dialog__option, .zvms-theme-dialog__dismiss {
+  padding: var(--yg-space-3, 0.75rem);
+  min-height: 44px;
+  border: 1px solid var(--picker-line);
+  border-radius: calc(var(--picker-radius) * 0.75);
+  background: var(--picker-bg);
+  color: var(--picker-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.zvms-theme-dialog__option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--yg-space-1, 0.25rem) var(--yg-space-3, 0.75rem); }
+.zvms-theme-dialog__option:hover, .zvms-theme-dialog__dismiss:hover { background: var(--picker-hover); border-color: var(--picker-accent); }
+.zvms-theme-dialog__option:active, .zvms-theme-dialog__dismiss:active { background: var(--picker-hover); }
+.zvms-theme-dialog__option:focus-visible, .zvms-theme-dialog__dismiss:focus-visible { outline: 2px solid var(--picker-accent); outline-offset: 2px; }
+.zvms-theme-dialog__option:disabled, .zvms-theme-dialog__dismiss:disabled { cursor: wait; opacity: 0.65; }
+.zvms-theme-dialog__description { grid-column: 1 / -1; color: var(--picker-muted); font-size: var(--yg-font-size-sm, 0.875rem); }
+.zvms-theme-dialog__current { color: var(--picker-accent); font-size: var(--yg-font-size-sm, 0.875rem); }
+
+@keyframes zvms-theme-enter {
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zvms-theme-dialog[open] { animation: none; }
+}

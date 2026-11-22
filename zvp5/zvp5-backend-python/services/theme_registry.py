@@ -52,6 +52,12 @@ THEMES: tuple[Theme, ...] = (
         description="Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",
         status="stable",
     ),
+    Theme(
+        id="canary-anthropic",
+        label="Canary Anthropic",
+        description="暖色工作台：柔和中性色、圆角面板与自适应导航",
+        status="experimental",
+    ),
 )
 
 #: 默认主题：新账号的列默认值、未知值的回落目标都由它决定。

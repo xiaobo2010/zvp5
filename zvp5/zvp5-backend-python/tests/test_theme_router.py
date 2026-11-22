@@ -173,6 +173,7 @@ def test_stats_reports_counts_percent_and_other(
         "canary",
         "canary2",
         "canary-pro",
+        "canary-anthropic",
     ]
     by_id = {item["id"]: item for item in data["items"]}
     assert by_id["canary"] == {

@@ -99,6 +99,12 @@ export const useUserStore = defineStore('user', {
       const result = (await api.user.readOne_v3(this._id)) as User
       await this.setUserInformation(result)
     },
+    async restoreSessionProfile(oid: string, token: string) {
+      const profile = await api.user.readOne_v3(oid)
+      if (localStorage.getItem('token') !== token) return
+      await this.setUserInformation(profile)
+      this.isLogin = true
+    },
     getUser() {
       return {
         id: this.id,
@@ -194,6 +200,12 @@ export const useUserStore = defineStore('user', {
      */
     async syncThemeFromServer() {
       try {
+        if (new URLSearchParams(window.location.search).has('choose-theme')) return
+        if (sessionStorage.getItem('zvms.theme-manual-return') === '1') {
+          sessionStorage.removeItem('zvms.theme-manual-return')
+          this.theme = readStoredTheme()
+          return
+        }
         const { theme } = await api.theme.getMyTheme()
         if (!theme) {
           return
@@ -202,8 +214,12 @@ export const useUserStore = defineStore('user', {
         if (typeof window === 'undefined' || !isRootApp(window.location.pathname)) {
           return
         }
+        if (resolved === 'canary') return
+        const response = await fetch('/themes.json', { headers: { Accept: 'application/json' } })
+        if (!response.ok) return
+        const manifest = (await response.json()) as { themes?: { id: string; base: string }[] }
         const target = themePath(resolved)
-        if (resolved !== 'canary' && target !== window.location.pathname) {
+        if (manifest.themes?.some((item) => item.id === resolved && item.base === target)) {
           window.location.assign(target)
         }
       } catch {

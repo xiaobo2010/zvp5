@@ -199,7 +199,7 @@ function escapeAttribute(value) {
 }
 
 /**
- * 子应用收尾（幂等）：
+ * 主题产物收尾（幂等）：
  *   - 删 Service Worker（否则它的缓存 scope 会干扰根应用）；
  *   - 把根绝对资源引用 `="/assets/` 改回子应用自己的基路径；
  *   - 注入 API 基址 meta 与全局主题切换器。
@@ -221,9 +221,9 @@ function finalizeApp(theme, apiBase) {
   const assetPrefix = `${theme.base}assets/`
   // Vite 的 externalize-inline-scripts 插件写的是根绝对路径 /assets/boot-*.js；
   // 子应用必须改回自己的基路径，否则会加载根 canary 的同名 boot 脚本。
-  if (html.includes('="/assets/')) {
+  if (theme.base !== '/' && html.includes('="/assets/')) {
     html = html.split('="/assets/').join(`="${assetPrefix}`)
-  } else {
+  } else if (theme.base !== '/') {
     log(`${theme.id}: no root "/assets/" reference in index.html (nothing to rewrite)`)
   }
 
@@ -237,6 +237,9 @@ function finalizeApp(theme, apiBase) {
     }
     html = html.replace('</head>', `  ${meta}\n  </head>`)
   }
+  if (!html.includes('href="/theme-switcher.css"')) {
+    html = html.replace('</head>', '  <link rel="stylesheet" href="/theme-switcher.css">\n  </head>')
+  }
 
   const script = '<script src="/theme-switcher.js" defer></script>'
   if (!html.includes('theme-switcher.js')) {
@@ -249,7 +252,11 @@ function finalizeApp(theme, apiBase) {
   writeFileSync(indexPath, html)
 
   const written = readFileSync(indexPath, 'utf8')
-  if (!written.includes('name="zvms-api-base"') || !written.includes('theme-switcher.js')) {
+  if (
+    !written.includes('name="zvms-api-base"') ||
+    !written.includes('theme-switcher.js') ||
+    !written.includes('theme-switcher.css')
+  ) {
     fail(`${theme.id}: failed to inject API base meta / theme switcher`)
   }
 }
@@ -283,7 +290,7 @@ function main() {
     return
   }
 
-  for (const required of ['index.html', 'theme-switcher.js']) {
+  for (const required of ['index.html', 'theme-switcher.js', 'theme-switcher.css']) {
     if (!existsSync(path.join(MAIN_DIST, required))) {
       fail(`missing ${path.relative(REPO_ROOT, path.join(MAIN_DIST, required))}: build the root canary frontend first`)
     }
@@ -300,6 +307,8 @@ function main() {
     VITE_API_RACE_BASE: process.env.VITE_API_RACE_BASE || apiBaseRaw,
     VITE_API_CONTENT_BASE: process.env.VITE_API_CONTENT_BASE || apiBaseRaw
   }
+
+  finalizeApp(manifest.themes.find((theme) => theme.id === manifest.default), apiBase)
 
   // 清掉上一次构建留下的旧主题目录：清单删除主题后不能继续在线上留一个孤儿应用。
   rmSync(path.join(MAIN_DIST, 'themes'), { recursive: true, force: true })

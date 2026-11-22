@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
@@ -10,8 +10,6 @@ import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
-import { ElSelect } from 'element-plus/es/components/select/index.mjs'
-import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElSwitch } from 'element-plus/es/components/switch/index.mjs'
 import { Bell, Refresh, SwitchButton, Warning } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -19,7 +17,6 @@ import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 import { listActive, type NotificationRecord } from '@/api/notifications'
-import api from '@/api'
 import {
   clearMyPrimaryDevice,
   readMyDevice,
@@ -37,7 +34,6 @@ import {
 import ZMarkdown from '@/components/markdown/ZMarkdown.vue'
 import ZUserAvatar from '@/components/user/ZUserAvatar.vue'
 import { formatDateTime } from '@/utils/dateTime'
-import { DEFAULT_THEME, currentThemeId, themePath } from '@/utils/theme'
 import { normalizeRenderMode, readRenderMode, setRenderMode } from '@/utils/renderMode'
 import {
   emptyNotificationState,
@@ -54,105 +50,9 @@ const header = useHeaderStore()
 const router = useRouter()
 const { t, locale } = useI18n()
 const dark = useDark()
-
-/* 主题变体：账号偏好，切换立即生效且同步到后端。 */
-const themeVariant = ref<string>(user.theme)
-const themeOptions = ref<Array<{ label: string; value: string }>>([])
-const themeOptionsLoading = ref(false)
-
-/** 注册表接口不可用时的兜底：直接读构建产物里的运行清单（`/themes.json`）。 */
-const RUNTIME_MANIFEST_URL = '/themes.json'
-
-type ThemeOption = { label: string; value: string }
-
-/**
- * 从 `/themes.json` 读主题列表。
- * 清单由 `zvp5/deployment/build-theme-apps.mjs` 按 `zvp5/themes/manifest.json`
- * 生成，是构建产物的一部分；读不到时返回空数组，由调用方再兜底到 canary。
- */
-async function loadManifestThemeOptions(): Promise<ThemeOption[]> {
-  try {
-    const response = await fetch(RUNTIME_MANIFEST_URL, {
-      headers: { Accept: 'application/json' }
-    })
-    if (!response.ok) {
-      return []
-    }
-    const data = (await response.json()) as {
-      themes?: Array<{ id?: unknown; label?: unknown; status?: unknown }>
-    }
-    if (!Array.isArray(data.themes)) {
-      return []
-    }
-    const options: ThemeOption[] = []
-    for (const item of data.themes) {
-      if (!item || typeof item.id !== 'string' || !item.id) {
-        continue
-      }
-      if (typeof item.label !== 'string' || !item.label) {
-        continue
-      }
-      if (item.status === 'deprecated') {
-        continue
-      }
-      options.push({ label: item.label, value: item.id })
-    }
-    return options
-  } catch {
-    return []
-  }
-}
-
-async function loadThemeOptions() {
-  themeOptionsLoading.value = true
-  try {
-    let options: ThemeOption[] = []
-    try {
-      const data = await api.theme.listThemes()
-      options = data.items
-        .filter((item) => item.status !== 'deprecated')
-        .map((item) => ({ label: item.label, value: item.id }))
-    } catch {
-      // 后端注册表不可用（未升级/断网）：退到运行清单
-      options = []
-    }
-    if (!options.length) {
-      options = await loadManifestThemeOptions()
-    }
-    // 清单也没有（本地 dev 未跑构建脚本）：只给默认主题，不留空白下拉框。
-    themeOptions.value = options.length
-      ? options
-      : [{ label: 'Canary', value: DEFAULT_THEME }]
-  } finally {
-    themeOptionsLoading.value = false
-  }
-}
-
-async function changeTheme() {
-  // 主题 = 整站多构建：先记设备缓存 + store，再尽力同步账号。
-  // PUT 失败（后端未升级、断网）不阻断跳转——主题只是显示偏好，
-  // 而且目标应用读的是同一份 localStorage。
-  const themeId = user.applyThemePreference(themeVariant.value)
-  await api.theme.setMyTheme(themeId).catch(() => {
-    ElMessage({ type: 'warning', message: t('profile.actions.themeSyncFailed') })
-  })
-  // 只有跨应用才跳整页；同一应用内换主题（如 canary 内部）不需要刷新。
-  if (currentThemeId(window.location.pathname) !== themeId) {
-    window.location.assign(themePath(themeId))
-  }
-}
-
-onMounted(() => {
-  loadThemeOptions()
-})
-
-/* 当 store 的 theme 发生改变时（如服务器同步），同步到本地 ref */
-watch(
-  () => user.theme,
-  (newTheme) => {
-    themeVariant.value = newTheme
-  }
-)
+const themePickerUrl = document.querySelector('meta[name="zvms-api-base"]')
+  ? '?choose-theme'
+  : 'https://canary.xiaobopisces.top/?choose-theme'
 
 /* 渲染模式：精细 = 原版；流畅 = 关边框流光/六边形/卡片线条。
    偏好存在 localStorage，切换后立即生效（写 <html data-render-mode>）。 */
@@ -801,25 +701,9 @@ onMounted(async () => {
             </div>
           </li>
           <li class="profile-action-item">
-            <div class="profile-action profile-action--segmented">
+            <a :href="themePickerUrl" class="profile-action" data-zvms-theme-picker>
               <span class="profile-action-label">{{ t('profile.actions.theme') }}</span>
-              <ElSelect
-                v-model="themeVariant"
-                :placeholder="t('profile.actions.themeHint')"
-                class="profile-select"
-                size="small"
-                :aria-label="t('profile.actions.theme')"
-                :loading="themeOptionsLoading"
-                @change="changeTheme"
-              >
-                <ElOption
-                  v-for="option in themeOptions"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
-                />
-              </ElSelect>
-            </div>
+            </a>
           </li>
           <li class="profile-action-item">
             <div class="profile-action profile-action--segmented">
@@ -1602,6 +1486,10 @@ html[data-theme='light'] .profile-device-dialog-input {
     box-shadow 180ms var(--phx-ease);
 }
 
+.profile-action[data-zvms-theme-picker] {
+  text-decoration: none;
+}
+
 /* 行号 01/02/03：纯装饰 */
 .profile-action::before {
   content: counter(phx-action, decimal-leading-zero);
@@ -1738,16 +1626,6 @@ html[data-theme='light'] .profile-device-dialog-input {
   border-radius: 0;
   background: transparent;
   box-shadow: inset 0 -1px 0 var(--phx-line-soft);
-}
-
-/* 主题下拉：和渲染模式一样的行结构，但用下拉框 */
-.profile-select {
-  --el-border-radius-base: 6px;
-  --el-fill-color-blank: color-mix(in srgb, var(--phx-accent) 5%, transparent);
-  --el-text-color-regular: var(--phx-ink);
-  --el-text-color-placeholder: var(--phx-muted);
-  margin-left: auto;
-  width: 160px;
 }
 
 .profile-segmented :deep(.el-segmented__item),

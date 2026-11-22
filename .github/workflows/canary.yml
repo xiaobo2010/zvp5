@@ -343,6 +343,18 @@ jobs:
             exit 1
           }
 
+          # 主题清单、共享引导和各子应用深链接都应来自本次发布。
+          for asset in themes.json theme-switcher.js theme-switcher.css; do
+            actual="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/$asset" | sha256sum)"
+            expected="$(sha256sum < "$dist_dir/$asset")"
+            [[ "$actual" == "$expected" ]] || { echo "stale theme asset: $asset" >&2; exit 1; }
+          done
+          for base in $(node -p 'require("./zvp5/zvp5-frontend/dist/themes.json").themes.map(t => t.base).join(" ")'); do
+            actual="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL${base}me" | sha256sum)"
+            expected="$(sha256sum < "$dist_dir${base}index.html")"
+            [[ "$actual" == "$expected" ]] || { echo "wrong theme index at ${base}me" >&2; exit 1; }
+          done
+
           # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
           # 若仍返回 application/javascript，说明浏览器会跑旧的预缓存壳。
           sw_type="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
@@ -361,7 +373,7 @@ jobs:
             -H "Origin: $CANARY_URL" \
             -H 'Access-Control-Request-Method: POST' \
             -H 'Access-Control-Request-Headers: authorization,content-type' \
-            "$VITE_API_BASE/users/login" || echo 000)"
+            "$VITE_API_BASE/v1/users/auth" || echo 000)"
           cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
           rm -f "$cors_hdr"
           [[ "$cors_origin" == "$CANARY_URL" ]] || {

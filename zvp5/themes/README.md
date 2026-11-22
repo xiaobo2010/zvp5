@@ -34,6 +34,8 @@
 
 预览构建器会给 `build.command` 追加 `--base=/themes/canary-example/`，将子应用产物并入主站产物，注入主题切换器，并生成供浏览器读取的 `/themes.json`。所有主题复用同一套构建流程和 Worker 路由。[构建器](../deployment/build-theme-apps.mjs)
 
+在个人主页或设置中用本应用的样式放一个「切换站点主题」链接，标记 `data-zvms-theme-picker`。同源构建会在原地打开选择器。独立预览站的链接可指向同源主题站中对应应用的入口，并附上 `?choose-theme`。首次引导按主题记在当前浏览器中，选择或跳过后可从个人页重新打开。
+
 ## 3. 同步后端注册表
 
 在 `services/theme_registry.py` 的 `THEMES` 元组加入对应的 `Theme(...)`。`id`、`label`、`description`、`status` 和条目顺序须与清单一致。注册表负责校验账号的默认主题，并提供管理员统计所需的主题目录。已有 `USERS.THEME` 字段可容纳新主题 ID。[后端主题注册表](../zvp5-backend-python/services/theme_registry.py)
@@ -47,6 +49,6 @@ node zvp5/deployment/build-theme-apps.mjs --validate
 (cd zvp5/zvp5-backend-python && .venv/bin/python -m pytest -q tests/test_theme_manifest.py)
 ```
 
-把清单和注册表改动一起推送到 `v5-canary`。预览流水线会构建并发布完整子应用。发布后检查 `/themes.json` 中的新条目，打开 `/themes/<id>/` 和一条实际的页面深链接，确认两者都显示目标应用。最后从主站个人资料页切入，并在子应用的「主题」菜单中切回。[预览发布说明](../deployment/preview-worker/README.md)
+先推送子应用分支，再把清单和注册表改动一起推送到 `v5-canary`。发布后检查 `/themes.json` 中的新条目，打开 `/themes/<id>/` 和一条页面深链接。用新浏览器会话检查首次引导、跳过和刷新后的状态，再从主站个人资料页切入，从子应用个人页切回。[预览发布说明](../deployment/preview-worker/README.md)
 
 账号默认主题和管理台统计由预览站所连接的后端提供。验收这两项时，确认该后端已部署新的注册表，并已应用现有主题功能所需的 V055 迁移。
