@@ -10,8 +10,9 @@
   },
   "routes": [
     {
-      "pattern": "canary-claude.xiaoboisces.top",
-      "custom_domain": true
+      "pattern": "canary-claude.xiaobopisces.top/*",
+      "zone_id": "c4a321fb260ffc09d000112ac9b32b75",
+      "custom_domain": false
     }
   ],
   "observability": {

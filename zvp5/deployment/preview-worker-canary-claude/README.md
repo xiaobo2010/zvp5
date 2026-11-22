@@ -8,6 +8,22 @@
 被部署的前端目录。Worker 逻辑（强制 https 跳转 + HSTS）完全一致，
 `src/index.js` 是 `preview-worker/src/index.js` 的副本。
 
+## 预览域是怎么接上的（不是 custom domain）
+
+本通道的 Cloudflare 令牌**没有创建 Worker custom domain 的权限**
+（`POST /accounts/{id}/workers/domains` 返回 10405 Method not allowed for this
+authentication scheme），所以这里走的是**zone route**而不是 custom domain：
+
+| 层 | 配置 | 谁维护 |
+| --- | --- | --- |
+| Worker | `zvp-yuren-canary-claude` | CI（`wrangler deploy`） |
+| 路由 | `canary-claude.xiaobopisces.top/*` → 该 Worker | CI（wrangler 按 `routes` 幂等维护） |
+| DNS | `CNAME canary-claude → zvp-yuren-canary-claude.nblilychen.workers.dev`（橙云） | 手工，一次性 |
+
+DNS 记录**必须用相对名**创建（`canary-claude` 而不是完整域名）：传完整域名会被
+Cloudflare 再拼一次 zone，变成 `canary-claude.xiaobopisces.top.xiaobopisces.top`，
+解析直接 NXDOMAIN。
+
 ## 流水线
 
 `.github/workflows/canary-anthropic.yml`：`push` 到 `canary-anthropic`
