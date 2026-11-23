@@ -18,6 +18,20 @@ export default {
     const headers = new Headers(response.headers)
     // 让后续访问直接在浏览器层升级到 https，不再回到这个分支。
     headers.set('Strict-Transport-Security', 'max-age=31536000')
+
+    // HTML 入口不能进 Cloudflare 边缘缓存：预览域没有 nginx 的 no-cache
+    // 规则，旧 HTML 会继续引用旧 hash 的 assets，部署成功了用户却还看旧版。
+    // 静态 assets 仍然长缓存。
+    const isHtmlEntry =
+      request.method === 'GET' &&
+      (url.pathname === '/' ||
+        url.pathname.endsWith('/') ||
+        url.pathname.endsWith('.html'))
+    if (isHtmlEntry) {
+      headers.set('Cache-Control', 'no-store, max-age=0')
+      headers.set('CDN-Cache-Control', 'no-store')
+    }
+
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
