@@ -319,7 +319,7 @@ jobs:
 
           entry3d="$(grep -o 'src="/3d/assets/[^"]*"' "$dist_dir/3d/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
           [[ -n "$entry3d" ]] || { echo "could not find 3D entry asset" >&2; exit 1; }
-          page3d="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/3d/index.html")"
+          page3d="$(curl -fsSL --compressed -A "$PROBE_UA" "$CANARY_URL/3d/index.html")"
           [[ "$page3d" == *"src=\"$entry3d\""* ]] || {
             echo "wrong 3D entry at /3d/index.html" >&2
             exit 1
