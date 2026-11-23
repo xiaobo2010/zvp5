@@ -348,17 +348,32 @@ jobs:
             exit 1
           }
 
-          # 主题清单、共享引导和各子应用深链接都应来自本次发布。
+          # 主题清单、共享引导和各子应用深链接都应来自本次发布。边缘 HTML 在
+          # 部署后几秒内仍可能命中上一版；Worker 已发 no-store，这里给缓存
+          # 再验证留出重试窗口，避免把缓存竞态当成发布失败。
           for asset in themes.json theme-switcher.js theme-switcher.css; do
-            actual="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/$asset" | sha256sum)"
             expected="$(sha256sum < "$dist_dir/$asset")"
+            actual=""
+            for _ in $(seq 1 6); do
+              actual="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/$asset" | sha256sum || true)"
+              [[ "$actual" == "$expected" ]] && break
+              sleep 5
+            done
             [[ "$actual" == "$expected" ]] || { echo "stale theme asset: $asset" >&2; exit 1; }
           done
           for base in $(node -p 'require("./zvp5/zvp5-frontend/dist/themes.json").themes.map(t => t.base).join(" ")'); do
             # 边缘可能为 HTML 增添脚本，只比对构建产物的入口资源和主题引导引用。
             expected_entry="$(grep -o 'src="[^" ]*/assets/[^" ]*\.js"' "$dist_dir${base}index.html" | head -n1)"
-            page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
-              -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL${base}me")"
+            page=""
+            for _ in $(seq 1 6); do
+              page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
+                -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL${base}me" || true)"
+              if [[ -n "$expected_entry" && "$page" == *"$expected_entry"* &&
+                    "$page" == *theme-switcher.js* && "$page" == *theme-switcher.css* ]]; then
+                break
+              fi
+              sleep 5
+            done
             if [[ -z "$expected_entry" || "$page" != *"$expected_entry"* ||
                   "$page" != *theme-switcher.js* || "$page" != *theme-switcher.css* ]]; then
               echo "wrong theme index at ${base}me" >&2
