@@ -2,6 +2,8 @@
 // The Pro app deliberately keeps its dependency surface small, so this uses
 // the browser fetch API instead of the legacy axios stack.
 
+import { isAdminOrDepartment } from './permissions'
+
 const API_BASE = (
   import.meta.env.VITE_API_BASE || 'https://zvp.xiaobopisces.top/api'
 ).replace(/\/+$/, '')
@@ -397,6 +399,11 @@ export async function fetchActivities(
 ): Promise<CanaryActivityPage> {
   const id = currentUserId()
   if (!id) throw new CanaryApiError('请先登录 canary 账号。', 401)
+
+  // 班级/校园范围只属于管理视角。即使调用方漏了 UI 闸，也不把请求发出去。
+  if (scope !== 'mine' && !isAdminOrDepartment()) {
+    return { activities: [], total: 0 }
+  }
 
   if (scope === 'mine') {
     return request<CanaryActivityPage>(

@@ -72,6 +72,36 @@ button {
   cursor: pointer;
 }
 
+/* 触屏去掉 300ms 双击缩放等待，按压反馈才跟手。 */
+button,
+a {
+  touch-action: manipulation;
+}
+
+/* 触屏没有 hover，按压反馈由 main.ts 在 pointerdown 时加类触发；类保留
+   420ms，所以快速 tap 也能看到完整的一下缩放回弹。 */
+.is-touch-pressed {
+  animation: touch-press-feedback 360ms var(--ease-spring);
+}
+
+@keyframes touch-press-feedback {
+  0% {
+    transform: scale(1);
+  }
+
+  32% {
+    transform: scale(0.955);
+  }
+
+  70% {
+    transform: scale(1.008);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
 /* Focus visible states */
 :focus {
   outline: none;

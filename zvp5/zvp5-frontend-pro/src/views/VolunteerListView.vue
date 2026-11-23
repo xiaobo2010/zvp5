@@ -28,6 +28,9 @@ const router = useRouter()
 const viewerRoles = currentRoles()
 const isAdminViewer = viewerRoles.includes('admin')
 const isDepartmentViewer = viewerRoles.includes('department')
+// 班级/校园范围是管理视角：普通学生只能看自己的活动，不能按班号或全校
+// 枚举别人的义工。后端同样按角色收紧，这里先不渲染入口、也不发请求。
+const canBrowseScopes = isAdminViewer || isDepartmentViewer
 
 const pageSize = 10
 
@@ -229,6 +232,9 @@ async function loadProfile(): Promise<boolean> {
 }
 
 async function loadActivities() {
+  if (!canBrowseScopes && activeTab.value !== 'mine') {
+    activeTab.value = 'mine'
+  }
   if (needsClass.value) {
     requestSeq += 1
     loading.value = false
@@ -331,6 +337,7 @@ function handleRefresh() {
 
 function handleTabChange(tab: ActivityScope) {
   if (activeTab.value === tab) return
+  if (tab !== 'mine' && !canBrowseScopes) return
   activeTab.value = tab
   activePage.value = 1
   resetAuditState()
@@ -474,7 +481,13 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <nav class="scope-tabs glass-card surface-enter" :style="{ '--i': 1 }" role="tablist" aria-label="活动范围">
+    <nav
+      v-if="canBrowseScopes"
+      class="scope-tabs glass-card surface-enter"
+      :style="{ '--i': 1 }"
+      role="tablist"
+      aria-label="活动范围"
+    >
       <button
         class="scope-tab"
         :class="{ 'is-active': activeTab === 'mine' }"
