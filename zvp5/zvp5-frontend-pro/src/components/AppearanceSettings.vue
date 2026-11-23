@@ -211,7 +211,7 @@ onUnmounted(() => {
       </div>
       <label class="appearance__auto">
         <input type="radio" name="pro-palette" value="auto" :checked="palettePreference === 'auto'" @change="choosePalette('auto')" />
-        随本地时间自动切换
+        随服务器时间自动切换
       </label>
       <div class="appearance__status" role="status">
         <BubbleFeedback

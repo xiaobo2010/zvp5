@@ -228,9 +228,9 @@ const banSummary = computed(() => {
 const canModerateBan = computed(() => {
   const target = profile.value
   if (!isAdminUser || !target) return false
-  // Another admin account is out of scope even for unban (the backend allows
-  // the unban direction, but this page deliberately does not surface it).
-  if (targetIsAdmin.value && !isSelf.value) return false
+  // Banning another admin is forbidden server-side; unbanning one is allowed.
+  // Surface only the valid direction instead of hiding the whole action.
+  if (targetIsAdmin.value && !isSelf.value && !target.banned) return false
   // Own account: only an already-banned operator gets the unban action.
   if (isSelf.value && !target.banned) return false
   return true
