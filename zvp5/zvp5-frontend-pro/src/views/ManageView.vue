@@ -8,6 +8,7 @@ import AdminWriteVerification from '@/components/AdminWriteVerification.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   createNotification,
+  createStudentAccount,
   fetchActivityCount,
   fetchAdminNotifications,
   fetchAttachments,
@@ -36,6 +37,7 @@ import {
   type AdminSettings,
   type AdminThemeStats,
   type AdminUser,
+  type CreatedStudentAccount,
   type SettingUpdateItem
 } from '@/api/admin-manage'
 import { renderMarkdown } from '@/utils/markdown'
@@ -55,7 +57,7 @@ async function requestWriteProof() {
 const allTabs: AnimatedTabItem[] = [
   { value: 'overview', label: '概览', hint: '平台实时计数与近期动态' },
   { value: 'users', label: '用户', hint: '用户目录与资料管理' },
-  { value: 'groups', label: '班级', hint: '只读班级与权限组' },
+  { value: 'groups', label: '班级', hint: '班级成员与学生账号' },
   { value: 'themes', label: '主题', hint: '账号主题使用统计' },
   { value: 'notifications', label: '通知', hint: '发布与启停通知' },
   { value: 'roles', label: '角色', hint: '只读角色能力矩阵' },
@@ -440,6 +442,169 @@ function groupTypeText(group: AdminGroup): string {
   if (group.type === 'club') return '社团'
   if (group.type === 'group') return '分组'
   return '班级'
+}
+
+/* Class roster: one inline expansion under the clicked row. Keeping it inline
+   avoids a second navigation level and works with the same touch targets as
+   the rest of the Pro console. */
+const GROUP_MEMBER_PAGE_SIZE = 20
+const expandedGroupId = ref('')
+const groupMembers = ref<AdminUser[]>([])
+const groupMembersTotal = ref(0)
+const groupMembersPage = ref(1)
+const groupMembersLoading = ref(false)
+const groupMembersError = ref('')
+let groupMembersSeq = 0
+
+const expandedGroup = computed(
+  () => groups.value.find((group) => group._id === expandedGroupId.value) ?? null
+)
+const groupMemberPages = computed(() =>
+  totalPages(groupMembersTotal.value, GROUP_MEMBER_PAGE_SIZE)
+)
+const canAddStudent = computed(
+  () => isAdminUser && !!expandedGroup.value && expandedGroup.value.type !== 'permission'
+)
+
+const studentFormOpen = ref(false)
+const studentName = ref('')
+const studentId = ref('')
+const studentCreating = ref(false)
+const studentError = ref('')
+const createdStudent = ref<CreatedStudentAccount | null>(null)
+const initialPasswordCopied = ref(false)
+
+function resetStudentForm() {
+  studentName.value = ''
+  studentId.value = ''
+  studentError.value = ''
+  initialPasswordCopied.value = false
+}
+
+function closeStudentForm() {
+  if (studentCreating.value) return
+  studentFormOpen.value = false
+  resetStudentForm()
+}
+
+function toggleGroup(group: AdminGroup) {
+  if (expandedGroupId.value === group._id) {
+    closeGroup()
+    return
+  }
+  expandedGroupId.value = group._id
+  groupMembersPage.value = 1
+  groupMembers.value = []
+  groupMembersTotal.value = 0
+  groupMembersError.value = ''
+  studentFormOpen.value = false
+  createdStudent.value = null
+  resetStudentForm()
+  void loadGroupMembers()
+}
+
+function closeGroup() {
+  expandedGroupId.value = ''
+  groupMembers.value = []
+  groupMembersTotal.value = 0
+  groupMembersError.value = ''
+  studentFormOpen.value = false
+  createdStudent.value = null
+  resetStudentForm()
+}
+
+async function loadGroupMembers() {
+  const groupId = expandedGroupId.value
+  if (!groupId) return
+  const seq = ++groupMembersSeq
+  groupMembersLoading.value = true
+  groupMembersError.value = ''
+  try {
+    const data = await fetchGroupUsers(
+      groupId,
+      groupMembersPage.value,
+      GROUP_MEMBER_PAGE_SIZE
+    )
+    if (seq !== groupMembersSeq || groupId !== expandedGroupId.value) return
+    groupMembers.value = Array.isArray(data.data) ? data.data : []
+    groupMembersTotal.value = Number.isFinite(Number(data.total)) ? Number(data.total) : 0
+  } catch (reason) {
+    if (seq !== groupMembersSeq) return
+    groupMembers.value = []
+    groupMembersTotal.value = 0
+    groupMembersError.value = tabError(reason, '班级成员读取失败。')
+  } finally {
+    if (seq === groupMembersSeq) groupMembersLoading.value = false
+  }
+}
+
+function groupMembersPrev() {
+  if (groupMembersPage.value <= 1 || groupMembersLoading.value) return
+  groupMembersPage.value -= 1
+  void loadGroupMembers()
+}
+
+function groupMembersNext() {
+  if (groupMembersPage.value >= groupMemberPages.value || groupMembersLoading.value) return
+  groupMembersPage.value += 1
+  void loadGroupMembers()
+}
+
+function openStudentForm() {
+  if (!canAddStudent.value) return
+  createdStudent.value = null
+  resetStudentForm()
+  studentFormOpen.value = true
+}
+
+async function submitStudent() {
+  if (studentCreating.value) return
+  const groupId = expandedGroupId.value
+  const name = studentName.value.trim()
+  const id = studentId.value.trim()
+  if (!groupId) {
+    studentError.value = '请先选择班级。'
+    return
+  }
+  if (!name) {
+    studentError.value = '请填写学生姓名。'
+    return
+  }
+  if (!id) {
+    studentError.value = '请填写学号。'
+    return
+  }
+  studentCreating.value = true
+  studentError.value = ''
+  try {
+    const result = await createStudentAccount({ id, name, classId: groupId })
+    createdStudent.value = {
+      id: result.id,
+      initial_password: result.initial_password
+    }
+    studentFormOpen.value = false
+    resetStudentForm()
+    groupMembersPage.value = 1
+    await loadGroupMembers()
+  } catch (reason) {
+    studentError.value = actionError(reason, '学生账号创建失败。')
+  } finally {
+    studentCreating.value = false
+  }
+}
+
+async function copyInitialPassword() {
+  const password = createdStudent.value?.initial_password
+  if (!password) return
+  try {
+    await navigator.clipboard.writeText(password)
+    initialPasswordCopied.value = true
+    window.setTimeout(() => {
+      initialPasswordCopied.value = false
+    }, 1800)
+  } catch {
+    initialPasswordCopied.value = false
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1614,7 +1779,7 @@ watch(activeTab, ensureTab, { immediate: true })
               <div class="panel__header">
                 <div>
                   <h2 class="panel__title">班级与权限组</h2>
-                  <p class="panel__subtitle">只读 · 名称、类型与描述</p>
+                  <p class="panel__subtitle">点击班级查看成员；管理员可创建学生账号</p>
                 </div>
                 <div class="panel__actions">
                   <span class="badge badge--info">共 {{ formatCount(groupsTotal) }} 个</span>
@@ -1659,21 +1824,196 @@ watch(activeTab, ensureTab, { immediate: true })
                   {{ groupsError }}
                 </BubbleFeedback>
                 <p v-if="!groups.length" class="empty-inline">没有匹配的班级或权限组。</p>
-                <ul v-else class="row-list" :class="{ 'is-loading': groupsLoading }">
-                  <li v-for="group in groups" :key="group._id" class="row">
-                    <div class="row__main">
-                      <span class="row__title">{{ group.name || '未命名组' }}</span>
-                      <span class="row__meta">
-                        {{ group.description || (group.permissions?.length ? group.permissions.join(' · ') : '暂无描述') }}
-                      </span>
+                <ul v-else class="row-list group-list" :class="{ 'is-loading': groupsLoading }">
+                  <li
+                    v-for="group in groups"
+                    :key="group._id"
+                    class="group-row"
+                    :class="{ 'is-expanded': expandedGroupId === group._id }"
+                  >
+                    <div
+                      class="row group-row__summary"
+                      @click="toggleGroup(group)"
+                    >
+                      <div class="row__main">
+                        <span class="row__title">{{ group.name || '未命名组' }}</span>
+                        <span class="row__meta">
+                          {{ group.description || (group.permissions?.length ? group.permissions.join(' · ') : '点击查看成员') }}
+                        </span>
+                      </div>
+                      <div class="group-row__actions">
+                        <span class="badge" :class="group.type === 'permission' ? 'badge--info' : ''">
+                          {{ groupTypeText(group) }}
+                        </span>
+                        <button
+                          type="button"
+                          class="ghost-button ghost-button--small"
+                          :aria-expanded="expandedGroupId === group._id"
+                          @click.stop="toggleGroup(group)"
+                        >
+                          {{ expandedGroupId === group._id ? '收起' : '成员' }}
+                        </button>
+                      </div>
                     </div>
-                    <span class="badge" :class="group.type === 'permission' ? 'badge--info' : ''">
-                      {{ groupTypeText(group) }}
-                    </span>
+
+                    <section
+                      v-if="expandedGroupId === group._id"
+                      class="group-members"
+                      :aria-label="`${group.name || '班级'}成员`"
+                    >
+                      <div class="group-members__head">
+                        <div>
+                          <h3 class="group-members__title">
+                            {{ group.name || '班级' }} · 成员
+                          </h3>
+                          <p class="group-members__meta">
+                            共 {{ formatCount(groupMembersTotal) }} 人
+                          </p>
+                        </div>
+                        <div class="group-members__actions">
+                          <button
+                            v-if="canAddStudent"
+                            type="button"
+                            class="primary-button"
+                            :disabled="studentCreating"
+                            @click="openStudentForm"
+                          >
+                            添加学生账号
+                          </button>
+                          <button
+                            type="button"
+                            class="ghost-button ghost-button--small"
+                            :disabled="groupMembersLoading"
+                            @click="loadGroupMembers"
+                          >
+                            {{ groupMembersLoading ? '刷新中…' : '刷新' }}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div v-if="createdStudent" class="student-credential" role="status">
+                        <p class="student-credential__text">
+                          学生账号已创建。初始密码为学号，请当场转交；关闭后不再显示。
+                        </p>
+                        <div class="student-credential__row">
+                          <code class="student-credential__code">{{ createdStudent.initial_password }}</code>
+                          <button type="button" class="ghost-button ghost-button--small" @click="copyInitialPassword">
+                            {{ initialPasswordCopied ? '已复制' : '复制' }}
+                          </button>
+                          <button type="button" class="text-button" @click="createdStudent = null">
+                            关闭
+                          </button>
+                        </div>
+                      </div>
+
+                      <form v-if="studentFormOpen" class="student-form" @submit.prevent="submitStudent">
+                        <div class="student-form__fields">
+                          <label class="field">
+                            <span class="field__label">姓名</span>
+                            <input
+                              v-model="studentName"
+                              class="input"
+                              type="text"
+                              maxlength="40"
+                              autocomplete="off"
+                              placeholder="学生姓名"
+                            />
+                          </label>
+                          <label class="field">
+                            <span class="field__label">学号</span>
+                            <input
+                              v-model="studentId"
+                              class="input"
+                              type="text"
+                              maxlength="32"
+                              autocomplete="off"
+                              placeholder="登录学号"
+                            />
+                          </label>
+                        </div>
+                        <BubbleFeedback v-if="studentError" class="glass-feedback--error" role="alert">
+                          {{ studentError }}
+                        </BubbleFeedback>
+                        <div class="student-form__actions">
+                          <button
+                            type="button"
+                            class="ghost-button ghost-button--small"
+                            :disabled="studentCreating"
+                            @click="closeStudentForm"
+                          >
+                            取消
+                          </button>
+                          <button type="submit" class="primary-button" :disabled="studentCreating">
+                            {{ studentCreating ? '创建中…' : '创建账号' }}
+                          </button>
+                        </div>
+                      </form>
+
+                      <div v-if="groupMembersLoading && !groupMembers.length" class="state-block" role="status">
+                        <span class="spinner" aria-hidden="true"></span>
+                        正在读取班级成员…
+                      </div>
+                      <div
+                        v-else-if="groupMembersError && !groupMembers.length"
+                        class="state-block state-block--error"
+                        role="alert"
+                      >
+                        <BubbleFeedback class="glass-feedback--error">
+                          {{ groupMembersError }}
+                        </BubbleFeedback>
+                        <button type="button" class="ghost-button ghost-button--small" @click="loadGroupMembers">
+                          重试
+                        </button>
+                      </div>
+                      <template v-else>
+                        <BubbleFeedback
+                          v-if="groupMembersError"
+                          class="inline-note glass-feedback--error"
+                          role="alert"
+                        >
+                          {{ groupMembersError }}
+                        </BubbleFeedback>
+                        <p v-if="!groupMembers.length" class="empty-inline">该班级还没有成员。</p>
+                        <ul v-else class="group-member-list" :class="{ 'is-loading': groupMembersLoading }">
+                          <li v-for="member in groupMembers" :key="member._id" class="group-member">
+                            <div class="group-member__main">
+                              <span class="group-member__name">{{ member.name || '未命名学生' }}</span>
+                              <span class="group-member__id">学号 {{ member.id ?? '—' }}</span>
+                            </div>
+                            <span v-if="member.banned" class="badge badge--bad">已封禁</span>
+                            <span v-else class="badge badge--good">正常</span>
+                          </li>
+                        </ul>
+                        <div v-if="groupMembersTotal > GROUP_MEMBER_PAGE_SIZE" class="pager">
+                          <span class="pager__info">
+                            第 {{ groupMembersPage }} / {{ groupMemberPages }} 页 · 每页
+                            {{ GROUP_MEMBER_PAGE_SIZE }} 人
+                          </span>
+                          <div class="pager__actions">
+                            <button
+                              type="button"
+                              class="ghost-button ghost-button--small"
+                              :disabled="groupMembersPage <= 1 || groupMembersLoading"
+                              @click="groupMembersPrev"
+                            >
+                              上一页
+                            </button>
+                            <button
+                              type="button"
+                              class="ghost-button ghost-button--small"
+                              :disabled="groupMembersPage >= groupMemberPages || groupMembersLoading"
+                              @click="groupMembersNext"
+                            >
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      </template>
+                    </section>
                   </li>
                 </ul>
                 <p class="panel__footnote">
-                  接口未返回成员数量；成员明细请在主站班级页面查看。
+                  点击班级行查看成员；管理员可直接创建学生账号，初始密码就是学号。
                 </p>
                 <div class="pager" :key="groupsPage">
                   <span class="pager__info">
@@ -3300,6 +3640,194 @@ select.input:focus-visible {
 .pager__actions {
   display: flex;
   gap: var(--space-2);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Class roster                                                                */
+/* -------------------------------------------------------------------------- */
+
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.group-row {
+  border-bottom: 1px solid var(--color-border-hairline);
+}
+
+.group-row:last-child {
+  border-bottom: none;
+}
+
+.group-row__summary {
+  border-bottom: none;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-smooth);
+}
+
+.group-row__summary:hover {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.group-row__summary:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+.group-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.group-row.is-expanded .group-row__summary {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.group-members {
+  margin: 0 var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.group-members__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.group-members__title {
+  margin: 0;
+  font-size: var(--font-size-callout);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.group-members__meta {
+  margin: 2px 0 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.group-members__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.group-member-list {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+}
+
+.group-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.group-member__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.group-member__name {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.group-member__id {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.student-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid rgba(0, 113, 227, 0.22);
+  border-radius: var(--radius-md);
+  background: rgba(245, 250, 255, 0.82);
+}
+
+.student-form__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--space-3);
+}
+
+.student-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.student-credential {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid rgba(52, 199, 89, 0.32);
+  border-radius: var(--radius-md);
+  background: rgba(240, 251, 245, 0.86);
+}
+
+.student-credential__text {
+  margin: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-normal);
+}
+
+.student-credential__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.student-credential__code {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--color-border-subtle);
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: var(--font-size-callout);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: all;
+  overflow-wrap: anywhere;
 }
 
 /* -------------------------------------------------------------------------- */

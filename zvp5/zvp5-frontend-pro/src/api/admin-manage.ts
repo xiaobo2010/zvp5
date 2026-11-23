@@ -253,6 +253,33 @@ export function fetchGroups(
   )
 }
 
+export interface CreatedStudentAccount {
+  id: string
+  /** One-time initial password (the student id). Never returned again. */
+  initial_password: string
+}
+
+/**
+ * Create a student account directly inside a class. The backend restricts this
+ * to admins and initialises the password to the student id; the Pro class tab
+ * only offers the action when the operator has the admin role.
+ */
+export function createStudentAccount(input: {
+  id: string
+  name: string
+  classId: string
+}): Promise<CreatedStudentAccount> {
+  return apiRequest<CreatedStudentAccount>(
+    '/v1/users',
+    jsonBody({
+      id: input.id,
+      name: input.name,
+      roles: ['student'],
+      class_id: input.classId
+    })
+  )
+}
+
 /* -------------------------------------------------------------------------- */
 /* Notifications                                                               */
 /* -------------------------------------------------------------------------- */
