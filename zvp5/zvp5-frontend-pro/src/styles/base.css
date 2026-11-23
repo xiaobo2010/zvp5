@@ -1,5 +1,6 @@
 @import './tokens.css';
 @import './feedback.css';
+@import './frosted.css';
 
 :root {
   color-scheme: light;

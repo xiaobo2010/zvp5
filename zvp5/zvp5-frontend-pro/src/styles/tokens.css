@@ -84,6 +84,21 @@
      readable without relying on the page behind it. */
   --glass-tablet-bg: linear-gradient(147deg, #fffdf9f7, #edf5fdf4 57%, #f8f5fff7);
   --glass-tablet-floating-bg: linear-gradient(145deg, #fffdf9fb, #f3f8fef9 60%, #f8f5fffb);
+  /* Static frosted material for small controls and feedback bubbles. It is
+     deliberately self-contained: no backdrop-filter, so tablet compositors
+     cannot blank the control, while the milky highlight, rim and inner shadow
+     still read as frosted glass. */
+  --frosted-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='80' height='80' filter='url(%23n)' opacity='.06'/%3E%3C/svg%3E");
+  --frosted-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.93), transparent 60%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.63), rgb(234 246 255 / 0.45) 56%, rgb(250 245 255 / 0.58));
+  --frosted-size: 80px 80px, auto, auto;
+  --frosted-repeat: repeat, no-repeat, no-repeat;
+  --frosted-border: rgb(255 255 255 / 0.92);
+  --frosted-rim: inset 0 1px 0 rgb(255 255 255 / 0.98), inset 0 -1px 0 rgb(74 109 143 / 0.12),
+    inset 1px 0 0 rgb(255 255 255 / 0.58);
+  --frosted-shadow: var(--frosted-rim), 0 4px 12px rgb(47 78 103 / 0.08),
+    0 16px 36px rgb(51 79 108 / 0.14);
   --glass-highlight: linear-gradient(
     162deg,
     #fffefbe6,
@@ -281,30 +296,6 @@
     --glass-floating-bg: var(--glass-tablet-floating-bg);
     --glass-blur: none;
     --glass-mobile-blur: none;
-  }
-}
-
-/* Tablet GPUs/engines can composite backdrop-filter as an empty layer: the
-   glass panel, drawer and clock then paint only their border and children
-   vanish. Keep the blur on desktop, but switch tablets to a self-contained
-   satin glass so the material, content and animations stay visible. The clock
-   and buttons already use their own recipes; this covers the large panels,
-   drawer, tabs and modal glass as well. */
-@media (any-pointer: coarse) and (min-width: 600px) {
-  :root,
-  .pro-app {
-    --glass-bg: var(--glass-tablet-bg);
-    --glass-floating-bg: var(--glass-tablet-floating-bg);
-    --glass-blur: none;
-    --glass-mobile-blur: none;
-  }
-
-  .pro-app,
-  .pro-app *,
-  .pro-app *::before,
-  .pro-app *::after {
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
   }
 }
 

@@ -1,0 +1,48 @@
+/* Static frosted controls and feedback bubbles.
+   These deliberately avoid backdrop-filter: some tablet compositors turn a
+   filtered control into an empty layer (border only). The milky dual
+   highlight, translucent body, rim light and soft inner shadow keep the
+   material legible while the sidebar itself keeps its full liquid glass. */
+
+.pro-app .glass-button,
+.pro-app .liquid-btn--secondary,
+.pro-app .site-nav__handle,
+.pro-app .site-nav__drawer-close,
+.pro-app .site-nav__drawer-link {
+  background-color: transparent !important;
+  background-image: var(--frosted-bg) !important;
+  background-size: var(--frosted-size) !important;
+  background-repeat: var(--frosted-repeat) !important;
+  border-color: var(--frosted-border) !important;
+  box-shadow: var(--frosted-shadow) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Keep the selected drawer item's accent outline above the frosted base. */
+.pro-app .site-nav__drawer-link.is-selected,
+.pro-app .site-nav__drawer-link:active {
+  border-color: var(--accent-ink) !important;
+}
+
+.pro-app .glass-button:hover,
+.pro-app .liquid-btn--secondary:hover:not(:disabled),
+.pro-app .site-nav__handle:hover,
+.pro-app .site-nav__drawer-close:hover,
+.pro-app .site-nav__drawer-link:hover {
+  box-shadow: var(--frosted-shadow), 0 0 0 1px rgb(0 113 227 / 0.12) !important;
+}
+
+.pro-app .glass-feedback__body {
+  background-color: transparent !important;
+  background-image:
+    var(--frosted-grain),
+    radial-gradient(120% 160% at 18% 0%, rgb(255 255 255 / 0.9), transparent 62%),
+    linear-gradient(153deg, rgb(255 255 255 / 0.62), var(--feedback-tint, #d9eafd)) !important;
+  background-size: 80px 80px, auto, auto !important;
+  background-repeat: repeat, no-repeat, no-repeat !important;
+  border-color: var(--frosted-border) !important;
+  box-shadow: var(--frosted-shadow) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
