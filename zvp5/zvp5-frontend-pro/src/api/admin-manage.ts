@@ -201,6 +201,44 @@ export function fetchUsers(
   )
 }
 
+/**
+ * Class roster for secretaries (and any same-class reader). The backend v3
+ * route lists live members by `class_id`; it is the only user-list call a
+ * secretary may make because `/v1/users` is admin/department only.
+ */
+export function fetchGroupUsers(
+  groupId: string,
+  page = 1,
+  size = 10,
+  query = ''
+): Promise<AdminPage<AdminUser>> {
+  return apiRequest<AdminPage<AdminUser>>(
+    `/v1/groups/${encodeURIComponent(groupId)}/users${buildQuery({ page, size, query })}`
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Theme usage statistics (admin only)                                         */
+/* -------------------------------------------------------------------------- */
+
+export interface AdminThemeStatItem {
+  id: string
+  label: string
+  count: number
+  percent: number
+}
+
+export interface AdminThemeStats {
+  total: number
+  items: AdminThemeStatItem[]
+  /** Accounts whose stored theme id is no longer in the registry. */
+  other: number
+}
+
+export function fetchThemeStats(): Promise<AdminThemeStats> {
+  return apiRequest<AdminThemeStats>('/v1/themes/stats')
+}
+
 /* -------------------------------------------------------------------------- */
 /* Groups                                                                      */
 /* -------------------------------------------------------------------------- */

@@ -1,4 +1,4 @@
-// Read-only user detail for the Pro platform console.
+// User detail API client for the Pro platform console.
 //
 // These backend routes already exist on the main API and only read data:
 //   GET /v1/users/{oid}            (v3) profile for any authenticated account
@@ -8,10 +8,11 @@
 //
 // `users_v2_router` is registered before `users_v3_router` on the same prefix,
 // so `/time` and `/activities` resolve to the v2 shapes typed below, while the
-// bare profile path only exists on v3. Nothing here writes: the platform console
-// keeps its read-only contract and the server still owns every permission gate.
+// bare profile path only exists on v3. The profile reads below are side-effect
+// free; the admin edit helpers at the bottom call the existing v3 write routes
+// and rely on the server for every permission gate.
 
-import { apiRequest, buildQuery } from './http'
+import { apiRequest, apiVoid, buildQuery } from './http'
 
 /** Mirrors the backend's `perpage <= 100` cap on the v2 member list. */
 export const MANAGE_USER_ACTIVITY_PAGE_MAX = 100
@@ -108,4 +109,80 @@ export async function fetchAdminGroupName(groupId: string): Promise<string> {
   } catch {
     return ''
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Admin edits                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Roles accepted by `PUT /v1/users/{id}/roles` (backend Literal allowlist). */
+export const ADMIN_EDITABLE_ROLES = ['student', 'secretary', 'department', 'admin'] as const
+export type AdminEditableRole = (typeof ADMIN_EDITABLE_ROLES)[number]
+
+/**
+ * `PUT /v1/users/{oid}/roles` (admin only). The backend rejects changing
+ * another admin or the operator's own roles with 403.
+ */
+export function updateUserRoles(oid: string, roles: string[]): Promise<void> {
+  return apiVoid(`/v1/users/${encodeURIComponent(oid)}/roles`, {
+    method: 'PUT',
+    body: JSON.stringify({ roles })
+  })
+}
+
+/**
+ * `PUT /v1/users/{oid}/student-id` (admin only). The student id is the login
+ * name; a successful write rotates the target's session id.
+ */
+export function updateUserStudentId(oid: string, id: string): Promise<void> {
+  return apiVoid(`/v1/users/${encodeURIComponent(oid)}/student-id`, {
+    method: 'PUT',
+    body: JSON.stringify({ id })
+  })
+}
+
+/** Set a user's class: `POST /v1/groups/{classId}/users/{userId}`. */
+export function setUserClass(classId: string, userId: string): Promise<void> {
+  return apiVoid(
+    `/v1/groups/${encodeURIComponent(classId)}/users/${encodeURIComponent(userId)}`,
+    { method: 'POST' }
+  )
+}
+
+/** Clear a user's class: `DELETE /v1/groups/{oldClassId}/users/{userId}`. */
+export function clearUserClass(classId: string, userId: string): Promise<void> {
+  return apiVoid(
+    `/v1/groups/${encodeURIComponent(classId)}/users/${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+export interface TempPasswordResult {
+  /** Plaintext 8-digit code. Only returned once; the server stores a hash. */
+  code: string
+  expires_at: string | null
+  target?: {
+    _id?: string
+    id?: string | number
+    name?: string
+  }
+}
+
+/**
+ * `POST /v1/users/{oid}/temp-password` with a password-verification token.
+ *
+ * The token must be minted by the operator (`verifyPassword(own id, password)`);
+ * a password is never sent to this endpoint.
+ */
+export function createUserTempPassword(
+  oid: string,
+  verificationToken: string
+): Promise<TempPasswordResult> {
+  return apiRequest<TempPasswordResult>(
+    `/v1/users/${encodeURIComponent(oid)}/temp-password`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ verification_token: verificationToken })
+    }
+  )
 }

@@ -63,7 +63,17 @@ const router = createRouter({
       path: '/manage',
       name: 'manage',
       component: () => import('@/views/ManageView.vue'),
-      meta: { title: '平台管理', requiresAuth: true, roles: ['admin', 'department'] }
+      meta: { title: '平台管理', requiresAuth: true, roles: ['admin', 'department', 'secretary'] }
+    },
+    {
+      path: '/manage/users/:id',
+      name: 'manage-user',
+      component: () => import('@/views/ManageUserView.vue'),
+      meta: {
+        title: '用户资料',
+        requiresAuth: true,
+        roles: ['admin', 'department', 'secretary']
+      }
     },
     {
       path: '/ai',

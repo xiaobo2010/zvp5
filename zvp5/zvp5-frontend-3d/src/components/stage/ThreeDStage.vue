@@ -14,15 +14,59 @@ const warp = ref(false)
 const parallaxX = ref(0)
 const parallaxY = ref(0)
 const isTouch = ref(false)
+/**
+ * Flat mode keeps the content readable when the 3D scene cannot be trusted.
+ *
+ * Firefox on tablets (Firefox for Android on a coarse pointer) combines
+ * `backdrop-filter`, `transform-style: preserve-3d` and a perspective track in
+ * a way that can paint the card as an empty/black layer. The same combination
+ * is also the first thing to break when a browser lacks CSS 3D support. In
+ * flat mode the stage stops being a 3D scene entirely: the active card is a
+ * normal in-flow block, no canvas is required, and the space backdrop is pure
+ * CSS. Desktop Chrome/Safari keep the full 3D experience.
+ */
+const flat = ref(detectFlat())
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
 
 let media: MediaQueryList | null = null
+let coarseMedia: MediaQueryList | null = null
 
 const GAP = 900
 const TRANSITION_DUR = 820
 
+function mediaMatches(query: string): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(query).matches
+  )
+}
+
+function supportsCss3d(): boolean {
+  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return true
+  return (
+    CSS.supports('transform-style', 'preserve-3d') &&
+    CSS.supports('perspective', '1px')
+  )
+}
+
+function detectFlat(): boolean {
+  if (typeof window === 'undefined') return false
+  const isFirefox = /firefox|fxios/i.test(navigator.userAgent)
+  const coarse = mediaMatches('(pointer: coarse)') || mediaMatches('(hover: none)')
+  const touchCapable = navigator.maxTouchPoints > 0 || 'ontouchstart' in window
+  // Firefox + touch is the known-bad pairing; missing 3D support is a hard
+  // reason for everyone else.
+  return (isFirefox && (coarse || touchCapable)) || !supportsCss3d()
+}
+
 const modules = computed(() => props.data.modules)
 const total = computed(() => modules.value.length)
+const trackTransform = computed(() =>
+  flat.value || reduced.value
+    ? 'none'
+    : `rotateX(${parallaxY.value * 0.3}deg) rotateY(${parallaxX.value * 0.3}deg)`
+)
 const maxHour = computed(() =>
   Math.max(1, ...props.data.hours.points.map((p) => p.hours))
 )
@@ -31,6 +75,18 @@ const extraItems = computed(() => props.data.extra.items.slice(0, 6))
 
 function depthStyle(index: number) {
   const raw = index - active.value
+  if (flat.value) {
+    // Only the active card participates in layout; the CSS hides the rest so a
+    // tall module can scroll the page instead of being clipped by a fixed 3D
+    // viewport. No transforms, no filters, no canvas dependency.
+    return {
+      transform: 'none',
+      filter: 'none',
+      opacity: raw === 0 ? '1' : '0',
+      visibility: raw === 0 ? 'visible' : 'hidden',
+      zIndex: '1'
+    } as const
+  }
   // A rail jump can skip modules; clamp the visual offset so a card never
   // travels behind the camera (z > perspective) or explodes in projection.
   const d = Math.max(-1, Math.min(1, raw))
@@ -47,7 +103,10 @@ function depthStyle(index: number) {
 
   return {
     transform: `translate(-50%, -50%) translate3d(0, 0, ${z}px) scale(${scale})`,
-    filter: `blur(${blur}px)`,
+    // `blur(0px)` still creates a filter containing block. Firefox tablet
+    // flattens the backdrop-filter card inside it and paints nothing, so the
+    // active card must stay filter-free.
+    filter: blur === 0 ? 'none' : `blur(${blur}px)`,
     opacity: String(opacity),
     visibility: isVisible ? 'visible' : 'hidden',
     zIndex: String(100 - Math.abs(raw))
@@ -58,6 +117,7 @@ function goTo(index: number) {
   if (index < 0 || index >= total.value || transitioning.value) return
   previousActive.value = active.value
   active.value = index
+  if (flat.value) return
   transitioning.value = true
   warp.value = true
 
@@ -102,17 +162,25 @@ function checkTouch() {
   isTouch.value = 'ontouchstart' in window || navigator.maxTouchPoints > 0
 }
 
+function syncCapabilities() {
+  flat.value = detectFlat()
+  checkTouch()
+}
+
 onMounted(() => {
   media = window.matchMedia('(prefers-reduced-motion: reduce)')
   syncMotion(media)
   media.addEventListener('change', syncMotion)
+  coarseMedia = window.matchMedia('(pointer: coarse)')
+  coarseMedia.addEventListener('change', syncCapabilities)
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('pointermove', onPointerMove)
-  checkTouch()
+  syncCapabilities()
 })
 
 onBeforeUnmount(() => {
   media?.removeEventListener('change', syncMotion)
+  coarseMedia?.removeEventListener('change', syncCapabilities)
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('pointermove', onPointerMove)
   if (transitionTimer) clearTimeout(transitionTimer)
@@ -158,7 +226,7 @@ function extraTone(item: StageExtraItem) {
 </script>
 
 <template>
-  <div class="stage" :class="{ 'is-reduced': reduced }">
+  <div class="stage" :class="{ 'is-reduced': reduced, 'is-flat': flat }">
     <!-- Background environment -->
     <div class="stage-backdrop">
       <div class="nebula nebula-1"></div>
@@ -167,18 +235,17 @@ function extraTone(item: StageExtraItem) {
       <div class="horizon-grid"></div>
     </div>
 
-    <StarfieldCanvas :warp="warp" :reduced="reduced" />
+    <StarfieldCanvas v-if="!flat" :warp="warp" :reduced="reduced" />
+    <!-- Flat mode paints its stars with CSS: the fallback must never depend on
+         a canvas context being available or animated. -->
+    <div v-else class="stage-stars" aria-hidden="true"></div>
     <div class="stage-shade" aria-hidden="true"></div>
 
     <!-- 3D scene -->
     <div class="stage-scene">
       <div
         class="stage-track"
-        :style="{
-          transform: reduced
-            ? 'none'
-            : `rotateX(${parallaxY * 0.3}deg) rotateY(${parallaxX * 0.3}deg)`
-        }"
+        :style="{ transform: trackTransform }"
       >
         <div
           v-for="(module, index) in modules"
@@ -1278,6 +1345,221 @@ function extraTone(item: StageExtraItem) {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* CSS-only star field used by the flat fallback (no canvas context needed). */
+.stage-stars {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: #04070d;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgb(238 246 255 / 0.75), transparent 100%),
+    radial-gradient(1px 1px at 28% 62%, rgb(169 211 255 / 0.6), transparent 100%),
+    radial-gradient(1.5px 1.5px at 44% 32%, rgb(238 246 255 / 0.7), transparent 100%),
+    radial-gradient(1px 1px at 61% 78%, rgb(169 182 255 / 0.55), transparent 100%),
+    radial-gradient(1.5px 1.5px at 76% 24%, rgb(238 246 255 / 0.65), transparent 100%),
+    radial-gradient(1px 1px at 88% 56%, rgb(111 215 196 / 0.55), transparent 100%),
+    radial-gradient(1px 1px at 19% 86%, rgb(238 246 255 / 0.5), transparent 100%),
+    radial-gradient(1px 1px at 68% 12%, rgb(169 211 255 / 0.5), transparent 100%),
+    radial-gradient(2px 2px at 54% 8%, rgb(238 246 255 / 0.4), transparent 100%),
+    radial-gradient(2px 2px at 8% 48%, rgb(169 211 255 / 0.35), transparent 100%),
+    radial-gradient(ellipse 60% 50% at 50% 0%, rgb(24 43 78 / 0.55), transparent 70%),
+    radial-gradient(ellipse 70% 55% at 80% 95%, rgb(26 62 62 / 0.32), transparent 72%);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Flat fallback                                                             */
+/* ------------------------------------------------------------------------- */
+
+/* Firefox tablet cannot reliably composite perspective + preserve-3d +
+   backdrop-filter in one tree. The flat stage drops all three and becomes a
+   normal scrolling document: readable active card, CSS star field, no canvas. */
+.stage.is-flat {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+.stage.is-flat .stage-backdrop,
+.stage.is-flat .stage-shade {
+  position: absolute;
+}
+
+.stage.is-flat .stage-backdrop {
+  z-index: 0;
+}
+
+.stage.is-flat .stage-shade {
+  z-index: 1;
+}
+
+.stage.is-flat .nebula {
+  filter: none;
+  opacity: 0.12;
+}
+
+.stage.is-flat .horizon-grid {
+  transform: none;
+  height: 22%;
+  background: linear-gradient(
+    to top,
+    rgb(169 211 255 / 0.08),
+    transparent 100%
+  );
+  opacity: 0.5;
+}
+
+.stage.is-flat .stage-scene {
+  display: block;
+  height: auto;
+  min-height: 0;
+  padding: 96px 18px 150px;
+  perspective: none;
+}
+
+.stage.is-flat .stage-track {
+  height: auto;
+  transform: none !important;
+  transform-style: flat;
+  transition: none;
+}
+
+.stage.is-flat .stage-card-wrapper {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: 100%;
+  margin: 0 auto;
+  transform: none !important;
+  filter: none !important;
+  transition: none;
+  transform-style: flat;
+  will-change: auto;
+}
+
+/* Inline `visibility`/`opacity` still switch cards; display:none keeps a
+   hidden module from reserving height in the normal document flow. */
+.stage.is-flat .stage-card-wrapper[aria-hidden='true'] {
+  display: none;
+}
+
+.stage.is-flat .stage-card {
+  max-height: none;
+  overflow: visible;
+  padding: 36px 28px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgb(30 48 80 / 0.45), transparent 70%),
+    linear-gradient(135deg, rgb(12 18 32 / 0.96), rgb(7 11 20 / 0.98));
+  border-color: rgb(169 211 255 / 0.2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform-style: flat;
+  animation: none;
+}
+
+.stage.is-flat .card-header,
+.stage.is-flat .card-content,
+.stage.is-flat .card-glow,
+.stage.is-flat .card-reflection,
+.stage.is-flat .hours-scene,
+.stage.is-flat .hours-chart,
+.stage.is-flat .hours-bar-container,
+.stage.is-flat .hours-bar,
+.stage.is-flat .activities-content,
+.stage.is-flat .activities-space,
+.stage.is-flat .activity-card {
+  transform: none !important;
+  transform-style: flat;
+}
+
+.stage.is-flat .card-glow,
+.stage.is-flat .card-reflection,
+.stage.is-flat .hours-floor,
+.stage.is-flat .activities-connections {
+  display: none;
+}
+
+.stage.is-flat .hours-chart {
+  height: 190px;
+  perspective: none;
+  gap: 14px;
+}
+
+.stage.is-flat .hours-bar {
+  height: calc(var(--bar-height, 0.5) * 150px);
+}
+
+.stage.is-flat .bar-back,
+.stage.is-flat .bar-top {
+  display: none;
+}
+
+.stage.is-flat .hours-bar::before,
+.stage.is-flat .hours-bar::after {
+  display: none;
+}
+
+.stage.is-flat .bar-front {
+  inset: 0;
+  transform: none;
+}
+
+.stage.is-flat .activities-space {
+  height: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stage.is-flat .activity-card {
+  position: static;
+  width: auto;
+}
+
+.stage.is-flat .activities-content {
+  min-height: 0;
+}
+
+.stage.is-flat .extra-content {
+  justify-content: flex-start;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.stage.is-flat .nav-btn,
+.stage.is-flat .depth-rail {
+  background: rgb(16 24 42 / 0.9);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.stage.is-flat .stage-nav {
+  background: rgb(4 7 13 / 0.72);
+  border-radius: 2px;
+  padding: 6px 10px;
+  bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .stage.is-flat .stage-scene {
+    padding: 82px 12px 140px;
+  }
+
+  .stage.is-flat .stage-card {
+    max-height: none;
+    padding: 28px 20px;
+  }
+
+  .stage.is-flat .activities-space {
+    grid-template-columns: 1fr;
+  }
+
+  .stage.is-flat .identity-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Responsive */

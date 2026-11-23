@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import AdminWriteVerification from '@/components/AdminWriteVerification.vue'
-import ManageUserDetail from '@/components/ManageUserDetail.vue'
 import { ApiError, readableError } from '@/api/http'
 import {
   createNotification,
@@ -14,11 +13,13 @@ import {
   fetchAttachments,
   fetchBanRecords,
   fetchBanRules,
-  fetchGroups,
   fetchGroupCount,
+  fetchGroupUsers,
+  fetchGroups,
   fetchLogs,
   fetchRolePolicies,
   fetchSystemSettings,
+  fetchThemeStats,
   fetchUserCount,
   fetchUsers,
   saveSystemSettings,
@@ -33,13 +34,17 @@ import {
   type AdminRolePolicy,
   type AdminSettingItem,
   type AdminSettings,
+  type AdminThemeStats,
   type AdminUser,
   type SettingUpdateItem
 } from '@/api/admin-manage'
 import { renderMarkdown } from '@/utils/markdown'
 import { currentRoles } from '@/api/permissions'
+import { useSessionStore } from '@/shared/stores/session'
 
+const route = useRoute()
 const router = useRouter()
+const session = useSessionStore()
 const adminVerification = ref<InstanceType<typeof AdminWriteVerification>>()
 
 async function requestWriteProof() {
@@ -49,8 +54,9 @@ async function requestWriteProof() {
 
 const allTabs: AnimatedTabItem[] = [
   { value: 'overview', label: '概览', hint: '平台实时计数与近期动态' },
-  { value: 'users', label: '用户', hint: '只读用户目录' },
+  { value: 'users', label: '用户', hint: '用户目录与资料管理' },
   { value: 'groups', label: '班级', hint: '只读班级与权限组' },
+  { value: 'themes', label: '主题', hint: '账号主题使用统计' },
   { value: 'notifications', label: '通知', hint: '发布与启停通知' },
   { value: 'roles', label: '角色', hint: '只读角色能力矩阵' },
   { value: 'logs', label: '日志', hint: '只读审计日志' },
@@ -59,14 +65,35 @@ const allTabs: AnimatedTabItem[] = [
   { value: 'attachments', label: '附件', hint: '只读附件清单' }
 ]
 
-const isAdminUser = currentRoles().includes('admin')
-const tabs = computed(() =>
-  isAdminUser
-    ? allTabs
-    : allTabs.filter((tab) => ['users', 'groups'].includes(tab.value))
-)
+const operatorRoles = currentRoles()
+const isAdminUser = operatorRoles.includes('admin')
+const isDepartmentUser = operatorRoles.includes('department')
+const isSecretaryUser = operatorRoles.includes('secretary') && !isAdminUser && !isDepartmentUser
 
-const activeTab = ref(isAdminUser ? 'overview' : 'users')
+/**
+ * Admin sees every tab; department keeps the read-only class/groups views;
+ * secretary only gets the class roster (their `/v1/users` call would 403).
+ */
+const tabs = computed(() => {
+  if (isAdminUser) return allTabs
+  if (isDepartmentUser) {
+    return allTabs.filter((tab) => ['users', 'groups'].includes(tab.value))
+  }
+  return allTabs.filter((tab) => tab.value === 'users')
+})
+
+function queryText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+const requestedTab = queryText(route.query.tab)
+const activeTab = ref(
+  tabs.value.some((tab) => tab.value === requestedTab)
+    ? requestedTab
+    : isAdminUser
+      ? 'overview'
+      : 'users'
+)
 const currentTabLabel = computed(
   () => tabs.value.find((item) => item.value === activeTab.value)?.label ?? ''
 )
@@ -199,16 +226,27 @@ async function loadOverview() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Users (read-only)                                                           */
+/* Users                                                                       */
 /* -------------------------------------------------------------------------- */
 
 const USER_PAGE_SIZE = 10
+const USER_FILTER_ROLES = ['admin', 'department', 'secretary', 'student', 'auditor']
+const initialUsersQuery = queryText(route.query.q).trim()
+const initialUsersPage = Number(queryText(route.query.page))
+const initialUsersRole = isAdminUser ? queryText(route.query.role) : ''
+
 const users = ref<AdminUser[]>([])
 const usersTotal = ref(0)
-const usersPage = ref(1)
-const usersQuery = ref('')
-const usersQueryDraft = ref('')
-const usersRole = ref('')
+const usersPage = ref(
+  Number.isFinite(initialUsersPage) && initialUsersPage > 0
+    ? Math.trunc(initialUsersPage)
+    : 1
+)
+const usersQuery = ref(initialUsersQuery)
+const usersQueryDraft = ref(initialUsersQuery)
+const usersRole = ref(
+  USER_FILTER_ROLES.includes(initialUsersRole) ? initialUsersRole : ''
+)
 const usersLoading = ref(false)
 const usersError = ref('')
 const usersLoaded = ref(false)
@@ -216,17 +254,48 @@ let usersSeq = 0
 
 const usersPages = computed(() => totalPages(usersTotal.value, USER_PAGE_SIZE))
 
+/**
+ * Keep the list state in the URL. The detail page is a real route now, so
+ * browser back (and the page's own back button) must restore the same query,
+ * page and role filter instead of an empty first page.
+ */
+function usersListQuery(): Record<string, string> {
+  const next: Record<string, string> = { tab: 'users' }
+  if (usersQuery.value) next.q = usersQuery.value
+  if (isAdminUser && usersRole.value) next.role = usersRole.value
+  if (usersPage.value > 1) next.page = String(usersPage.value)
+  return next
+}
+
+function syncUsersQuery(): Promise<void> {
+  if (activeTab.value !== 'users') return Promise.resolve()
+  return router.replace({ query: usersListQuery() }).then(() => undefined)
+}
+
 async function loadUsers() {
   const seq = ++usersSeq
   usersLoading.value = true
   usersError.value = ''
   try {
-    const data = await fetchUsers(
-      usersPage.value,
-      USER_PAGE_SIZE,
-      usersQuery.value,
-      usersRole.value
-    )
+    // Secretaries must never call GET /v1/users (admin/department only). They
+    // list their own class through the group roster endpoint instead.
+    let classId = ''
+    if (isSecretaryUser) {
+      const profile = await session.ensureProfile()
+      if (seq !== usersSeq) return
+      classId = profile?.class_id || ''
+      if (!classId) {
+        users.value = []
+        usersTotal.value = 0
+        usersLoaded.value = true
+        usersError.value = '当前团支书账号未绑定班级，无法列出本班同学。'
+        return
+      }
+    }
+
+    const data = isSecretaryUser
+      ? await fetchGroupUsers(classId, usersPage.value, USER_PAGE_SIZE, usersQuery.value)
+      : await fetchUsers(usersPage.value, USER_PAGE_SIZE, usersQuery.value, usersRole.value)
     if (seq !== usersSeq) return
     users.value = Array.isArray(data.data) ? data.data : []
     usersTotal.value = Number.isFinite(Number(data.total)) ? Number(data.total) : 0
@@ -242,23 +311,27 @@ async function loadUsers() {
 function searchUsers() {
   usersQuery.value = usersQueryDraft.value.trim()
   usersPage.value = 1
+  void syncUsersQuery()
   void loadUsers()
 }
 
 function changeUserRole() {
   usersPage.value = 1
+  void syncUsersQuery()
   void loadUsers()
 }
 
 function usersPrev() {
   if (usersPage.value <= 1 || usersLoading.value) return
   usersPage.value -= 1
+  void syncUsersQuery()
   void loadUsers()
 }
 
 function usersNext() {
   if (usersPage.value >= usersPages.value || usersLoading.value) return
   usersPage.value += 1
+  void syncUsersQuery()
   void loadUsers()
 }
 
@@ -271,28 +344,20 @@ function userClassText(user: AdminUser): string {
 }
 
 /**
- * The detail modal is scoped to the row that opened it. Keeping the target in
- * component state (instead of a route) preserves the list's page, query and
- * role filter when the user closes it.
+ * Users are a dedicated page now, not a modal. Replacing the list entry's
+ * query before pushing gives browser back a URL that already contains the
+ * search/page/role state.
  */
-interface UserDetailTarget {
-  _id: string
-  name: string
-  class_name: string
-}
-
-const detailTarget = ref<UserDetailTarget | null>(null)
-
-function openUserDetail(user: AdminUser) {
+async function openUserDetail(user: AdminUser) {
   if (!user?._id) return
-  detailTarget.value = {
-    _id: user._id,
-    name: user.name || '',
-    class_name: user.class_name || ''
-  }
+  const query = usersListQuery()
+  await syncUsersQuery()
+  await router.push({
+    name: 'manage-user',
+    params: { id: user._id },
+    query
+  })
 }
-
-const USER_FILTER_ROLES = ['admin', 'department', 'secretary', 'student', 'auditor']
 
 /** Roles that the users tab can actually filter by (mirrors the <select>). */
 function roleUserFilterable(role: string): boolean {
@@ -313,6 +378,7 @@ function openRoleUsers(role: string) {
   usersRole.value = role
   usersPage.value = 1
   activeTab.value = 'users'
+  void syncUsersQuery()
   void loadUsers()
 }
 
@@ -612,6 +678,36 @@ function quotaText(value: number | null | undefined): string {
   if (value === null || value === undefined) return '系统默认'
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
   return value.toLocaleString('zh-CN')
+}
+
+/* -------------------------------------------------------------------------- */
+/* Theme usage statistics (admin only)                                         */
+/* -------------------------------------------------------------------------- */
+
+const themeStats = ref<AdminThemeStats | null>(null)
+const themesLoading = ref(false)
+const themesError = ref('')
+const themesLoaded = ref(false)
+
+const themeOtherPercent = computed(() => {
+  const stats = themeStats.value
+  if (!stats || !Number.isFinite(stats.total) || stats.total <= 0) return 0
+  return Math.round((stats.other / stats.total) * 1000) / 10
+})
+
+async function loadThemes() {
+  if (themesLoading.value) return
+  themesLoading.value = true
+  themesError.value = ''
+  try {
+    themeStats.value = await fetchThemeStats()
+    themesLoaded.value = true
+  } catch (reason) {
+    if (!themesLoaded.value) themeStats.value = null
+    themesError.value = tabError(reason, '主题统计读取失败。')
+  } finally {
+    themesLoading.value = false
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1074,6 +1170,10 @@ function ensureTab(tab: string) {
     if (!groupsLoaded.value && !groupsLoading.value && !groupsError.value) void loadGroups()
     return
   }
+  if (tab === 'themes') {
+    if (!themesLoaded.value && !themesLoading.value) void loadThemes()
+    return
+  }
   if (tab === 'notifications') {
     if (!notificationsLoaded.value && !notificationsLoading.value) void loadNotifications()
     return
@@ -1103,6 +1203,7 @@ const panelBusy = computed(() => {
   if (activeTab.value === 'overview') return overviewLoading.value
   if (activeTab.value === 'users') return usersLoading.value
   if (activeTab.value === 'groups') return groupsLoading.value
+  if (activeTab.value === 'themes') return themesLoading.value
   if (activeTab.value === 'notifications') {
     return notificationsLoading.value || notificationCreating.value
   }
@@ -1282,7 +1383,13 @@ watch(activeTab, ensureTab, { immediate: true })
               <div class="panel__header">
                 <div>
                   <h2 class="panel__title">用户目录</h2>
-                  <p class="panel__subtitle">只读 · 姓名、学号、角色、班级与封禁状态</p>
+                  <p class="panel__subtitle">
+                    {{
+                      isSecretaryUser
+                        ? '本班同学 · 可查看资料并签发一次性临时密码'
+                        : '姓名、学号、角色、班级与封禁状态'
+                    }}
+                  </p>
                 </div>
                 <div class="panel__actions">
                   <span class="badge badge--info">共 {{ formatCount(usersTotal) }} 人</span>
@@ -1307,20 +1414,22 @@ watch(activeTab, ensureTab, { immediate: true })
                   placeholder="搜索姓名或学号"
                   autocomplete="off"
                 />
-                <label class="sr-only" for="users-role">按角色筛选</label>
-                <select
-                  id="users-role"
-                  v-model="usersRole"
-                  class="input toolbar__select"
-                  @change="changeUserRole"
-                >
-                  <option value="">全部角色</option>
-                  <option value="admin">管理员</option>
-                  <option value="department">学生会</option>
-                  <option value="secretary">团支书</option>
-                  <option value="student">学生</option>
-                  <option value="auditor">审计员</option>
-                </select>
+                <template v-if="isAdminUser">
+                  <label class="sr-only" for="users-role">按角色筛选</label>
+                  <select
+                    id="users-role"
+                    v-model="usersRole"
+                    class="input toolbar__select"
+                    @change="changeUserRole"
+                  >
+                    <option value="">全部角色</option>
+                    <option value="admin">管理员</option>
+                    <option value="department">学生会</option>
+                    <option value="secretary">团支书</option>
+                    <option value="student">学生</option>
+                    <option value="auditor">审计员</option>
+                  </select>
+                </template>
                 <button type="submit" class="primary-button" :disabled="usersLoading">搜索</button>
               </form>
 
@@ -1346,8 +1455,7 @@ watch(activeTab, ensureTab, { immediate: true })
                         <button
                           type="button"
                           class="row__link"
-                          aria-haspopup="dialog"
-                          :title="`查看 ${user.name || '未命名用户'} 的用户资料`"
+                          :title="`打开 ${user.name || '未命名用户'} 的用户页面`"
                           @click="openUserDetail(user)"
                         >
                           <span class="row__name">{{ user.name || '未命名用户' }}</span>
@@ -1385,6 +1493,116 @@ watch(activeTab, ensureTab, { immediate: true })
                       下一页
                     </button>
                   </div>
+                </div>
+              </template>
+            </section>
+          </template>
+
+          <!-- 主题 -->
+          <template v-else-if="activeTab === 'themes'">
+            <section class="panel">
+              <div class="panel__header">
+                <div>
+                  <h2 class="panel__title">主题使用统计</h2>
+                  <p class="panel__subtitle">
+                    按账号主题偏好统计 · 已下线或未注册的历史值单独计入 other
+                  </p>
+                </div>
+                <div class="panel__actions">
+                  <span class="badge badge--info">
+                    共 {{ themeStats ? formatCount(themeStats.total) : '—' }} 个账号
+                  </span>
+                  <button
+                    type="button"
+                    class="ghost-button"
+                    :disabled="themesLoading"
+                    @click="loadThemes"
+                  >
+                    {{ themesLoading ? '刷新中…' : '刷新' }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="themesLoading && !themesLoaded" class="state-block" role="status">
+                <span class="spinner" aria-hidden="true"></span>
+                正在读取主题统计…
+              </div>
+
+              <div
+                v-else-if="themesError && !themesLoaded"
+                class="state-block state-block--error"
+                role="alert"
+              >
+                <BubbleFeedback class="glass-feedback--error">{{ themesError }}</BubbleFeedback>
+                <button type="button" class="ghost-button" @click="loadThemes">重试</button>
+              </div>
+
+              <template v-else>
+                <BubbleFeedback
+                  v-if="themesError"
+                  class="inline-note glass-feedback--error"
+                  role="alert"
+                >
+                  {{ themesError }}
+                </BubbleFeedback>
+
+                <p v-if="!themeStats" class="empty-inline">暂无主题统计数据。</p>
+
+                <div v-else class="theme-stats">
+                  <div class="theme-stats__total">
+                    <span class="theme-stats__label">账号总数</span>
+                    <span class="theme-stats__value">{{ formatCount(themeStats.total) }}</span>
+                    <span class="theme-stats__hint">GET /v1/themes/stats</span>
+                  </div>
+
+                  <ul class="theme-stats__list">
+                    <li
+                      v-for="item in themeStats.items"
+                      :key="item.id"
+                      class="theme-stat"
+                    >
+                      <div class="theme-stat__head">
+                        <span class="theme-stat__name">
+                          {{ item.label }}
+                          <span class="theme-stat__id">{{ item.id }}</span>
+                        </span>
+                        <span class="theme-stat__count">
+                          {{ formatCount(item.count) }} 人 · {{ item.percent }}%
+                        </span>
+                      </div>
+                      <div class="theme-stat__bar" aria-hidden="true">
+                        <span
+                          class="theme-stat__fill"
+                          :style="{ width: `${Math.min(100, Math.max(0, item.percent))}%` }"
+                        ></span>
+                      </div>
+                    </li>
+
+                    <li class="theme-stat theme-stat--other">
+                      <div class="theme-stat__head">
+                        <span class="theme-stat__name">
+                          其他 / 历史值
+                          <span class="theme-stat__id">other</span>
+                        </span>
+                        <span class="theme-stat__count">
+                          {{ formatCount(themeStats.other) }} 人 · {{ themeOtherPercent }}%
+                        </span>
+                      </div>
+                      <div class="theme-stat__bar" aria-hidden="true">
+                        <span
+                          class="theme-stat__fill"
+                          :style="{ width: `${Math.min(100, Math.max(0, themeOtherPercent))}%` }"
+                        ></span>
+                      </div>
+                      <p class="theme-stat__note">
+                        已下线主题或注册表之外的历史 id；读写主题时后端会回落到默认主题。
+                      </p>
+                    </li>
+                  </ul>
+
+                  <p class="panel__footnote">
+                    统计口径来自后端主题注册表；新增主题只需后端注册表加一条，无需改动此页。
+                  </p>
                 </div>
               </template>
             </section>
@@ -2243,15 +2461,6 @@ watch(activeTab, ensureTab, { immediate: true })
         </div>
       </Transition>
     </div>
-
-    <ManageUserDetail
-      v-if="detailTarget"
-      :key="detailTarget._id"
-      :user-id="detailTarget._id"
-      :fallback-name="detailTarget.name"
-      :fallback-class="detailTarget.class_name"
-      @close="detailTarget = null"
-    />
   </div>
 </template>
 
@@ -2798,6 +3007,129 @@ select.input:focus-visible {
   color: var(--color-text-tertiary);
   line-height: var(--line-height-normal);
   word-break: break-word;
+}
+
+/* Theme usage statistics */
+.theme-stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.theme-stats__total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 2px 8px rgba(18, 48, 82, 0.04);
+}
+
+.theme-stats__label {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.theme-stats__value {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-stats__hint {
+  margin-left: auto;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.theme-stats__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.theme-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.66);
+}
+
+.theme-stat--other {
+  background: rgba(244, 247, 252, 0.56);
+}
+
+.theme-stat__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.theme-stat__name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--font-size-callout);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.theme-stat__id {
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+}
+
+.theme-stat__count {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-stat__bar {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: rgba(0, 113, 227, 0.1);
+}
+
+.theme-stat__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0071e3, #54a8ff);
+  transition: width 400ms var(--ease-settle);
+}
+
+.theme-stat--other .theme-stat__fill {
+  background: linear-gradient(90deg, #8a94a6, #c3cbd8);
+}
+
+.theme-stat__note {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-normal);
 }
 
 .overview-columns {

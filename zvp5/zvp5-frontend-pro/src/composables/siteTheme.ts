@@ -15,6 +15,9 @@ export interface SiteTheme {
 }
 
 // Snapshot of the published Canary manifest for standalone Pro builds.
+// Only themes that still exist in the registry belong here; offline variants
+// are intentionally absent, and the backend /v1/themes registry stays the
+// primary source whenever it is reachable.
 const standaloneThemes: SiteTheme[] = [
   {
     id: 'canary', label: 'Canary', status: 'stable', base: '/',
@@ -23,11 +26,6 @@ const standaloneThemes: SiteTheme[] = [
   {
     id: PRO_THEME_ID, label: 'Canary Pro', status: 'stable', base: '/themes/canary-pro/',
     description: 'Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局',
-  },
-  {
-    id: 'canary-anthropic', label: 'Canary Anthropic', status: 'experimental',
-    base: '/themes/canary-anthropic/',
-    description: '暖色工作台：柔和中性色、圆角面板与自适应导航',
   },
 ]
 
@@ -79,8 +77,8 @@ async function loadBackendThemes(signal: AbortSignal): Promise<SiteTheme[] | nul
 export async function loadSiteThemes(signal: AbortSignal): Promise<SiteTheme[]> {
   if (switchesSiteOrigin()) return standaloneThemes
 
-  // 主题目录以后端注册表为准：新增主题（例如 canary-anthropic）只要后端
-  // 注册表有，Pro 的选择器就会出现，不需要等 Pro 再发一版快照。
+  // 主题目录以后端注册表为准：新增主题只要后端注册表有，Pro 的选择器就会
+  // 出现，不需要等 Pro 再发一版快照。
   const backend = await loadBackendThemes(signal)
   if (backend) return backend
 

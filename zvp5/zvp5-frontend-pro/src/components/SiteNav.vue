@@ -36,6 +36,13 @@ const roles = computed(() => {
 const adminItems = computed(() =>
   allAdminItems.filter((item) => {
     if (item.path === '/server') return roles.value.includes('admin')
+    if (item.path === '/manage') {
+      return (
+        roles.value.includes('admin') ||
+        roles.value.includes('department') ||
+        roles.value.includes('secretary')
+      )
+    }
     return roles.value.includes('admin') || roles.value.includes('department')
   })
 )
@@ -48,6 +55,7 @@ let navigationSequence = 0
 function isNavActive(path: string): boolean {
   if (path === '/volunteers/create') return activePath.value.startsWith('/volunteers/create')
   if (path === '/volunteers' && route.name === 'volunteer-detail') return true
+  if (path === '/manage' && activePath.value.startsWith('/manage')) return true
   return activePath.value === path
 }
 
