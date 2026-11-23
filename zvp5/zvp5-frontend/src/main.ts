@@ -64,7 +64,10 @@ async function retireLegacyServiceWorker() {
     const registrations = await navigator.serviceWorker.getRegistrations()
     if (!registrations.length) return
     const probe = await fetch('/sw.js', { method: 'HEAD', cache: 'no-store' })
-    if (probe.ok) return
+    // 预览 Worker 会把不存在的 /sw.js 回落成 text/html 入口页；只看 ok
+    // 会把 SPA HTML 当成 Service Worker 继续保留旧缓存。
+    const type = probe.headers.get('content-type') || ''
+    if (probe.ok && type.toLowerCase().includes('javascript')) return
     await Promise.all(registrations.map((registration) => registration.unregister()))
     if ('caches' in window) {
       await Promise.all((await caches.keys()).map((key) => caches.delete(key)))
