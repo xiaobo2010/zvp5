@@ -453,7 +453,8 @@ async def test_group_time_page_is_one_pushed_down_query(monkeypatch):
         perpage=10,
         sort="on-campus",
         asc=False,
-        user={"id": _oid(2)},
+        # 该端点现在只放行本班学生；这里给读者本班班号，查询形态才是被测目标。
+        user={"id": _oid(2), "per": ["student"], "class_id": _oid(50)},
     )
 
     assert calls == [(_oid(50), "张", "on_campus_raw", True, 1, 10)]

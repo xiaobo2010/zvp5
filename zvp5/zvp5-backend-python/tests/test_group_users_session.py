@@ -22,7 +22,8 @@ from util.object_id import get_current_user
 
 PREFIX = "/api/v1/groups"
 GROUP_ID = "0000000000000000000000ff"
-READER = {"id": "000000000000000000000001", "per": ["student"]}
+READER = {"id": "000000000000000000000001", "per": ["student"], "class_id": GROUP_ID}
+ADMIN = {"id": "000000000000000000000001", "per": ["admin"], "class_id": None}
 
 CLASS_ROW = {
     "_id": "000000000000000000000002",
@@ -70,7 +71,7 @@ class _UsersRepo:
         return [dict(row) for row in self.members], len(self.members)
 
 
-def _client(monkeypatch, session, groups, users):
+def _client(monkeypatch, session, groups, users, reader=READER):
     @asynccontextmanager
     async def scope():
         yield session
@@ -81,7 +82,7 @@ def _client(monkeypatch, session, groups, users):
 
     app = FastAPI()
     app.include_router(groups_v3.router, prefix=PREFIX)
-    app.dependency_overrides[get_current_user] = lambda: READER
+    app.dependency_overrides[get_current_user] = lambda: reader
     return TestClient(app)
 
 
@@ -104,7 +105,7 @@ def test_permission_group_branch_also_uses_that_one_session(monkeypatch) -> None
     session = object()
     groups = _GroupsRepo(session, permission_group={"permissions": ["admin"]})
     users = _UsersRepo(session, members=[CLASS_ROW])
-    client = _client(monkeypatch, session, groups, users)
+    client = _client(monkeypatch, session, groups, users, reader=ADMIN)
 
     body = client.get(f"{PREFIX}/{GROUP_ID}/users?pwdm=true").json()
 
