@@ -328,9 +328,18 @@ jobs:
             exit 1
           }
 
+          # Edge HTML may still be the previous entry for a few seconds after
+          # deploy: the Worker sends no-store, but an already-cached edge copy
+          # still has to revalidate. Retry instead of failing the deploy on a
+          # cache race; the assets themselves are content-addressed.
           for path in /me /notifications; do
-            page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
-              -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL$path")"
+            page=""
+            for _ in $(seq 1 6); do
+              page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
+                -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL$path" || true)"
+              [[ "$page" == *"src=\"$entry\""* ]] && break
+              sleep 5
+            done
             [[ "$page" == *"src=\"$entry\""* ]] || {
               echo "wrong Pro entry at $path" >&2
               exit 1
@@ -339,12 +348,22 @@ jobs:
 
           entry3d="$(grep -o 'src="/3d/assets/[^"]*"' "$dist_dir/3d/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
           [[ -n "$entry3d" ]] || { echo "could not find 3D entry asset" >&2; exit 1; }
-          page3d="$(curl -fsSL --compressed -A "$PROBE_UA" "$CANARY_URL/3d/index.html")"
+          page3d=""
+          for _ in $(seq 1 6); do
+            page3d="$(curl -fsSL --compressed -A "$PROBE_UA" "$CANARY_URL/3d/index.html" || true)"
+            [[ "$page3d" == *"src=\"$entry3d\""* ]] && break
+            sleep 5
+          done
           [[ "$page3d" == *"src=\"$entry3d\""* ]] || {
             echo "wrong 3D entry at /3d/index.html" >&2
             exit 1
           }
-          root3d="$(curl -fsSL --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL/3d/")"
+          root3d=""
+          for _ in $(seq 1 6); do
+            root3d="$(curl -fsSL --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL/3d/" || true)"
+            [[ "$root3d" == *"src=\"$entry3d\""* ]] && break
+            sleep 5
+          done
           [[ "$root3d" == *"src=\"$entry3d\""* ]] || {
             echo "wrong 3D entry at /3d/" >&2
             exit 1
