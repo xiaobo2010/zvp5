@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { isLoggedIn } from '@/api/canary'
 import { ApiError } from '@/api/http'
+import { currentRoles } from '@/api/permissions'
 import {
   fetchVolunteerDetail,
   fetchVolunteerMembers,
@@ -21,6 +22,8 @@ const router = useRouter()
 type ActivityStatus = VolunteerActivityStatus
 
 const pageSize = 10
+// 参与名单包含全校学生信息；普通用户只看活动本身，不请求成员接口。
+const canViewRoster = currentRoles().some((role) => role === 'admin' || role === 'department')
 const TYPE_LABELS: Record<string, string> = {
   'on-campus': '校内活动',
   'off-campus': '校外活动',
@@ -171,7 +174,7 @@ function isAuthError(reason: unknown): boolean {
 
 async function loadMembers(targetPage = page.value) {
   const current = activity.value
-  if (!current) return
+  if (!current || !canViewRoster) return
   const seq = ++memberSeq
   membersLoading.value = true
   membersError.value = ''
@@ -255,7 +258,7 @@ async function bootstrap() {
       })
   }
 
-  await loadMembers(1)
+  if (canViewRoster) await loadMembers(1)
 }
 
 function handlePageChange(target: number) {
@@ -401,6 +404,7 @@ onBeforeUnmount(() => {
       </article>
 
       <section
+        v-if="canViewRoster"
         class="roster glass-card surface-enter"
         :style="{ '--i': 2 }"
         :aria-busy="membersLoading"
@@ -537,7 +541,7 @@ onBeforeUnmount(() => {
         </nav>
       </section>
 
-      <BubbleFeedback class="detail-note">
+      <BubbleFeedback v-if="canViewRoster" class="detail-note">
         参与名单包含全部状态的记录；审核状态由学生会或管理员维护，每页 {{ pageSize }} 条。
       </BubbleFeedback>
     </template>

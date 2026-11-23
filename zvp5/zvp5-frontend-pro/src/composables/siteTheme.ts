@@ -24,6 +24,11 @@ const standaloneThemes: SiteTheme[] = [
     id: PRO_THEME_ID, label: 'Canary Pro', status: 'stable', base: '/themes/canary-pro/',
     description: 'Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局',
   },
+  {
+    id: 'canary-anthropic', label: 'Canary Anthropic', status: 'experimental',
+    base: '/themes/canary-anthropic/',
+    description: '暖色工作台：柔和中性色、圆角面板与自适应导航',
+  },
 ]
 
 function isThemeId(value: unknown): value is string {
