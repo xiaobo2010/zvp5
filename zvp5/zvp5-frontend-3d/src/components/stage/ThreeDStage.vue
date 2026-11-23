@@ -45,6 +45,13 @@ const rightTitle = computed(() =>
       ? '待审核'
       : '通知与动态'
 )
+const rightEmpty = computed(() =>
+  props.data.identity.isAdmin
+    ? '暂无风险日志'
+    : props.data.identity.isDepartment
+      ? '暂无待审核'
+      : '暂无通知'
+)
 const isMobile = computed(() => viewportWidth.value <= 720)
 const averageHours = computed(() =>
   props.data.hours.points.length > 0
@@ -485,7 +492,7 @@ function extraTone(item: StageExtraItem) {
                   </div>
                 </div>
                 <div v-if="agentItems.length === 0" class="extra-empty">
-                  {{ data.extra.emptyLabel }}
+                  暂无执行记录
                 </div>
 
                 <div class="card-reflection"></div>
@@ -529,7 +536,7 @@ function extraTone(item: StageExtraItem) {
                   </div>
                 </div>
                 <div v-if="rightItems.length === 0" class="extra-empty">
-                  {{ data.extra.emptyLabel }}
+                  {{ rightEmpty }}
                 </div>
 
                 <div class="card-reflection"></div>
