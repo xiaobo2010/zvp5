@@ -7,7 +7,7 @@ import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { useGroupsStore } from '@/stores/groups'
-import { readStoredTheme, setStoredTheme, themePath, isRootApp } from '@/utils/theme'
+import { readStoredTheme, setStoredTheme, isRootApp } from '@/utils/theme'
 
 interface UserTime {
   onCampus: number
@@ -193,29 +193,23 @@ export const useUserStore = defineStore('user', {
       return this.theme
     },
     /**
-     * 完成登录时应用账号默认主题。刷新与会话恢复保留当前页面的主题和路径。
+     * 完成登录时应用账号默认主题。页面入口由后端 ``GET /v1/themes/entry``
+     * 决定；前端只负责跳转，不再自己读清单拼路径。
+     * 刷新与会话恢复保留当前页面的主题和路径。
      */
     async applyAccountThemeAfterLogin() {
       try {
         if (new URLSearchParams(window.location.search).has('choose-theme')) return
-        const { theme } = await api.theme.getMyTheme()
-        if (!theme) {
-          return
-        }
-        const resolved = this.applyThemePreference(theme)
+        const entry = await api.theme.getThemeEntry()
+        if (!entry?.theme || !entry.path) return
+        const resolved = this.applyThemePreference(entry.theme)
         if (typeof window === 'undefined' || !isRootApp(window.location.pathname)) {
           return
         }
-        if (resolved === 'canary') return
-        const response = await fetch('/themes.json', { headers: { Accept: 'application/json' } })
-        if (!response.ok) return
-        const manifest = (await response.json()) as { themes?: { id: string; base: string }[] }
-        const target = themePath(resolved)
-        if (manifest.themes?.some((item) => item.id === resolved && item.base === target)) {
-          window.location.assign(target)
-        }
+        if (resolved === 'canary' && entry.path === '/') return
+        window.location.assign(`${entry.path}${window.location.hash}`)
       } catch {
-        // 同步失败不影响登录流程，保留设备缓存的主题
+        // 后端不可用时保留设备缓存的主题；不因为入口解析失败阻塞登录。
       }
     }
   },

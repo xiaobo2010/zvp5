@@ -57,7 +57,15 @@ def test_manifest_themes_match_registry(manifest):
         }
         for theme in manifest["themes"]
     ]
-    from_registry = theme_registry.theme_items()
+    from_registry = [
+        {
+            "id": item["id"],
+            "label": item["label"],
+            "description": item["description"],
+            "status": item["status"],
+        }
+        for item in theme_registry.theme_items()
+    ]
     assert from_manifest == from_registry, (
         "zvp5/themes/manifest.json and services/theme_registry.py drifted; "
         "add/update the theme in both places"

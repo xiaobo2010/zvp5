@@ -272,6 +272,11 @@ export const viteBaseConfig = {
       },
       workbox: {
         inlineWorkboxRuntime: true,
+        // 根站 Service Worker 的 scope 是 `/`，会连 `/themes/<id>/` 的导航一起
+        // 接管；若它返回预缓存的根 index.html，用户在 Pro/Anthropic 下刷新就会
+        // 被换回 Canary（正是“刷新回旧版”）。主题子应用必须走网络，由各自的
+        // index.html 决定加载哪套前端。
+        navigateFallbackDenylist: [/^\/themes\//],
         ...(staticBase === '/'
           ? {}
           : {
@@ -293,6 +298,11 @@ export const viteBaseConfig = {
         // 不占首装预缓存。
         globIgnores: [
           '**/node_modules/**/*',
+          // 主题引导/清单不预缓存：它们带着版本查询串，旧 SW 缓存会把
+          // 已修复的切换器继续发给页面。让它们每次走网络。
+          'theme-switcher.js',
+          'theme-switcher.css',
+          'themes.json',
           '**/*-legacy-*.js',
           '**/monaco-*.js',
           '**/monaco-*.css',

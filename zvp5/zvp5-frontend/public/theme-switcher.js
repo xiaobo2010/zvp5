@@ -58,6 +58,42 @@
 
   async function loadThemes() {
     if (choices) return choices
+    const token = read('token')
+    if (token) {
+      try {
+        // 主题目录的权威来源是后端注册表；后端同时给出每个主题的页面入口
+        // ``path``，前端不再自己拼 ``/themes/<id>/``。
+        let endpoint = `${base}/v1/themes`
+        try {
+          if (new URL(base).origin !== location.origin) {
+            endpoint = `${location.origin}/api/v1/themes`
+          }
+        } catch { /* meta 不是绝对地址时只走它本身 */ }
+        const response = await fetch(endpoint, {
+          headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+          cache: 'no-store'
+        })
+        if (response.ok) {
+          const payload = await response.json()
+          const items = Array.isArray(payload?.data?.items) ? payload.data.items : []
+          const catalog = items.filter((item) => {
+            if (!item || typeof item.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(item.id)) return false
+            if (typeof item.label !== 'string' || !item.label) return false
+            return typeof item.path === 'string' && /^\/(?:themes\/[a-z0-9][a-z0-9-]*\/)?$/.test(item.path)
+          }).map((item) => ({
+            id: item.id,
+            label: item.label,
+            description: typeof item.description === 'string' ? item.description : '',
+            status: item.status,
+            base: item.path
+          }))
+          if (catalog.length) {
+            choices = catalog
+            return choices
+          }
+        }
+      } catch { /* 后端不可用时回落静态清单 */ }
+    }
     const response = await fetch('/themes.json', {
       headers: { Accept: 'application/json' },
       cache: 'no-store'
@@ -88,6 +124,9 @@
       method: 'PUT',
       headers,
       body: JSON.stringify({ theme: id }),
+      // 页面随即整页跳转；keepalive 让这次偏好写入在卸载后继续完成，
+      // 否则切主题后刷新/换设备会读回旧偏好。
+      keepalive: true,
       signal: controller.signal
     }).then((response) => response.ok).catch(() => false).finally(() => clearTimeout(timeout))
   }

@@ -20,18 +20,44 @@ async def validate_read_user_permission(
     """
     Validate that the current user may read the target user's information.
 
-    The class/team domain is readable by any authenticated user: profiles,
-    time and activity reads are open to every logged-in account (students
-    included). Authentication itself is already enforced by
-    ``get_current_user`` before this helper runs, and ``admin`` /
-    ``department`` / ``secretary`` keep every ability they had — this helper
-    only ever loosened, it never restricts.
+    读取范围（从宽到窄）：
 
-    Callers: ``users_router.get_user_activities_v2`` /
-    ``get_user_time_v2`` / ``get_user_time_statistics_v2`` — all read-only
-    endpoints. No write or observer-only endpoint reuses it.
+    * 本人；
+    * ``admin`` / ``department``：全校；
+    * 同班同学：同 ``class_id`` 内可见（班级是学校里最小的公开单位）；
+    * 其余（跨班普通学生、外班 secretary）：403。
+
+    之前的实现无条件 ``return True``，任何登录学生都能用 OID 枚举全校用户的
+    义工时长与参与记录；这不是“读接口放宽”，而是把 ``USERS`` 表当成了公开
+    通讯录。这里保留班级内互看，跨班一律拒绝。``secretary`` 不需要单独分支：
+    其 ``class_id`` 与目标相同就已在上面的同班判断里。
+
+    调用方：``get_user_activities_v2`` / ``get_user_time_v2`` /
+    ``get_user_time_statistics_v2``，全部只读。写入端点各自有独立权限闸。
     """
-    return True
+    actor_oid = str(user.get("id", ""))
+    if actor_oid and actor_oid == str(target_user):
+        return True
+
+    per = user.get("per") or []
+    if "admin" in per or "department" in per:
+        return True
+
+    try:
+        target_oid = str(validate_object_id(target_user))
+    except Exception:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    target = await backends.get_users_repo().get_by_oid(target_oid)
+    if target is None:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    actor_class = user.get("class_id")
+    target_class = target.get("class_id")
+    if actor_class and target_class and str(actor_class) == str(target_class):
+        return True
+
+    raise HTTPException(status_code=403, detail="权限不足")
 
 
 def credential_change_forbidden(

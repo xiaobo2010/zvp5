@@ -25,7 +25,7 @@ from tests.route_utils import iter_leaf_routes
 # 裸 ``APIRoute``）+ 1 个 socket.io Mount + 1 个 WebSocket 路由。
 # 文档路由不计入：``docs_url`` / ``openapi_url`` 都是 None（见
 # tests/test_cert_endpoint.py）。
-TOTAL_ROUTE_OBJECTS = 223
+TOTAL_ROUTE_OBJECTS = 224
 
 FROZEN_ROUTES: list[tuple[str, tuple[str, ...]]] = [
     ('/api/', ('GET',)),
@@ -221,6 +221,7 @@ FROZEN_ROUTES: list[tuple[str, tuple[str, ...]]] = [
     ('/api/v1/statistics/activities/grades/{grade}/percentiles', ('GET',)),
     ('/api/v1/statistics/activities/{activity_id}/analysis', ('GET',)),
     ('/api/v1/themes', ('GET',)),
+    ('/api/v1/themes/entry', ('GET',)),
     ('/api/v1/themes/me', ('GET',)),
     ('/api/v1/themes/me', ('PUT',)),
     ('/api/v1/themes/stats', ('GET',)),

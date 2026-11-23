@@ -89,6 +89,10 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     assert [item["id"] for item in body["data"]["items"]] == [
         theme.id for theme in theme_registry.THEMES
     ]
+    paths = {item["id"]: item["path"] for item in body["data"]["items"]}
+    assert paths["canary"] == "/"
+    assert paths["canary-pro"] == "/themes/canary-pro/"
+    assert paths["canary-anthropic"] == "/themes/canary-anthropic/"
 
 
 def test_get_me_falls_back_to_default_when_stored_value_is_null(make_client) -> None:
@@ -96,7 +100,18 @@ def test_get_me_falls_back_to_default_when_stored_value_is_null(make_client) -> 
 
     body = client.get(f"{PREFIX}/me").json()
 
-    assert body == {"status": "ok", "data": {"theme": "canary"}}
+    assert body == {"status": "ok", "data": {"theme": "canary", "path": "/"}}
+
+
+def test_entry_returns_the_page_the_backend_decided(make_client) -> None:
+    client = make_client(_FakeUsersRepo(theme="canary-pro"))
+
+    body = client.get(f"{PREFIX}/entry").json()
+
+    assert body == {
+        "status": "ok",
+        "data": {"theme": "canary-pro", "path": "/themes/canary-pro/"},
+    }
 
 
 def test_get_me_falls_back_to_default_for_unknown_historical_value(make_client) -> None:
