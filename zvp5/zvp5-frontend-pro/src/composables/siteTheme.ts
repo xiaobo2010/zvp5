@@ -84,13 +84,13 @@ export function currentSiteTheme(themes: SiteTheme[]): string {
 }
 
 export function siteThemeDestination(theme: SiteTheme): string {
-  const destination = new URL(CANARY_ORIGIN)
-  destination.pathname = theme.base
+  const origin = switchesSiteOrigin() ? CANARY_ORIGIN : window.location.origin
+  const destination = new URL(theme.base, origin)
   return destination.href
 }
 
 export function switchesSiteOrigin(): boolean {
-  return window.location.origin !== CANARY_ORIGIN
+  return import.meta.env.BASE_URL === '/' && window.location.origin !== CANARY_ORIGIN
 }
 
 export function readSiteTheme(): string | null {
