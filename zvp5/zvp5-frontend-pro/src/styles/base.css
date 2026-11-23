@@ -1,0 +1,183 @@
+@import './tokens.css';
+@import './feedback.css';
+
+:root {
+  color-scheme: light;
+  font-family: var(--font-system);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-normal);
+  overflow-x: hidden;
+}
+
+.pro-app {
+  isolation: isolate;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-snug);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Interactive controls never use backdrop-filter. Gecko on tablets can create
+   an empty compositing layer for a button whose backdrop is sampled from a
+   transformed parent; the control keeps its layout but loses its tint and
+   press feedback. The gradient/rim/shadow below the control is enough to read
+   as glass, so the filter is pure downside here. Large panels keep theirs. */
+button,
+a[href],
+[role='button'] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* 触屏去掉 300ms 双击缩放等待，按压反馈才跟手。 */
+button,
+a {
+  touch-action: manipulation;
+}
+
+/* 触屏没有 hover，按压反馈由 main.ts 在 pointerdown 时加类触发；类保留
+   420ms，所以快速 tap 也能看到完整的一下缩放回弹。
+
+   只动独立的 `scale` 属性，不碰 `transform`：侧边栏唤出按钮靠
+   `translateY(-50%)` 垂直居中，旧版 keyframes 写 `transform: scale()` 会在
+   按下的瞬间把 translate 一起清掉，按钮跳到屏幕顶部再弹回来。 */
+.is-touch-pressed {
+  animation: touch-press-feedback 180ms var(--ease-settle);
+}
+
+@keyframes touch-press-feedback {
+  0% {
+    scale: 1;
+  }
+
+  42% {
+    scale: 0.94;
+  }
+
+  100% {
+    scale: 1;
+  }
+}
+
+/* Focus visible states */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+/* Selection */
+::selection {
+  background: rgb(0 113 227 / 0.2);
+  color: var(--color-text-primary);
+}
+
+/* Smooth scrolling with offset for drawer */
+html {
+  scroll-padding-top: 16px;
+}
+
+/* Surface entrance animation with staggered timing via --i CSS variable */
+.surface-enter {
+  --stagger-delay: min(calc(var(--i, 0) * 32ms), 120ms);
+  animation: surface-enter-keyframes var(--duration-base) var(--ease-settle) backwards;
+  animation-delay: var(--stagger-delay);
+}
+
+@keyframes surface-enter-keyframes {
+  from {
+    opacity: var(--surface-start-opacity, 0);
+    translate: 0 var(--surface-travel, 8px);
+  }
+}
+
+/* Mobile GPUs pay a lot for wide backdrop blurs; keep the same material at a
+   smaller radius instead of dropping the effect or disabling glass entirely. */
+@media (max-width: 767px) {
+  :root {
+    --glass-blur: var(--glass-mobile-blur, blur(10px) saturate(145%));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .surface-enter {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    /* 只压位移：保留颜色/透明度与配色变量过渡，否则减少动效下整站配色
+       会瞬间跳变。transform / translate 的过渡在这里被排除。 */
+    transition-property: color, background-color, border-color, box-shadow, opacity,
+      --palette-main, --palette-edge, --palette-low, --accent-ink !important;
+    transition-delay: 0ms !important;
+  }
+}

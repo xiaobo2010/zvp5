@@ -1,0 +1,291 @@
+/* ZVMS Pro Design Tokens */
+
+@property --palette-main {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #cfe5f8;
+}
+
+@property --palette-edge {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #d8eee6;
+}
+
+@property --palette-low {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #f7efdd;
+}
+
+@property --accent-ink {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #175588;
+}
+
+:root {
+  /* Colors — ZVMS palette */
+  --color-brand: #0071e3;
+  --color-brand-hover: #0077ed;
+  --color-brand-active: #006edb;
+  --accent-ink: #175588;
+
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #6e6e73;
+  --color-text-tertiary: #636d7b;
+  --color-text-inverse: #f5f5f7;
+
+  --color-bg-canvas: #f3f6fa;
+  --color-bg-canvas-sky: #e8eff7;
+  --color-bg-canvas-cream: #f3ede3;
+  --color-bg-canvas-mint: #e6f2ec;
+  --color-bg-elevated: #ffffff;
+  --color-bg-sunken: #fafafa;
+
+  --color-border-subtle: rgb(0 0 0 / 0.08);
+  --color-border-moderate: rgb(0 0 0 / 0.12);
+  --color-border-hairline: rgb(0 0 0 / 0.06);
+
+  /* Semantic tones for progress and status */
+  --tone-green: #34c759;
+  --tone-green-bg: rgba(52, 199, 89, 0.12);
+  --tone-blue: #0071e3;
+  --tone-blue-bg: rgba(0, 113, 227, 0.12);
+  --tone-amber: #ff9f0a;
+  --tone-amber-bg: rgba(255, 159, 10, 0.12);
+  --tone-rose: #ff3b30;
+  --tone-rose-bg: rgba(255, 59, 48, 0.12);
+  --tone-teal: #30b0c7;
+  --tone-teal-bg: rgba(48, 176, 199, 0.12);
+  --tone-violet: #af52de;
+  --tone-violet-bg: rgba(175, 82, 222, 0.12);
+  --tone-ink: #6e6e73;
+  --tone-ink-bg: rgba(110, 110, 115, 0.12);
+
+  /* Satin content surfaces and the more translucent floating controls. */
+  --surface-matte: linear-gradient(150deg, #ffffffef, #f5f8fbe8 66%, #f8fafde1);
+  --glass-bg: linear-gradient(
+    147deg,
+    #fffdf9d6,
+    #eaf4ff9e 57%,
+    #f8f5ffbd
+  );
+  --glass-floating-bg: linear-gradient(145deg, #fffdf9e8, #edf5fdc7 60%, #f6f4ffdb);
+  --nav-highlight: linear-gradient(148deg, #e8f4ff, #bcdcf9 55%, #9fc8f4);
+  --glass-tint: rgb(42 106 170 / 0.06);
+  --glass-border: rgb(255 255 255 / 0.83);
+  --glass-rim: inset 0 1px 0 #fffffff0, inset 1px 0 0 #ffffff8a, inset 0 -1px 0 #587ea11c;
+  --glass-shadow: var(--glass-rim), 0 1px 2px #223f5b0e, 0 10px 28px #314e6910;
+  --glass-floating-shadow: var(--glass-rim), 0 4px 12px #2f4e6714, 0 20px 48px #334f6c1f;
+  --glass-blur: blur(16px) saturate(150%);
+  --glass-highlight: linear-gradient(
+    162deg,
+    #fffefbe6,
+    #ffffff33 29%,
+    transparent 56%
+  );
+  --glass-sheen: linear-gradient(
+    115deg,
+    transparent 23%,
+    #fffdf98c 43%,
+    #e8f3ff78 49%,
+    #fbecfa30 55%,
+    transparent 69%
+  );
+
+  /* Typography scale */
+  --font-system: 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
+  --font-size-greeting: clamp(56px, 6vw, 72px);
+  --font-size-hero: clamp(56px, 7vw, 96px);
+  --font-size-title-1: clamp(40px, 5vw, 64px);
+  --font-size-title-2: clamp(32px, 4vw, 48px);
+  --font-size-title-3: clamp(24px, 3vw, 36px);
+  --font-size-headline: 21px;
+  --font-size-body: 17px;
+  --font-size-body-large: 19px;
+  --font-size-callout: 15px;
+  --font-size-caption: 13px;
+  --font-size-stats: clamp(40px, 4vw, 56px);
+
+  --line-height-tight: 1.05;
+  --line-height-snug: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+
+  --letter-spacing-tight: -0.05em;
+  --letter-spacing-normal: -0.01em;
+  --letter-spacing-wide: 0.08em;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 80px;
+  --space-10: 96px;
+  --space-11: 128px;
+  --space-12: 160px;
+
+  /* Border radius */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  /* Shadows — restrained Apple-like */
+  --shadow-sm: 0 1px 1px rgb(0 0 0 / 0.04);
+  --shadow-md: 0 2px 4px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.02);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-xl: 0 8px 24px rgb(0 0 0 / 0.08), 0 2px 6px rgb(0 0 0 / 0.04);
+
+  /* Motion — q弹 spring easing */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-settle: cubic-bezier(0.22, 0.8, 0.24, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.6, 1);
+
+  --duration-fast: 200ms;
+  --duration-base: 350ms;
+  --duration-slow: 500ms;
+
+  /* Layout */
+  --content-max-width: 1200px;
+  --content-padding: clamp(20px, 5vw, 80px);
+  --section-gap: clamp(80px, 12vw, 160px);
+}
+
+/* Surfaces are deliberately explicit per palette rather than mixed at runtime.
+   Gecko builds on tablets can report `color-mix()` support and still hand a
+   gradient with mixed custom properties back as an invalid value; when that
+   happens every control that reads `--glass-floating-bg` loses its tint while
+   the hard-coded Manage buttons keep working. Solid palette gradients are
+   supported everywhere and keep the same visible design. */
+.palette-dawn {
+  --surface-matte: linear-gradient(150deg, #fff6f0, #faf4f6 66%, #fbf6e8);
+  --glass-bg: linear-gradient(147deg, #fff7f1e8, #f3ecf7c0 57%, #fdf4e6d6);
+  --glass-floating-bg: linear-gradient(145deg, #fffaf6f0, #f6eff8d8 60%, #fdf6eae8);
+  --nav-highlight: linear-gradient(148deg, #fdeee3, #f7d9cf 55%, #e5bdb1);
+  --glass-tint: rgb(134 69 57 / 0.06);
+}
+
+.palette-day {
+  --surface-matte: linear-gradient(150deg, #f7fbff, #f4faf7 66%, #fdfbf3);
+  --glass-bg: linear-gradient(147deg, #f8fcfff0, #e7f3ffd0 57%, #fbf7ecd8);
+  --glass-floating-bg: linear-gradient(145deg, #fbfdfff5, #edf6ffdd 60%, #fdf9efe8);
+  --nav-highlight: linear-gradient(148deg, #e4f3ff, #c4e0fa 55%, #a9cdf3);
+  --glass-tint: rgb(30 85 123 / 0.06);
+}
+
+.palette-dusk {
+  --surface-matte: linear-gradient(150deg, #fdf3ef, #f7f1fa 66%, #f8eef3);
+  --glass-bg: linear-gradient(147deg, #fdf5f1e8, #f0eaf9c9 57%, #f9eaf0da);
+  --glass-floating-bg: linear-gradient(145deg, #fef8f5f0, #f4effbdb 60%, #fbedf2e8);
+  --nav-highlight: linear-gradient(148deg, #f9e7dd, #ecd4e8 55%, #d6bcdc);
+  --glass-tint: rgb(112 61 113 / 0.06);
+}
+
+.palette-night {
+  --surface-matte: linear-gradient(150deg, #f3f6fd, #f1f8fb 66%, #f4f3fc);
+  --glass-bg: linear-gradient(147deg, #f6f9ffe8, #e8f1fac9 57%, #efeef9da);
+  --glass-floating-bg: linear-gradient(145deg, #f9fbfff0, #eef6fddb 60%, #f2f1fce8);
+  --nav-highlight: linear-gradient(148deg, #e2eafa, #cbd9f2 55%, #b7c6e6);
+  --glass-tint: rgb(62 79 133 / 0.06);
+}
+
+.pro-app {
+  transition:
+    --palette-main 850ms var(--ease-smooth),
+    --palette-edge 850ms var(--ease-smooth),
+    --palette-low 850ms var(--ease-smooth),
+    --accent-ink 850ms var(--ease-smooth);
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+  /* Palette changes must not depend on registered custom properties alone:
+     the ambient wash still fades via opacity, and these concrete color
+     transitions carry the rest. Placed after the main rule so it wins where
+     `@property` interpolation is unavailable. */
+  .pro-app {
+    transition:
+      color 420ms var(--ease-smooth),
+      background-color 420ms var(--ease-smooth),
+      border-color 420ms var(--ease-smooth);
+  }
+}
+
+.palette-dawn {
+  --palette-main: #fbddcd;
+  --palette-edge: #d6e5f6;
+  --palette-low: #f4eed6;
+  --accent-ink: #864539;
+}
+
+.palette-day {
+  --palette-main: #cfe5f8;
+  --palette-edge: #d8eee6;
+  --palette-low: #f7efdd;
+  --accent-ink: #1e557b;
+}
+
+.palette-dusk {
+  --palette-main: #f4d7ca;
+  --palette-edge: #dfdcf3;
+  --palette-low: #efd9e4;
+  --accent-ink: #703d71;
+}
+
+.palette-night {
+  --palette-main: #cdd9ef;
+  --palette-edge: #d4e3ec;
+  --palette-low: #deddf2;
+  --accent-ink: #3e4f85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ease-spring: cubic-bezier(0, 0, 1, 1);
+    --ease-smooth: cubic-bezier(0, 0, 1, 1);
+    --ease-out: cubic-bezier(0, 0, 1, 1);
+    --ease-in-out: cubic-bezier(0, 0, 1, 1);
+    --duration-fast: 10ms;
+    --duration-base: 10ms;
+    --duration-slow: 10ms;
+  }
+
+  /* 减少动效压的是位移；配色切换是颜色/透明度变化，保留短过渡，不能变成
+     瞬间跳变或干脆看不见。 */
+  .pro-app {
+    transition-duration: 320ms;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root,
+  .pro-app {
+    --glass-bg: var(--surface-matte);
+    --glass-floating-bg: var(--surface-matte);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root,
+  .pro-app {
+    --surface-matte: linear-gradient(150deg, white, var(--palette-edge, #f9fbfe));
+    --glass-bg: var(--surface-matte);
+    --glass-floating-bg: var(--surface-matte);
+    --glass-blur: none;
+    --glass-mobile-blur: none;
+    --glass-border: #8c9fb2;
+    --glass-sheen: none;
+  }
+}

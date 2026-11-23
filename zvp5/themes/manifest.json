@@ -17,8 +17,7 @@
       "status": "stable",
       "base": "/themes/canary-pro/",
       "source": {
-        "kind": "git",
-        "ref": "v5-canary-pro",
+        "kind": "local",
         "path": "zvp5/zvp5-frontend-pro"
       },
       "build": {
