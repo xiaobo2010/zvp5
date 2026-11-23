@@ -8,6 +8,7 @@ import {
   isThemePath,
   normalizeTheme,
   readStoredTheme,
+  themeHashRedirect,
   setStoredTheme,
   themePath
 } from './theme'
@@ -95,6 +96,21 @@ describe('utils/theme', () => {
     it('路径段按完整 slug 匹配，不会被更长的 id 误判', () => {
       expect(currentThemeId('/themes/canary-anthropic-other')).toBe('canary-anthropic-other')
       expect(currentThemeId('/themes/canary-anthropicx')).toBe('canary-anthropicx')
+    })
+  })
+
+  describe('themeHashRedirect', () => {
+    it('把旧 history 深链接迁到主题 hash 路由', () => {
+      expect(themeHashRedirect('/themes/canary-pro/me')).toBe('/themes/canary-pro/#/me')
+      expect(themeHashRedirect('/themes/canary-anthropic/notifications?id=1')).toBe(
+        '/themes/canary-anthropic/#/notifications?id=1'
+      )
+    })
+
+    it('主题根路径和静态入口不跳转', () => {
+      expect(themeHashRedirect('/themes/canary-pro/')).toBeNull()
+      expect(themeHashRedirect('/themes/canary-pro/index.html')).toBeNull()
+      expect(themeHashRedirect('/user')).toBeNull()
     })
   })
 

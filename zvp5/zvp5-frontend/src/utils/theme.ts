@@ -60,6 +60,25 @@ export function currentThemeId(pathname: string): ThemeVariant {
   return match ? match[1] : DEFAULT_THEME
 }
 
+/**
+ * 把主题子应用的 history 深链接改写成 hash 路由。
+ *
+ * 生产 nginx 只有根站 SPA 回落，`/themes/<id>/me` 会落到根入口。主题子应用
+ * 改用 hash 路由后，服务端只需找到 `/themes/<id>/`，页面内的路径由 `#/...` 承载。
+ * 这里负责把旧书签/外链平滑迁移过去。
+ */
+export function themeHashRedirect(
+  pathname: string,
+  search = '',
+  hash = ''
+): string | null {
+  const match = /^\/themes\/([a-z0-9][a-z0-9-]*)\/(.+)$/.exec(pathname || '')
+  if (!match || match[2] === 'index.html') {
+    return null
+  }
+  return `/themes/${match[1]}/#/${match[2]}${search}${hash}`
+}
+
 /** 当前路径是否落在某个子应用（非根 canary）的基路径下。 */
 export function isThemePath(pathname: string, theme: ThemeVariant): boolean {
   if (theme === DEFAULT_THEME) {

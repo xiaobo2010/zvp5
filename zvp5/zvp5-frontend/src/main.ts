@@ -1,4 +1,5 @@
 import './assets/styles/element/index.scss'
+import { themeHashRedirect } from '@/utils/theme'
 
 import { createApp, type Plugin } from 'vue'
 import { createPinia } from 'pinia'
@@ -54,6 +55,15 @@ import { installTableExpandMotion } from './plugins/tableExpandMotion'
 import { applyPerfAttributes } from './utils/devicePerf'
 // 渲染模式偏好：mount 之前写 data-render-mode，避免先按精细档画一帧
 import { installRenderMode } from './utils/renderMode'
+
+const themeRedirect = themeHashRedirect(
+  window.location.pathname,
+  window.location.search,
+  window.location.hash
+)
+if (themeRedirect) {
+  window.location.replace(themeRedirect)
+}
 
 const app = createApp(App)
 
