@@ -168,6 +168,38 @@ export interface TempPasswordResult {
   }
 }
 
+export interface AdminUserBanResult {
+  banned: boolean
+  /** ISO timestamp, or null for a permanent ban / after an unban. */
+  ban_until: string | null
+  permanent: boolean
+}
+
+export interface AdminUserBanInput {
+  banned: boolean
+  /** Required by the backend for a ban, 1–200 characters after trimming. */
+  reason?: string
+  /** Omitted = permanent; 1–36500 days when present. */
+  duration_days?: number
+}
+
+/**
+ * `PUT /v1/users/{oid}/banned` (admin only).
+ *
+ * A ban rotates the target's `session_id`, so the account is logged out; an
+ * unban carries no reason or duration. The backend rejects banning yourself
+ * and banning another admin, and 422s a duration on the unban direction.
+ */
+export function setUserBanned(
+  oid: string,
+  input: AdminUserBanInput
+): Promise<AdminUserBanResult> {
+  return apiRequest<AdminUserBanResult>(`/v1/users/${encodeURIComponent(oid)}/banned`, {
+    method: 'PUT',
+    body: JSON.stringify(input)
+  })
+}
+
 /**
  * `POST /v1/users/{oid}/temp-password` with a password-verification token.
  *

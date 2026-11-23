@@ -20,10 +20,12 @@ import {
   fetchAdminUserProfile,
   fetchAdminUserTime,
   setUserClass,
+  setUserBanned,
   updateUserRoles,
   updateUserStudentId,
   type AdminEditableRole,
   type AdminUserActivity,
+  type AdminUserBanResult,
   type AdminUserProfile,
   type AdminUserTime,
   type TempPasswordResult
@@ -54,6 +56,11 @@ const ACTIVITY_TYPES: Record<string, string> = {
   'social-practice': '社会实践',
   hybrid: '混合'
 }
+
+const BAN_REASON_MAX = 200
+const BAN_DURATION_MAX = 36500
+const BAN_DURATION_PRESETS = [1, 3, 7, 14, 30] as const
+type BanDurationChoice = 'permanent' | 'custom' | `${number}`
 
 const route = useRoute()
 const router = useRouter()
@@ -105,6 +112,15 @@ const tempPassword = ref<TempPasswordResult | null>(null)
 const tempPasswordBusy = ref(false)
 const tempPasswordError = ref('')
 const tempPasswordCopied = ref(false)
+
+const banDialog = ref<HTMLDialogElement>()
+const banMode = ref<'ban' | 'unban'>('ban')
+const banReason = ref('')
+const banDurationChoice = ref<BanDurationChoice>('7')
+const banCustomDays = ref('')
+const banSubmitting = ref(false)
+const banError = ref('')
+const banNotice = ref('')
 
 // Stale-response guard for the profile/time/activity reads.
 let runId = 0
@@ -206,6 +222,44 @@ const banSummary = computed(() => {
   const raw = target.ban_until
   if (!raw) return '封禁中'
   return `封禁至 ${formatDateTime(raw)}`
+})
+
+/** Ban/unban is admin-only; the backend owns every other permission gate. */
+const canModerateBan = computed(() => {
+  const target = profile.value
+  if (!isAdminUser || !target) return false
+  // Another admin account is out of scope even for unban (the backend allows
+  // the unban direction, but this page deliberately does not surface it).
+  if (targetIsAdmin.value && !isSelf.value) return false
+  // Own account: only an already-banned operator gets the unban action.
+  if (isSelf.value && !target.banned) return false
+  return true
+})
+
+const banActionLabel = computed(() => (profile.value?.banned ? '解封账号' : '封禁账号'))
+
+const banReasonLength = computed(() => banReason.value.trim().length)
+const banReasonInvalid = computed(
+  () => banMode.value === 'ban' && (banReasonLength.value < 1 || banReasonLength.value > BAN_REASON_MAX)
+)
+const banCustomDaysValue = computed(() => Number(banCustomDays.value))
+const banCustomDaysValid = computed(
+  () =>
+    Number.isInteger(banCustomDaysValue.value) &&
+    banCustomDaysValue.value >= 1 &&
+    banCustomDaysValue.value <= BAN_DURATION_MAX
+)
+const banDurationInvalid = computed(
+  () => banMode.value === 'ban' && banDurationChoice.value === 'custom' && !banCustomDaysValid.value
+)
+const banCanSubmit = computed(() => {
+  if (!profile.value || banSubmitting.value) return false
+  if (banMode.value === 'unban') return true
+  return (
+    banReasonLength.value >= 1 &&
+    banReasonLength.value <= BAN_REASON_MAX &&
+    !banDurationInvalid.value
+  )
 })
 
 const totalHours = computed(() =>
@@ -400,6 +454,9 @@ function start() {
   tempPassword.value = null
   tempPasswordError.value = ''
   tempPasswordCopied.value = false
+  banNotice.value = ''
+  banError.value = ''
+  closeBanDialog(true)
 
   void loadProfile(run)
   void loadTime(run)
@@ -512,6 +569,90 @@ async function copyTempPassword() {
   }
 }
 
+function openBanDialog() {
+  const target = profile.value
+  if (!canModerateBan.value || !target) return
+  banMode.value = target.banned ? 'unban' : 'ban'
+  banReason.value = ''
+  banDurationChoice.value = '7'
+  banCustomDays.value = ''
+  banError.value = ''
+  banSubmitting.value = false
+  const dialog = banDialog.value
+  if (!dialog) return
+  if (typeof dialog.showModal === 'function') {
+    if (!dialog.open) dialog.showModal()
+  } else {
+    // Very old tablets lack `showModal`; fall back to the open attribute.
+    dialog.setAttribute('open', '')
+  }
+}
+
+function closeBanDialog(force = false) {
+  if (banSubmitting.value && !force) return
+  const dialog = banDialog.value
+  if (!dialog) return
+  if (typeof dialog.close === 'function' && dialog.open) dialog.close()
+  else dialog.removeAttribute('open')
+}
+
+function onBanBackdrop(event: MouseEvent) {
+  if (event.target === banDialog.value) closeBanDialog()
+}
+
+function applyBanResult(result: AdminUserBanResult, reason: string | null) {
+  const target = profile.value
+  if (!target) return
+  target.banned = result.banned
+  target.ban_until = result.ban_until
+  target.ban_permanent = result.permanent
+  target.ban_reason = result.banned ? reason ?? target.ban_reason ?? null : null
+}
+
+async function submitBan() {
+  const target = profile.value
+  if (!target?._id || !banCanSubmit.value) return
+
+  banSubmitting.value = true
+  banError.value = ''
+  banNotice.value = ''
+
+  try {
+    if (banMode.value === 'unban') {
+      const result = await setUserBanned(target._id, { banned: false })
+      applyBanResult(result, null)
+      banNotice.value = '已解封该账号，目标用户可以重新登录。'
+    } else {
+      const reason = banReason.value.trim()
+      const duration =
+        banDurationChoice.value === 'permanent'
+          ? undefined
+          : banDurationChoice.value === 'custom'
+            ? banCustomDaysValue.value
+            : Number(banDurationChoice.value)
+      const result = await setUserBanned(target._id, {
+        banned: true,
+        reason,
+        ...(duration === undefined ? {} : { duration_days: duration })
+      })
+      applyBanResult(result, reason)
+      banNotice.value =
+        result.permanent || !result.ban_until
+          ? '已永久封禁该账号，目标会话已失效。'
+          : `已封禁该账号至 ${formatDateTime(result.ban_until)}，目标会话已失效。`
+    }
+    banSubmitting.value = false
+    closeBanDialog(true)
+  } catch (reason) {
+    banError.value = actionError(
+      reason,
+      banMode.value === 'unban' ? '解封失败，请稍后重试。' : '封禁失败，请稍后重试。'
+    )
+  } finally {
+    banSubmitting.value = false
+  }
+}
+
 function activityStatus(activity: AdminUserActivity): string {
   const status = String(activity.mine?.status ?? activity.status ?? '')
   if (status === 'effective') return '已确认'
@@ -555,6 +696,148 @@ watch(userId, (next, previous) => {
 
 <template>
   <AdminWriteVerification ref="adminVerification" />
+  <dialog
+    ref="banDialog"
+    class="ban-dialog"
+    aria-labelledby="ban-dialog-title"
+    aria-modal="true"
+    @cancel.prevent="closeBanDialog()"
+    @click="onBanBackdrop"
+  >
+    <form class="ban-dialog__form" @submit.prevent="submitBan">
+      <header class="ban-dialog__head">
+        <h2 id="ban-dialog-title" class="ban-dialog__title">
+          {{ banMode === 'unban' ? '解封账号' : '封禁账号' }}
+        </h2>
+        <p v-if="profile" class="ban-dialog__target">
+          {{ profile.name || '未命名用户' }} · <span class="detail-mono">{{ profile.id }}</span>
+        </p>
+      </header>
+
+      <template v-if="banMode === 'ban'">
+        <div class="edit-field">
+          <label class="field__label" for="ban-reason">封禁原因（必填）</label>
+          <textarea
+            id="ban-reason"
+            v-model="banReason"
+            class="input ban-dialog__reason"
+            rows="3"
+            :maxlength="BAN_REASON_MAX"
+            placeholder="例如：违规使用平板、转借账号等"
+            :disabled="banSubmitting"
+            autofocus
+          ></textarea>
+          <p
+            class="ban-dialog__counter"
+            :class="{ 'is-over': banReason.length > BAN_REASON_MAX }"
+          >
+            {{ banReason.length }} / {{ BAN_REASON_MAX }}
+          </p>
+          <p v-if="banReasonInvalid" class="field__hint field__hint--warn">
+            请填写 1–{{ BAN_REASON_MAX }} 字的封禁原因。
+          </p>
+        </div>
+
+        <fieldset class="ban-dialog__durations">
+          <legend class="field__label">封禁时长</legend>
+          <div class="ban-duration-options">
+            <label
+              v-for="days in BAN_DURATION_PRESETS"
+              :key="days"
+              class="ban-duration-option"
+              :class="{ 'is-active': banDurationChoice === String(days) }"
+            >
+              <input
+                v-model="banDurationChoice"
+                type="radio"
+                :value="String(days)"
+                :disabled="banSubmitting"
+              />
+              <span>{{ days }} 天</span>
+            </label>
+            <label
+              class="ban-duration-option"
+              :class="{ 'is-active': banDurationChoice === 'permanent' }"
+            >
+              <input
+                v-model="banDurationChoice"
+                type="radio"
+                value="permanent"
+                :disabled="banSubmitting"
+              />
+              <span>永久</span>
+            </label>
+            <label
+              class="ban-duration-option"
+              :class="{ 'is-active': banDurationChoice === 'custom' }"
+            >
+              <input
+                v-model="banDurationChoice"
+                type="radio"
+                value="custom"
+                :disabled="banSubmitting"
+              />
+              <span>自定义</span>
+            </label>
+          </div>
+
+          <div v-if="banDurationChoice === 'custom'" class="ban-dialog__custom">
+            <input
+              v-model="banCustomDays"
+              class="input ban-dialog__days"
+              type="number"
+              inputmode="numeric"
+              min="1"
+              :max="BAN_DURATION_MAX"
+              step="1"
+              aria-label="自定义封禁天数"
+              :disabled="banSubmitting"
+            />
+            <span class="ban-dialog__unit">天</span>
+          </div>
+          <p v-if="banDurationInvalid" class="field__hint field__hint--warn">
+            时长需为 1–{{ BAN_DURATION_MAX }} 的整数天。
+          </p>
+          <p class="field__hint">
+            不选永久时按服务器时间从此刻起算；到期后自动解封。
+          </p>
+        </fieldset>
+
+        <p class="ban-dialog__note">
+          封禁会立即让目标用户的当前登录失效，并阻止其重新登录，直到到期或解封。
+        </p>
+      </template>
+
+      <template v-else>
+        <p class="ban-dialog__note">
+          解封后目标用户可立即重新登录；此操作只清除当前封禁状态，不改动历史记录。
+        </p>
+      </template>
+
+      <BubbleFeedback v-if="banError" class="glass-feedback--error" role="alert">
+        {{ banError }}
+      </BubbleFeedback>
+
+      <div class="ban-dialog__actions">
+        <button
+          type="button"
+          class="detail-button"
+          :disabled="banSubmitting"
+          @click="closeBanDialog()"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          class="danger-button danger-button--solid"
+          :disabled="!banCanSubmit"
+        >
+          <span v-if="banSubmitting" class="spinner" aria-hidden="true"></span>
+          {{ banSubmitting ? '提交中…' : banMode === 'unban' ? '确认解封' : '确认封禁' }}
+        </button>
+      </div>
+    </form>
+  </dialog>
   <div class="user-page">
     <div class="user-page__container">
       <header class="user-page__header">
@@ -587,6 +870,14 @@ watch(userId, (next, previous) => {
           >
             {{ profile.banned ? '已封禁' : '正常' }}
           </span>
+          <button
+            v-if="canModerateBan"
+            type="button"
+            class="danger-button"
+            @click="openBanDialog"
+          >
+            {{ banActionLabel }}
+          </button>
           <span v-if="isSecretaryUser" class="detail-badge detail-badge--info">团支书视图</span>
         </div>
       </header>
@@ -646,6 +937,13 @@ watch(userId, (next, previous) => {
               {{ banSummary }}
               <template v-if="profile.ban_reason"> · 原因：{{ profile.ban_reason }}</template>
             </p>
+            <BubbleFeedback
+              v-if="banNotice"
+              class="inline-note glass-feedback--success"
+              role="status"
+            >
+              {{ banNotice }}
+            </BubbleFeedback>
           </section>
 
           <section class="user-panel" aria-labelledby="user-hours-title">
@@ -1137,6 +1435,181 @@ watch(userId, (next, previous) => {
   outline-offset: 2px;
 }
 
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid rgba(215, 0, 21, 0.3);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 59, 48, 0.1);
+  color: #b3261e;
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth),
+    color var(--duration-fast) var(--ease-smooth);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: rgba(255, 59, 48, 0.16);
+  border-color: rgba(215, 0, 21, 0.45);
+}
+
+.danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.danger-button--solid {
+  border-color: transparent;
+  background: linear-gradient(135deg, #ff5a50 0%, #d70015 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 3px 12px rgba(215, 0, 21, 0.24);
+}
+
+.danger-button--solid:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ff6a60 0%, #a50011 100%);
+  border-color: transparent;
+}
+
+.ban-dialog {
+  width: min(560px, calc(100% - 32px));
+  max-height: min(86vh, 720px);
+  margin: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border-moderate);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xl);
+  overflow-y: auto;
+}
+
+.ban-dialog::backdrop {
+  background: rgb(16 27 50 / 42%);
+}
+
+.ban-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ban-dialog__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ban-dialog__title {
+  font-size: var(--font-size-headline);
+  font-weight: 600;
+}
+
+.ban-dialog__target {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.ban-dialog__reason {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.ban-dialog__counter {
+  align-self: flex-end;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ban-dialog__counter.is-over {
+  color: #b3261e;
+}
+
+.ban-dialog__durations {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ban-duration-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+.ban-duration-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border-moderate);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-sunken);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth);
+}
+
+.ban-duration-option.is-active {
+  border-color: rgba(215, 0, 21, 0.45);
+  background: rgba(255, 59, 48, 0.12);
+  color: #b3261e;
+  font-weight: 600;
+}
+
+.ban-duration-option input {
+  accent-color: #d70015;
+}
+
+.ban-dialog__custom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ban-dialog__days {
+  width: 132px;
+}
+
+.ban-dialog__unit {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+}
+
+.ban-dialog__note {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--tone-rose-bg);
+  color: #b3261e;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-normal);
+}
+
+.ban-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .input {
   width: 100%;
   padding: 10px var(--space-3);
@@ -1554,6 +2027,10 @@ select.input:focus-visible {
   }
 
   .user-panel {
+    padding: var(--space-4);
+  }
+
+  .ban-dialog {
     padding: var(--space-4);
   }
 }

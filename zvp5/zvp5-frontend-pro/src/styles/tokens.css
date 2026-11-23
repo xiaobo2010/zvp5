@@ -193,12 +193,62 @@
   }
 }
 
+@supports not (color: color-mix(in srgb, white, black)) {
+  /* Explicit per-palette surfaces for Gecko builds without `color-mix` (or
+     without `@property` interpolation). Without these the palette classes
+     only changed the accent variables and every card fell back to white. */
+  .palette-dawn {
+    --surface-matte: linear-gradient(150deg, #fff6f0, #faf4f6 66%, #fbf6e8);
+    --glass-bg: linear-gradient(147deg, #fff7f1e8, #f3ecf7c0 57%, #fdf4e6d6);
+    --glass-floating-bg: linear-gradient(145deg, #fffaf6f0, #f6eff8d8 60%, #fdf6eae8);
+    --nav-highlight: linear-gradient(148deg, #fdeee3, #f7d9cf 55%, #e5bdb1);
+    --glass-tint: rgb(134 69 57 / 0.06);
+  }
+
+  .palette-day {
+    --surface-matte: linear-gradient(150deg, #f7fbff, #f4faf7 66%, #fdfbf3);
+    --glass-bg: linear-gradient(147deg, #f8fcfff0, #e7f3ffd0 57%, #fbf7ecd8);
+    --glass-floating-bg: linear-gradient(145deg, #fbfdfff5, #edf6ffdd 60%, #fdf9efe8);
+    --nav-highlight: linear-gradient(148deg, #e4f3ff, #c4e0fa 55%, #a9cdf3);
+    --glass-tint: rgb(30 85 123 / 0.06);
+  }
+
+  .palette-dusk {
+    --surface-matte: linear-gradient(150deg, #fdf3ef, #f7f1fa 66%, #f8eef3);
+    --glass-bg: linear-gradient(147deg, #fdf5f1e8, #f0eaf9c9 57%, #f9eaf0da);
+    --glass-floating-bg: linear-gradient(145deg, #fef8f5f0, #f4effbdb 60%, #fbedf2e8);
+    --nav-highlight: linear-gradient(148deg, #f9e7dd, #ecd4e8 55%, #d6bcdc);
+    --glass-tint: rgb(112 61 113 / 0.06);
+  }
+
+  .palette-night {
+    --surface-matte: linear-gradient(150deg, #f3f6fd, #f1f8fb 66%, #f4f3fc);
+    --glass-bg: linear-gradient(147deg, #f6f9ffe8, #e8f1fac9 57%, #efeef9da);
+    --glass-floating-bg: linear-gradient(145deg, #f9fbfff0, #eef6fddb 60%, #f2f1fce8);
+    --nav-highlight: linear-gradient(148deg, #e2eafa, #cbd9f2 55%, #b7c6e6);
+    --glass-tint: rgb(62 79 133 / 0.06);
+  }
+}
+
 .pro-app {
   transition:
     --palette-main 850ms var(--ease-smooth),
     --palette-edge 850ms var(--ease-smooth),
     --palette-low 850ms var(--ease-smooth),
     --accent-ink 850ms var(--ease-smooth);
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+  /* Palette changes must not depend on registered custom properties alone:
+     the ambient wash still fades via opacity, and these concrete color
+     transitions carry the rest. Placed after the main rule so it wins where
+     `@property` interpolation is unavailable. */
+  .pro-app {
+    transition:
+      color 420ms var(--ease-smooth),
+      background-color 420ms var(--ease-smooth),
+      border-color 420ms var(--ease-smooth);
+  }
 }
 
 .palette-dawn {
@@ -240,7 +290,11 @@
     --duration-slow: 10ms;
   }
 
-  .pro-app { transition: none; }
+  /* 减少动效压的是位移；配色切换是颜色/透明度变化，保留短过渡，不能变成
+     瞬间跳变或干脆看不见。 */
+  .pro-app {
+    transition-duration: 320ms;
+  }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

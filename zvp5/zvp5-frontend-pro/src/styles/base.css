@@ -162,7 +162,10 @@ html {
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+    /* 只压位移：保留颜色/透明度与配色变量过渡，否则减少动效下整站配色
+       会瞬间跳变。transform / translate 的过渡在这里被排除。 */
+    transition-property: color, background-color, border-color, box-shadow, opacity,
+      --palette-main, --palette-edge, --palette-low, --accent-ink !important;
     transition-delay: 0ms !important;
   }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import StarfieldCanvas from './StarfieldCanvas.vue'
 
 import type { StageActivity, StageData, StageExtraItem } from '@/types/stage'
@@ -17,6 +17,25 @@ const parallaxY = ref(0)
 const isTouch = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const serverTime = ref(new Date(Date.now() + (props.data.serverOffsetMs ?? 0)))
+/**
+ * Flat mode is the *last* resort for browsers without CSS 3D.
+ *
+ * `perspective` + `transform-style: preserve-3d` are what make this scene a
+ * scene; without them every card collapses onto one another. Only a hard
+ * capability failure (`CSS.supports`) gets the flat fallback — Firefox keeps
+ * the 3D scene through `is-gecko`, which drops just the properties that make
+ * Gecko paint the card blank instead of flattening the whole stage.
+ */
+const flat = ref(detectFlat())
+/**
+ * Gecko (Firefox) mode keeps perspective, preserve-3d, depth transforms,
+ * card tilt/bob, nebula, glow and the star canvas. It removes the one
+ * known-bad combination: `backdrop-filter` (and a `filter`/
+ * `will-change: filter`) on the card that lives inside a preserved-3d track.
+ * In Gecko that mix promotes an empty compositing layer and the card paints as
+ * a blank/black rectangle.
+ */
+const gecko = ref(detectGecko())
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
 let serverTimeTimer: ReturnType<typeof setInterval> | undefined
 
@@ -24,6 +43,30 @@ let media: MediaQueryList | null = null
 
 const GAP = 900
 const TRANSITION_DUR = 820
+
+function supportsCss3d(): boolean {
+  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return true
+  return (
+    CSS.supports('transform-style', 'preserve-3d') &&
+    CSS.supports('perspective', '1px')
+  )
+}
+
+function detectGecko(): boolean {
+  if (typeof document === 'undefined') return false
+  const style = document.documentElement?.style
+  // `MozAppearance` only exists in Gecko. FxIOS reports a WebKit UA, so the
+  // UA check stays as a secondary signal for Firefox on iOS.
+  if (style && 'MozAppearance' in style) return true
+  return /fxios/i.test(navigator.userAgent)
+}
+
+function detectFlat(): boolean {
+  if (typeof window === 'undefined') return false
+  // No blanket Firefox/touch rule: a Firefox tablet keeps the 3D scene and
+  // only sheds the compositing combination that breaks it (`is-gecko`).
+  return !supportsCss3d()
+}
 
 const modules = computed(() => props.data.modules)
 const total = computed(() => modules.value.length)
@@ -98,10 +141,10 @@ function depthStyle(index: number) {
 
   return {
     transform: `translate(-50%, -50%) translate3d(0, 0, ${z}px) scale(${scale})`,
-    // `blur(0px)` still creates a filter containing block. Firefox on tablets
-    // can flatten the backdrop-filter card inside it and paint nothing, so the
-    // active card stays filter-free.
-    filter: blur === 0 ? 'none' : `blur(${blur}px)`,
+    // A filter (even `blur(0px)`) creates a containing block. In Gecko that
+    // containing block flattens the preserved-3d card and can paint nothing,
+    // so Gecko keeps the depth transform but never the per-card blur.
+    filter: gecko.value || blur === 0 ? 'none' : `blur(${blur}px)`,
     opacity: String(opacity),
     visibility: isVisible ? 'visible' : 'hidden',
     zIndex: String(100 - Math.abs(raw))
@@ -113,6 +156,14 @@ function goTo(index: number) {
   previousActive.value = active.value
   active.value = index
   reverse.value = index < previousActive.value
+  if (flat.value) {
+    // The flat fallback has no depth transition; the card swap is a direct
+    // display change and must not lock the navigation for 820ms.
+    if (transitionTimer) clearTimeout(transitionTimer)
+    transitioning.value = false
+    warp.value = false
+    return
+  }
   transitioning.value = true
   warp.value = true
 
@@ -162,6 +213,12 @@ function onResize() {
   viewportWidth.value = window.innerWidth
 }
 
+function syncCapabilities() {
+  flat.value = detectFlat()
+  gecko.value = detectGecko()
+  checkTouch()
+}
+
 onMounted(() => {
   media = window.matchMedia('(prefers-reduced-motion: reduce)')
   syncMotion(media)
@@ -169,7 +226,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('resize', onResize)
-  checkTouch()
+  syncCapabilities()
 
   // Server time ticker with 1s interval
   serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
@@ -218,7 +275,7 @@ function extraTone(item: StageExtraItem) {
 </script>
 
 <template>
-  <div class="stage" :class="{ 'is-reduced': reduced }">
+  <div class="stage" :class="{ 'is-reduced': reduced, 'is-flat': flat, 'is-gecko': gecko }">
     <!-- Background environment -->
     <div class="stage-backdrop">
       <div class="nebula nebula-1"></div>
@@ -385,7 +442,7 @@ function extraTone(item: StageExtraItem) {
           <!-- Activities Module: 3×2 grid -->
           <template v-else-if="module.id === 'activities'">
             <div class="cluster cluster--activities">
-              <svg v-if="!isMobile" class="activities-connections" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <svg v-if="!isMobile || flat" class="activities-connections" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="conn-grad" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stop-color="rgb(169 211 255)" stop-opacity="0.55" />
@@ -794,9 +851,31 @@ function extraTone(item: StageExtraItem) {
   transform: perspective(1000px) translateZ(var(--card-z, 0px))
     rotateY(var(--card-tilt, 0deg));
   transition: transform 200ms ease-out;
+  animation: card-bob 5.6s ease-in-out infinite;
+  animation-play-state: var(--bob-play, running);
   box-shadow:
     0 40px 120px rgb(0 0 0 / 0.5),
     inset 0 1px 0 rgb(169 211 255 / 0.08);
+}
+
+/* `translate` composes with the tilt transform, so the float never fights the
+   per-card rotateY. Slight negative delays keep neighbours out of phase. */
+.cluster > .card:nth-child(2) {
+  animation-delay: -1.7s;
+}
+
+.cluster > .card:nth-child(3) {
+  animation-delay: -3.1s;
+}
+
+@keyframes card-bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
 }
 
 .card:hover {
@@ -1504,6 +1583,293 @@ function extraTone(item: StageExtraItem) {
   border: 0;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Gecko (Firefox) — keep the 3D scene, drop the blank-card combination      */
+/* ------------------------------------------------------------------------- */
+
+/* Gecko composites a `backdrop-filter` card inside a preserved-3d track as an
+   empty layer, so each card is painted from an opaque layered gradient
+   instead. Everything else (perspective, preserve-3d, depth transform, card
+   tilt/bob, glow, reflection, nebula, star canvas) stays. */
+.stage.is-gecko .card {
+  background:
+    linear-gradient(
+      135deg,
+      rgb(22 33 56 / 0.94) 0%,
+      rgb(13 20 35 / 0.97) 58%,
+      rgb(8 13 24 / 0.99) 100%
+    );
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Do not advertise a filter layer in Gecko: `will-change: filter` keeps an
+   empty filter layer alive and re-introduces the blank card. Transform and
+   opacity are the only animated properties here. */
+.stage.is-gecko .stage-module {
+  transition:
+    transform var(--transition-dur) var(--transition-ease),
+    opacity var(--transition-dur) var(--transition-ease);
+  will-change: transform, opacity;
+}
+
+/* Outside the 3D tree the glass controls are safe; make them a touch more
+   opaque so the tablet still reads them against the bright nebula. */
+.stage.is-gecko .nav-btn,
+.stage.is-gecko .depth-rail {
+  background: rgb(14 22 38 / 0.78);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Flat fallback — only for browsers without CSS 3D                          */
+/* ------------------------------------------------------------------------- */
+
+/* The flat stage is a normal scrolling document, but it must not look dead:
+   colors, glow, connections, colored bars and an enter animation all stay. */
+.stage.is-flat {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+.stage.is-flat .stage-backdrop,
+.stage.is-flat .stage-shade {
+  position: absolute;
+}
+
+.stage.is-flat .stage-backdrop {
+  z-index: 0;
+}
+
+.stage.is-flat .stage-shade {
+  z-index: 1;
+}
+
+/* Smaller blur than the 3D backdrop so the color survives on software
+   compositing instead of washing out to black. */
+.stage.is-flat .nebula {
+  filter: blur(64px);
+  opacity: 0.2;
+}
+
+.stage.is-flat .horizon-grid {
+  transform: none;
+  height: 22%;
+  background:
+    linear-gradient(to top, rgb(111 215 196 / 0.06), transparent 100%),
+    linear-gradient(90deg, rgb(169 211 255 / 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 38px 100%;
+  opacity: 0.6;
+}
+
+.stage.is-flat .stage-scene {
+  display: block;
+  height: auto;
+  min-height: 0;
+  padding: 96px 18px 150px;
+  perspective: none;
+}
+
+.stage.is-flat .stage-track {
+  height: auto;
+  transform: none !important;
+  transform-style: flat;
+}
+
+.stage.is-flat .stage-module {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: 100%;
+  margin: 0 auto;
+  transform: none !important;
+  filter: none !important;
+  transition: opacity 240ms var(--ease-smooth);
+  transform-style: flat;
+  will-change: auto;
+}
+
+/* Hidden modules must not reserve height in the normal document flow. */
+.stage.is-flat .stage-module[aria-hidden='true'] {
+  display: none;
+}
+
+/* Clusters become a plain wrapping grid so a tall module scrolls the page
+   instead of being clipped by the 3D viewport. */
+.stage.is-flat .cluster {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: stretch;
+  gap: 14px;
+  max-width: 100%;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+}
+
+.stage.is-flat .cluster--identity,
+.stage.is-flat .cluster--extra {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.stage.is-flat .cluster--hours {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.stage.is-flat .cluster--activities {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.stage.is-flat .card {
+  flex: none;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  padding: 28px 24px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgb(43 78 128 / 0.5), transparent 72%),
+    radial-gradient(ellipse at 88% 100%, rgb(24 92 86 / 0.26), transparent 66%),
+    linear-gradient(135deg, rgb(14 21 37 / 0.97), rgb(7 11 20 / 0.99));
+  border-color: rgb(169 211 255 / 0.22);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none !important;
+  transform-style: flat;
+  animation: flat-card-in 460ms var(--transition-ease) both;
+}
+
+.stage.is-flat .card:hover {
+  transform: none !important;
+}
+
+@keyframes flat-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Glow and reflection stay as flat 2D decoration. Their base transforms are
+   already 2D-compatible (translateZ is ignored without a 3D context). */
+.stage.is-flat .card-glow {
+  width: 74%;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(169 211 255 / 0.55),
+    rgb(111 215 196 / 0.4),
+    transparent
+  );
+  box-shadow: 0 0 18px rgb(169 211 255 / 0.32);
+  opacity: 0.9;
+}
+
+.stage.is-flat .card-reflection {
+  bottom: -44px;
+  width: 82%;
+  height: 32px;
+  background: linear-gradient(
+    to top,
+    rgb(111 215 196 / 0.1),
+    rgb(169 211 255 / 0.03) 55%,
+    transparent
+  );
+  filter: blur(14px);
+  opacity: 0.8;
+}
+
+/* Bars keep their colored front face and 2D floor grid. */
+.stage.is-flat .bar-stage::before {
+  transform: none;
+  height: 100%;
+  background-size: 34px 18px;
+  opacity: 0.45;
+}
+
+.stage.is-flat .bar-3d {
+  transform-style: flat;
+}
+
+.stage.is-flat .bar-3d::before,
+.stage.is-flat .bar-3d::after {
+  display: none;
+}
+
+.stage.is-flat .bar-front {
+  background: linear-gradient(
+    180deg,
+    rgb(169 211 255 / 0.62) 0%,
+    rgb(111 215 196 / 0.28) 60%,
+    rgb(169 211 255 / 0.18) 100%
+  );
+  border-color: rgb(169 211 255 / 0.3);
+  box-shadow:
+    inset 0 1px 18px rgb(169 211 255 / 0.18),
+    0 0 16px rgb(111 215 196 / 0.12);
+}
+
+/* Keep the connection lines: they are plain SVG, no 3D needed. */
+.stage.is-flat .activities-connections {
+  display: block;
+  opacity: 0.55;
+}
+
+.stage.is-flat .card--extra-left,
+.stage.is-flat .card--extra-right {
+  max-height: none;
+  overflow: visible;
+}
+
+.stage.is-flat .extra-list {
+  overflow: visible;
+  max-height: none;
+}
+
+.stage.is-flat .nav-btn,
+.stage.is-flat .depth-rail {
+  background: rgb(16 24 42 / 0.9);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.stage.is-flat .stage-nav {
+  background: rgb(4 7 13 / 0.72);
+  border-radius: 2px;
+  padding: 6px 10px;
+  bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .stage.is-flat .stage-scene {
+    padding: 82px 12px 140px;
+  }
+
+  .stage.is-flat .cluster {
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .stage.is-flat .cluster--identity,
+  .stage.is-flat .cluster--hours,
+  .stage.is-flat .cluster--extra,
+  .stage.is-flat .cluster--activities {
+    grid-template-columns: 1fr;
+  }
+
+  .stage.is-flat .card {
+    min-width: 0;
+    padding: 24px 20px;
+  }
+}
+
 /* Responsive */
 @media (max-width: 720px) {
   .stage-scene {
@@ -1632,10 +1998,29 @@ function extraTone(item: StageExtraItem) {
     transform: none !important;
   }
 
+  /* Depth jumps are movement: switch them instantly. The module's transform
+     must stay (it centres the card cluster); opacity still fades. */
   .stage-module {
-    transition: opacity var(--transition-dur) ease-out !important;
-    transform: none !important;
-    filter: none !important;
+    transition:
+      transform 1ms linear,
+      opacity var(--transition-dur) ease-out !important;
+  }
+
+  .card {
+    animation: none;
+  }
+
+  .stage.is-flat .card {
+    animation: flat-card-fade 320ms ease-out both;
+  }
+}
+
+@keyframes flat-card-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 </style>

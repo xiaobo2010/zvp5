@@ -1,4 +1,5 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { fetchServerHour } from '@/api/server-time'
 
 export const palettes = [
   { id: 'dawn', label: '晨曦', description: '蜜桃与雾蓝' },
@@ -11,6 +12,9 @@ export type Palette = typeof palettes[number]['id']
 export type PalettePreference = Palette | 'auto'
 
 const storageKey = 'zvms-pro-appearance'
+
+/** Refresh cadence while the tab stays visible (the contract is ≤ 10 min). */
+const SERVER_TIME_REFRESH_MS = 10 * 60 * 1000
 
 function normalizePreference(value: string | null): PalettePreference {
   return palettes.find((palette) => palette.id === value)?.id ?? 'auto'
@@ -45,36 +49,85 @@ function phaseAt(hour: number): Palette {
 }
 
 export function useAmbientPalette() {
-  const localPhase = ref(phaseAt(new Date().getHours()))
+  // Local hour is only the first paint / offline fallback. The server's `hour`
+  // is authoritative because a tablet clock and timezone cannot be trusted.
+  const phase = ref<Palette>(phaseAt(new Date().getHours()))
   let timer: number | undefined
+  let inflight: AbortController | null = null
+  let serverHour: number | null = null
+  let disposed = false
 
-  function syncLight() {
+  function schedule() {
     window.clearTimeout(timer)
-    if (document.hidden) return
+    if (disposed || document.hidden) return
+    timer = window.setTimeout(() => {
+      void syncLight()
+    }, SERVER_TIME_REFRESH_MS)
+  }
 
-    const now = new Date()
-    localPhase.value = phaseAt(now.getHours())
-    const withinHour = (now.getMinutes() * 60 + now.getSeconds()) * 1000 + now.getMilliseconds()
-    timer = window.setTimeout(syncLight, 3_600_000 - withinHour)
+  async function syncLight() {
+    window.clearTimeout(timer)
+    if (disposed || document.hidden) return
+
+    const localHour = new Date().getHours()
+    // Until a server response lands, keep the local clock as the fallback.
+    if (serverHour === null) phase.value = phaseAt(localHour)
+
+    // A new visibility/pageshow event wins over an in-flight read.
+    inflight?.abort()
+    const controller = new AbortController()
+    inflight = controller
+    const timeout = window.setTimeout(() => controller.abort(), 6000)
+
+    try {
+      const hour = await fetchServerHour(controller.signal)
+      if (controller.signal.aborted || disposed) return
+      if (hour !== null) {
+        serverHour = hour
+        phase.value = phaseAt(hour)
+      } else if (serverHour === null) {
+        phase.value = phaseAt(localHour)
+      }
+    } catch {
+      // Network failure / abort: keep the last server phase if we had one,
+      // otherwise use the local clock. The next tick retries.
+      if (!controller.signal.aborted && !disposed && serverHour === null) {
+        phase.value = phaseAt(localHour)
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (inflight === controller) inflight = null
+      schedule()
+    }
   }
 
   function syncPreference(event: StorageEvent) {
     if (event.key === storageKey || event.key === null) preference.value = readPreference()
   }
 
+  function onVisibilityChange() {
+    if (!document.hidden) void syncLight()
+  }
+
+  function onPageShow() {
+    void syncLight()
+  }
+
   onMounted(() => {
-    syncLight()
-    document.addEventListener('visibilitychange', syncLight)
-    window.addEventListener('pageshow', syncLight)
+    void syncLight()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pageshow', onPageShow)
     window.addEventListener('storage', syncPreference)
   })
 
   onUnmounted(() => {
+    disposed = true
     window.clearTimeout(timer)
-    document.removeEventListener('visibilitychange', syncLight)
-    window.removeEventListener('pageshow', syncLight)
+    inflight?.abort()
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.removeEventListener('pageshow', onPageShow)
     window.removeEventListener('storage', syncPreference)
   })
 
-  return computed(() => preference.value === 'auto' ? localPhase.value : preference.value)
+  return computed(() => (preference.value === 'auto' ? phase.value : preference.value))
 }
