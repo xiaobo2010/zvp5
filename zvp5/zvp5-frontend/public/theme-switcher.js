@@ -1,7 +1,8 @@
 // 同源部署的主题目录、切换和按版本记录的首次引导。各应用自行渲染入口按钮。
+// 不依赖原生 <dialog>/showModal：学海平板浏览器可能没有这套 API。
 ;(function () {
   const meta = document.querySelector('meta[name="zvms-api-base"]')
-  if (!meta || typeof HTMLDialogElement === 'undefined' || !HTMLDialogElement.prototype.showModal) return
+  if (!meta) return
 
   const base = meta.content.replace(/\/+$/, '')
   const active = /^\/themes\/([a-z0-9-]+)(?:\/|$)/.exec(location.pathname)?.[1] || 'canary'
@@ -19,16 +20,23 @@
     try { localStorage.setItem(key, value) } catch { /* 隐私模式仍可切换 */ }
   }
 
-  function element(tag, className, content = '') {
+  function element(tag, className, content) {
     const node = document.createElement(tag)
     node.className = className
-    node.textContent = content
+    if (content) node.textContent = content
     return node
   }
 
-  const dialog = element('dialog', 'zvms-theme-dialog')
+  const overlay = element('div', 'zvms-theme-overlay')
+  overlay.hidden = true
+  overlay.setAttribute('role', 'presentation')
+
+  const dialog = element('div', 'zvms-theme-dialog')
   dialog.dataset.themeApp = active
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
   dialog.setAttribute('aria-labelledby', 'zvms-theme-title')
+
   const title = element('h2', 'zvms-theme-dialog__title', text.title)
   title.id = 'zvms-theme-title'
   title.tabIndex = -1
@@ -39,12 +47,14 @@
   const dismiss = element('button', 'zvms-theme-dialog__dismiss', text.dismiss)
   dismiss.type = 'button'
   dialog.append(title, guide, list, status, dismiss)
-  document.body.append(dialog)
+  overlay.append(dialog)
+  document.body.append(overlay)
 
   let choices
   let saving = false
   let firstVisit = false
   let opener = null
+  let previousOverflow = ''
 
   async function loadThemes() {
     if (choices) return choices
@@ -63,24 +73,50 @@
     return choices
   }
 
+  function requestTheme(endpoint, id, token) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 1500)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    try {
+      const xuehai = Number(window.xhBrowserJava?.getUserId?.())
+      if (Number.isFinite(xuehai) && xuehai > 0) headers['Xuehai-Id'] = String(xuehai)
+    } catch { /* 没有学海桥时不带头 */ }
+    return fetch(endpoint, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ theme: id }),
+      signal: controller.signal
+    }).then((response) => response.ok).catch(() => false).finally(() => clearTimeout(timeout))
+  }
+
   async function save(id) {
     const token = read('token')
     if (!token) return true
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 1800)
+    // 生产页面源和静态 API 源可能不同。先走同源 /api，避免平板上跨域预检失败。
+    let sameOrigin = ''
     try {
-      const response = await fetch(`${base}/v1/themes/me`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: id }),
-        signal: controller.signal
-      })
-      return response.ok
-    } catch {
-      return false
-    } finally {
-      clearTimeout(timeout)
-    }
+      if (new URL(base).origin !== location.origin) {
+        sameOrigin = `${location.origin}/api/v1/themes/me`
+      }
+    } catch { /* meta 不是绝对地址时只走它本身 */ }
+    if (sameOrigin && await requestTheme(sameOrigin, id, token)) return true
+    return requestTheme(`${base}/v1/themes/me`, id, token)
+  }
+
+  function clearQuery() {
+    const url = new URL(location.href)
+    if (!url.searchParams.has('choose-theme')) return
+    url.searchParams.delete('choose-theme')
+    history.replaceState(history.state, '', url)
+  }
+
+  function close() {
+    if (overlay.hidden) return
+    overlay.hidden = true
+    document.body.style.overflow = previousOverflow
+    if (firstVisit) write(guideKey, 'done')
+    clearQuery()
+    if (opener && opener.focus) opener.focus()
   }
 
   async function select(theme) {
@@ -88,18 +124,20 @@
     saving = true
     write(guideKey, 'done')
     write('zvms.theme', theme.id)
+    // 先切换页面，再尽力同步账号：平板跨域失败也不该卡住整站切换。
+    if (theme.id !== active) {
+      void save(theme.id)
+      location.assign(theme.base)
+      return
+    }
     status.textContent = text.saving
     list.querySelectorAll('button').forEach((button) => { button.disabled = true })
     dismiss.disabled = true
     const saved = await save(theme.id)
-    if (theme.id !== active) {
-      location.assign(theme.base)
-      return
-    }
     saving = false
     dismiss.disabled = false
     if (saved) {
-      dialog.close()
+      close()
     } else {
       list.querySelectorAll('button').forEach((button) => { button.disabled = false })
       status.textContent = text.local
@@ -107,8 +145,8 @@
     }
   }
 
-  async function open(showGuide, trigger = null) {
-    if (dialog.open || saving) return
+  async function open(showGuide, trigger) {
+    if (!overlay.hidden || saving) return
     opener = trigger
     firstVisit = showGuide
     guide.hidden = !firstVisit
@@ -116,12 +154,14 @@
     status.textContent = text.loading
     const shell = active === 'canary' ? document.querySelector('.yg-phi') : null
     const container = shell || document.body
-    container.append(dialog)
-    dialog.showModal()
+    container.append(overlay)
+    overlay.hidden = false
+    previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     title.focus()
     try {
       const themes = await loadThemes()
-      if (!dialog.open) return
+      if (overlay.hidden) return
       list.replaceChildren(...themes.map((theme) => {
         const button = element('button', 'zvms-theme-dialog__option')
         button.type = 'button'
@@ -141,18 +181,12 @@
     }
   }
 
-  dismiss.addEventListener('click', () => dialog.close())
-  dialog.addEventListener('cancel', (event) => {
-    if (saving) event.preventDefault()
+  dismiss.addEventListener('click', close)
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
   })
-  dialog.addEventListener('close', () => {
-    if (firstVisit) write(guideKey, 'done')
-    const url = new URL(location.href)
-    if (url.searchParams.has('choose-theme')) {
-      url.searchParams.delete('choose-theme')
-      history.replaceState(history.state, '', url)
-    }
-    opener?.focus()
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !overlay.hidden) close()
   })
   document.addEventListener('click', (event) => {
     const trigger = event.target instanceof Element && event.target.closest('[data-zvms-theme-picker]')
