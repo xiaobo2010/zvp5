@@ -28,6 +28,28 @@ let media: MediaQueryList | null = null
 const GAP = 900
 const TRANSITION_DUR = 650
 
+const ZOOM_MIN = 0.72
+const ZOOM_MAX = 1.35
+const ZOOM_STEP = 0.06
+const sceneScale = ref(1)
+
+function clampSceneScale(value: number) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100))
+}
+
+function zoomBy(delta: number) {
+  sceneScale.value = clampSceneScale(sceneScale.value + delta)
+}
+
+function resetZoom() {
+  sceneScale.value = 1
+}
+
+function onWheelZoom(event: WheelEvent) {
+  if (Math.abs(event.deltaY) < 1) return
+  zoomBy(event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
+}
+
 const modules = computed(() => props.data.modules)
 const total = computed(() => modules.value.length)
 const maxHour = computed(() =>
@@ -323,8 +345,9 @@ function extraTone(item: StageExtraItem) {
     <div class="stage-shade" aria-hidden="true"></div>
 
     <!-- 3D scene -->
-    <div class="stage-scene">
-      <div class="stage-track">
+    <div class="stage-scene" @wheel.prevent="onWheelZoom">
+      <div class="scene-zoom" :style="{ '--scene-scale': sceneScale }">
+        <div class="stage-track">
         <div
           v-for="(module, index) in modules"
           :key="module.id"
@@ -341,6 +364,10 @@ function extraTone(item: StageExtraItem) {
                 class="card card--identity-left"
                 :style="{ '--card-tilt': `${tilt('left')}deg` }"
               >
+                <div class="card-thickness" aria-hidden="true">
+                  <span class="card-thickness__top"></span>
+                  <span class="card-thickness__bottom"></span>
+                </div>
                 <div class="card-brackets">
                   <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
                     <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
@@ -390,6 +417,10 @@ function extraTone(item: StageExtraItem) {
                 class="card card--identity-right"
                 :style="{ '--card-tilt': `${tilt('right')}deg` }"
               >
+                <div class="card-thickness" aria-hidden="true">
+                  <span class="card-thickness__top"></span>
+                  <span class="card-thickness__bottom"></span>
+                </div>
                 <div class="card-brackets">
                   <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
                     <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
@@ -437,7 +468,12 @@ function extraTone(item: StageExtraItem) {
 
                 <div class="bar-stage">
                   <div class="bar-3d" :style="{ '--bar-height': point.hours / maxHour }">
-                    <div class="bar-front"></div>
+                    <div class="bar-face bar-face--front"></div>
+                    <div class="bar-face bar-face--back"></div>
+                    <div class="bar-face bar-face--left"></div>
+                    <div class="bar-face bar-face--right"></div>
+                    <div class="bar-face bar-face--top"></div>
+                    <div class="bar-face bar-face--bottom"></div>
                   </div>
                 </div>
 
@@ -462,6 +498,10 @@ function extraTone(item: StageExtraItem) {
                   class="card card--activity"
                   :style="{ '--tone-rgb': activityTone(activity) }"
                 >
+                  <div class="card-thickness" aria-hidden="true">
+                    <span class="card-thickness__top"></span>
+                    <span class="card-thickness__bottom"></span>
+                  </div>
                   <div class="card-brackets">
                     <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
                       <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
@@ -503,6 +543,10 @@ function extraTone(item: StageExtraItem) {
                 class="card card--extra-left"
                 :style="{ '--card-tilt': `${tilt('left')}deg` }"
               >
+                <div class="card-thickness" aria-hidden="true">
+                  <span class="card-thickness__top"></span>
+                  <span class="card-thickness__bottom"></span>
+                </div>
                 <div class="card-brackets">
                   <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
                     <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
@@ -547,6 +591,10 @@ function extraTone(item: StageExtraItem) {
                 class="card card--extra-right"
                 :style="{ '--card-tilt': `${tilt('right')}deg` }"
               >
+                <div class="card-thickness" aria-hidden="true">
+                  <span class="card-thickness__top"></span>
+                  <span class="card-thickness__bottom"></span>
+                </div>
                 <div class="card-brackets">
                   <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
                     <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
@@ -587,6 +635,7 @@ function extraTone(item: StageExtraItem) {
               </div>
             </div>
           </template>
+        </div>
         </div>
       </div>
     </div>
@@ -661,6 +710,31 @@ function extraTone(item: StageExtraItem) {
       >
         {{ transitioning ? '' : `当前模块: ${modules[active]?.title}` }}
       </div>
+    </div>
+
+    <!-- Scene zoom -->
+    <div class="zoom-hud" role="group" aria-label="场景缩放">
+      <button
+        type="button"
+        class="zoom-btn"
+        :disabled="sceneScale <= ZOOM_MIN + 0.001"
+        @click="zoomBy(-ZOOM_STEP)"
+        aria-label="缩小场景"
+      >−</button>
+      <button
+        type="button"
+        class="zoom-value"
+        @click="resetZoom"
+        aria-label="重置缩放"
+        title="重置缩放"
+      >{{ Math.round(sceneScale * 100) }}%</button>
+      <button
+        type="button"
+        class="zoom-btn"
+        :disabled="sceneScale >= ZOOM_MAX - 0.001"
+        @click="zoomBy(ZOOM_STEP)"
+        aria-label="放大场景"
+      >+</button>
     </div>
   </div>
 </template>
@@ -769,6 +843,14 @@ function extraTone(item: StageExtraItem) {
   z-index: 10;
 }
 
+.scene-zoom {
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transform: scale(var(--scene-scale, 1));
+  transition: transform 180ms ease-out;
+}
+
 .stage-track {
   position: relative;
   width: 100%;
@@ -856,12 +938,15 @@ function extraTone(item: StageExtraItem) {
   );
   border: 1px solid rgb(172 210 255 / 0.3);
   border-radius: 2px;
+  --card-depth: 8px;
   transform-style: preserve-3d;
   transform: perspective(1000px) translateZ(var(--card-z, 0px))
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
     rotateX(var(--pointer-x, 0deg));
   transition: none;
   box-shadow:
+    4px 4px 0 -1px rgb(8 15 28 / 0.98),
+    5px 5px 0 -1px rgb(52 96 150 / 0.32),
     0 22px 56px rgb(0 0 0 / 0.36),
     inset 0 1px 0 rgb(169 211 255 / 0.05);
 }
@@ -870,6 +955,67 @@ function extraTone(item: StageExtraItem) {
   transform: perspective(1000px) translateZ(calc(var(--card-z, 0px) + 6px))
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
     rotateX(var(--pointer-x, 0deg));
+}
+
+.card-thickness {
+  position: absolute;
+  inset: 0;
+  transform: translateZ(calc(var(--card-depth, 8px) * -1));
+  transform-style: preserve-3d;
+  background: linear-gradient(160deg, rgb(10 18 33 / 0.98), rgb(5 10 20 / 0.99));
+  border: 1px solid rgb(120 170 235 / 0.2);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.card-thickness::before,
+.card-thickness::after,
+.card-thickness__top,
+.card-thickness__bottom {
+  position: absolute;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, rgb(34 63 102 / 0.96), rgb(12 24 44 / 0.98));
+  border: 1px solid rgb(150 200 255 / 0.24);
+}
+
+.card-thickness::before,
+.card-thickness::after {
+  content: '';
+  top: 0;
+  width: var(--card-depth, 8px);
+  height: 100%;
+}
+
+.card-thickness::before {
+  right: 0;
+  transform-origin: 100% 50%;
+  transform: translateZ(calc(var(--card-depth, 8px) * -1)) rotateY(90deg);
+}
+
+.card-thickness::after {
+  left: 0;
+  transform-origin: 0 50%;
+  transform: translateZ(calc(var(--card-depth, 8px) * -1)) rotateY(-90deg);
+  background: linear-gradient(270deg, rgb(34 63 102 / 0.96), rgb(12 24 44 / 0.98));
+}
+
+.card-thickness__top {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--card-depth, 8px);
+  transform-origin: 50% 0;
+  transform: rotateX(-90deg);
+}
+
+.card-thickness__bottom {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: var(--card-depth, 8px);
+  transform-origin: 50% 100%;
+  transform: rotateX(90deg);
+  background: linear-gradient(180deg, rgb(14 27 48 / 0.98), rgb(6 12 24 / 0.99));
 }
 
 .card-brackets {
@@ -1149,51 +1295,80 @@ function extraTone(item: StageExtraItem) {
 }
 
 .bar-3d {
+  --bar-depth: 22px;
   position: relative;
   width: 46%;
   height: calc(var(--bar-height, 0.5) * 180px);
   min-height: 18px;
   transform-style: preserve-3d;
+  transform-origin: 50% 100%;
+  transform: rotateX(-4deg) rotateY(calc(-16deg - var(--card-tilt, 0deg)));
 }
 
-.bar-3d::before,
-.bar-3d::after {
-  content: '';
+.bar-face {
   position: absolute;
   box-sizing: border-box;
-}
-
-/* Isometric top cap: always visible from the front, unlike a horizontal 3D face. */
-.bar-3d::before {
-  top: -16px;
-  left: 16px;
-  right: 0;
-  height: 16px;
-  transform: skewX(-45deg);
-  background: linear-gradient(180deg, rgb(169 211 255 / 0.32), rgb(109 180 255 / 0.12));
   border: 1px solid rgb(169 211 255 / 0.22);
+  pointer-events: none;
 }
 
-/* Isometric right side, so the middle (untilted) bar still reads as a column. */
-.bar-3d::after {
-  top: -16px;
-  right: -16px;
-  bottom: 0;
-  width: 16px;
-  transform: skewY(-45deg);
-  background: linear-gradient(90deg, rgb(41 86 150 / 0.75), rgb(18 34 60 / 0.92));
-  border: 1px solid rgb(169 211 255 / 0.16);
-}
-
-.bar-front {
-  position: absolute;
+.bar-face--front {
   inset: 0;
-  box-sizing: border-box;
-  background: linear-gradient(180deg, rgb(169 211 255 / 0.6), rgb(61 141 255 / 0.22));
-  border: 1px solid rgb(169 211 255 / 0.35);
+  transform: translateZ(0);
+  background: linear-gradient(180deg, rgb(169 211 255 / 0.55), rgb(52 130 245 / 0.22));
   box-shadow:
     inset 0 0 22px rgb(109 180 255 / 0.18),
     0 0 26px rgb(109 180 255 / 0.12);
+}
+
+.bar-face--back {
+  inset: 0;
+  transform: translateZ(calc(var(--bar-depth) * -1));
+  background: rgb(8 16 30 / 0.96);
+  border-color: rgb(120 170 235 / 0.16);
+}
+
+.bar-face--left,
+.bar-face--right {
+  top: 0;
+  width: var(--bar-depth);
+  height: 100%;
+  background: linear-gradient(90deg, rgb(58 112 178 / 0.95), rgb(18 38 70 / 0.98));
+}
+
+.bar-face--right {
+  right: 0;
+  transform-origin: 100% 50%;
+  transform: translateZ(calc(var(--bar-depth) * -1)) rotateY(90deg);
+}
+
+.bar-face--left {
+  left: 0;
+  transform-origin: 0 50%;
+  transform: translateZ(calc(var(--bar-depth) * -1)) rotateY(-90deg);
+  background: linear-gradient(270deg, rgb(58 112 178 / 0.92), rgb(18 38 70 / 0.98));
+}
+
+.bar-face--top {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--bar-depth);
+  transform-origin: 50% 0;
+  transform: rotateX(-90deg);
+  background: linear-gradient(180deg, rgb(169 211 255 / 0.5), rgb(92 160 245 / 0.26));
+  border-color: rgb(169 211 255 / 0.32);
+}
+
+.bar-face--bottom {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: var(--bar-depth);
+  transform-origin: 50% 100%;
+  transform: rotateX(90deg);
+  background: rgb(8 16 30 / 0.96);
+  border-color: rgb(120 170 235 / 0.14);
 }
 
 .bar-display {
@@ -1256,7 +1431,6 @@ function extraTone(item: StageExtraItem) {
 .card--activity:hover {
   background: rgb(14 24 43 / 0.97);
   border-color: rgb(var(--tone-rgb) / 0.34);
-  box-shadow: none;
 }
 
 .activity-status {
@@ -1306,7 +1480,7 @@ function extraTone(item: StageExtraItem) {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  overflow: hidden;
+  overflow: visible;
   max-height: 420px;
 }
 
@@ -1473,6 +1647,58 @@ function extraTone(item: StageExtraItem) {
   height: 14px;
 }
 
+/* Scene zoom HUD */
+.zoom-hud {
+  position: fixed;
+  right: 26px;
+  bottom: 28px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: rgb(10 17 31 / 0.92);
+  border: 1px solid rgb(169 211 255 / 0.22);
+  border-radius: 1px;
+  font-family: var(--font-mono);
+}
+
+.zoom-btn,
+.zoom-value {
+  height: 28px;
+  padding: 0;
+  color: #c7e4ff;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 160ms ease-out;
+}
+
+.zoom-btn {
+  width: 28px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.zoom-value {
+  min-width: 48px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.zoom-btn:hover:not(:disabled),
+.zoom-value:hover {
+  background: rgb(169 211 255 / 0.08);
+  border-color: rgb(169 211 255 / 0.2);
+  color: #eef6ff;
+}
+
+.zoom-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 /* Depth Rail */
 .depth-rail {
   display: flex;
@@ -1621,6 +1847,7 @@ function extraTone(item: StageExtraItem) {
     width: 100%;
     max-width: 100%;
     min-width: 0;
+    --card-depth: 5px;
     padding: 24px;
     margin: 0 auto;
   }
@@ -1653,6 +1880,7 @@ function extraTone(item: StageExtraItem) {
   }
 
   .bar-3d {
+    --bar-depth: 15px;
     width: 60%;
     height: calc(var(--bar-height, 0.5) * 115px);
   }
@@ -1706,6 +1934,22 @@ function extraTone(item: StageExtraItem) {
   .rail-track {
     width: 120px;
   }
+
+  .zoom-hud {
+    right: 14px;
+    bottom: 92px;
+  }
+
+  .zoom-btn {
+    width: 26px;
+    height: 26px;
+  }
+
+  .zoom-value {
+    min-width: 44px;
+    height: 26px;
+    font-size: 10px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1718,6 +1962,10 @@ function extraTone(item: StageExtraItem) {
 
   .stage-track {
     transform: none !important;
+  }
+
+  .scene-zoom {
+    transition: none;
   }
 
   .stage-module {
