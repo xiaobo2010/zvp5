@@ -79,6 +79,11 @@
   --glass-shadow: var(--glass-rim), 0 1px 2px #223f5b0e, 0 10px 28px #314e6910;
   --glass-floating-shadow: var(--glass-rim), 0 4px 12px #2f4e6714, 0 20px 48px #334f6c1f;
   --glass-blur: blur(16px) saturate(150%);
+  /* Self-contained satin glass for tablets / engines where backdrop-filter
+     can composite the whole layer as empty. Keeps the rim, sheen and border
+     readable without relying on the page behind it. */
+  --glass-tablet-bg: linear-gradient(147deg, #fffdf9f7, #edf5fdf4 57%, #f8f5fff7);
+  --glass-tablet-floating-bg: linear-gradient(145deg, #fffdf9fb, #f3f8fef9 60%, #f8f5fffb);
   --glass-highlight: linear-gradient(
     162deg,
     #fffefbe6,
@@ -272,12 +277,52 @@
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root,
   .pro-app {
-    --glass-bg: var(--surface-matte);
-    --glass-floating-bg: var(--surface-matte);
+    --glass-bg: var(--glass-tablet-bg);
+    --glass-floating-bg: var(--glass-tablet-floating-bg);
+    --glass-blur: none;
+    --glass-mobile-blur: none;
   }
 }
 
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+/* Tablet GPUs/engines can composite backdrop-filter as an empty layer: the
+   glass panel, drawer and clock then paint only their border and children
+   vanish. Keep the blur on desktop, but switch tablets to a self-contained
+   satin glass so the material, content and animations stay visible. The clock
+   and buttons already use their own recipes; this covers the large panels,
+   drawer, tabs and modal glass as well. */
+@media (any-pointer: coarse) and (min-width: 600px) {
+  :root,
+  .pro-app {
+    --glass-bg: var(--glass-tablet-bg);
+    --glass-floating-bg: var(--glass-tablet-floating-bg);
+    --glass-blur: none;
+    --glass-mobile-blur: none;
+  }
+
+  .pro-app,
+  .pro-app *,
+  .pro-app *::before,
+  .pro-app *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/* Reduce Transparency used to turn every glass surface into white-on-white
+   and leave only the border. Keep an opaque satin tint instead. Contrast mode
+   still gets the stronger matte treatment below. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  .pro-app {
+    --glass-bg: var(--glass-tablet-bg);
+    --glass-floating-bg: var(--glass-tablet-floating-bg);
+    --glass-blur: none;
+    --glass-mobile-blur: none;
+    --glass-sheen: none;
+  }
+}
+
+@media (prefers-contrast: more) {
   :root,
   .pro-app {
     --surface-matte: linear-gradient(150deg, white, var(--palette-edge, #f9fbfe));
