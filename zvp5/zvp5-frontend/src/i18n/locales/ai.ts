@@ -155,6 +155,7 @@ export const zhCN = {
       list_activities: '活动列表',
       get_activity: '活动详情',
       activity_statistics: '活动统计',
+      activity_types_summary: '活动类型汇总',
       list_activity_members: '活动成员',
       user_volunteer_time: '义工时长',
       user_activities: '参与活动',

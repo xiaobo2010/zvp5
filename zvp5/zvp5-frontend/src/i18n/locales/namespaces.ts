@@ -27,15 +27,21 @@ export interface NamespaceRule {
  *   * /group 下是 ZGroupUserList / ZActivityList（manage + activity）；
  *   * /user/:id 的学生详情页直接用了 manage.* 与 activity.*；
  *   * /user 首页的今日工作表与时长面板用了 activity.status / activity.mode。
+ *
+ * ai 字典的归属同理，但更容易漏：这批页面本身不在 /ai 下，却各自引用了
+ * ai.* 文案——组列表/成员页的「额度」入口（ai.userQuota.*）、成员额度对话框
+ * （ai.quotaAdmin.*）、义工活动页的 OCR（ai.ocr.*）、选人框（ai.select.*）、
+ * Markdown 编辑器的 AI 对话框（ai.chat.thinkingSection）。这些页面若不加载
+ * ai 字典，界面会直接显示原始 key（如 ai.quotaAdmin.afTitle）。
  */
 export const NAMESPACE_RULES: NamespaceRule[] = [
   { prefixes: ['/ai'], namespaces: ['ai'] },
   { prefixes: ['/server'], namespaces: ['server'] },
-  { prefixes: ['/manage'], namespaces: ['manage', 'server'] },
-  { prefixes: ['/group'], namespaces: ['manage', 'activity'] },
-  { prefixes: ['/activity', '/activities'], namespaces: ['activity'] },
-  { prefixes: ['/user/'], namespaces: ['manage', 'activity'], exclude: ['/user/login'] },
-  { prefixes: ['/user'], namespaces: ['activity'], exclude: ['/user/login'] }
+  { prefixes: ['/manage'], namespaces: ['manage', 'server', 'ai'] },
+  { prefixes: ['/group'], namespaces: ['manage', 'activity', 'ai'] },
+  { prefixes: ['/activity', '/activities'], namespaces: ['activity', 'ai'] },
+  { prefixes: ['/user/'], namespaces: ['manage', 'activity', 'ai'], exclude: ['/user/login'] },
+  { prefixes: ['/user'], namespaces: ['activity', 'ai'], exclude: ['/user/login'] }
 ]
 
 /** 只吃首屏字典的路径：根、登录、关于、个人资料、维护页与 404 兜底。 */

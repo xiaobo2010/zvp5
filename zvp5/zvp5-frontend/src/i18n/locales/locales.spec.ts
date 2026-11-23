@@ -101,4 +101,12 @@ describe('lazy locale namespaces', () => {
     )
     expect(uncovered).toEqual([])
   })
+
+  it('loads the ai dictionary on the pages that quote ai.* outside /ai', () => {
+    // 这些页面引用了 ai.* 文案（额度入口、OCR、选人框、Markdown 的 AI 对话框），
+    // 不加载 ai 字典就会显示原始 key。
+    for (const path of ['/manage', '/group', '/activity', '/activities', '/user', '/user/123']) {
+      expect(namespacesForPath(path)).toContain('ai')
+    }
+  })
 })
