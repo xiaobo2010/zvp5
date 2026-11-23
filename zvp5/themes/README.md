@@ -6,7 +6,7 @@
 
 - 源码在同一个仓库的远端分支时，使用 `source.kind: "git"`。`ref` 填分支名，`path` 填前端项目相对该分支根目录的路径。
 - 源码随当前分支提交时，使用 `source.kind: "local"`。`path` 填前端项目相对仓库根目录的路径，省略 `ref`。
-- 前端构建须生成 `dist/index.html`，静态资源和 History 路由都要支持 Vite 的子路径。使用 Vue Router 时可用 `createWebHistory(import.meta.env.BASE_URL)`。对于暂时无法修改源码的既有分支，清单的 `build.patch` 支持按 `file`、`from`、`to` 声明构建前替换。现有的 Pro 主题提供了一个例子。[主题清单](./manifest.json)
+- 前端构建须生成 `dist/index.html`。主题子应用使用 Vue Router 的 hash 路由：`createWebHashHistory(import.meta.env.BASE_URL)`。这样刷新只请求 `/themes/<id>/`，不依赖 nginx/Worker 为每个主题做 SPA 回落；旧 history 深链接会由根入口改写到 `#/...`。静态资源仍按 Vite 的子路径输出。对于暂时无法修改源码的既有分支，清单的 `build.patch` 支持按 `file`、`from`、`to` 声明构建前替换。[主题清单](./manifest.json)
 
 ## 2. 在清单中登记
 

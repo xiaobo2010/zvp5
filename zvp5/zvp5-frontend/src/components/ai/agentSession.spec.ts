@@ -48,7 +48,7 @@ describe('工具标签', () => {
     const labels: Record<string, string> = zhCN.ai.agent.tools
     const names = availableAgentTools(['admin'])
 
-    expect(names).toHaveLength(57)
+    expect(names).toHaveLength(58)
     for (const name of names) {
       const key = toolLabelKey(name)
       expect(key, name).not.toBe('ai.agent.tools.unknown')
@@ -99,25 +99,25 @@ describe('工具标签', () => {
 })
 
 describe('按角色的工具声明', () => {
-  it('admin 见到注册表的 56 条加平台帮助', () => {
+  it('admin 见到注册表的 57 条加平台帮助', () => {
     const tools = availableAgentTools(['admin'])
-    expect(tools).toHaveLength(57)
+    expect(tools).toHaveLength(58)
     expect(tools).toContain('search_activities')
     expect(tools).toContain('ssh_exec')
     expect(tools).toContain('script_run')
     expect(tools).toContain(PLATFORM_HELP_TOOL)
   })
 
-  it('department 只见 10 条义工管理加平台帮助', () => {
+  it('department 只见 11 条义工管理加平台帮助', () => {
     const tools = availableAgentTools(['department'])
     expect(tools).toEqual([...VOLUNTEER_AGENT_TOOLS, PLATFORM_HELP_TOOL])
-    expect(tools).toHaveLength(11)
+    expect(tools).toHaveLength(12)
     expect(tools).not.toContain('db_ddl')
     expect(tools).not.toContain('ssh_exec')
   })
 
   it('没有角色时同样按最小集合给', () => {
-    expect(availableAgentTools([])).toHaveLength(11)
+    expect(availableAgentTools([])).toHaveLength(12)
     expect(availableAgentTools([])).toContain(PLATFORM_HELP_TOOL)
   })
 })

@@ -1,4 +1,15 @@
 /* 各版本只映射面板令牌，布局和无障碍行为共用。 */
+.zvms-theme-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in srgb, CanvasText 32%, transparent);
+}
+.zvms-theme-overlay[hidden] { display: none; }
+
 .zvms-theme-dialog {
   --picker-bg: var(--yg-bg-surface-raised, Canvas);
   --picker-text: var(--yg-text-primary, CanvasText);
@@ -8,12 +19,10 @@
   --picker-hover: var(--yg-bg-surface-sunken, Canvas);
   --picker-radius: var(--yg-radius-lg, 1rem);
   --picker-shadow: var(--yg-shadow-lg, none);
-  position: fixed;
-  inset: 0;
-  margin: auto;
   box-sizing: border-box;
-  width: min(32rem, calc(100% - 2rem));
-  max-height: min(85dvh, 44rem);
+  width: min(32rem, 100%);
+  max-height: min(85vh, 44rem);
+  overflow-y: auto;
   padding: var(--yg-space-6, 1.5rem);
   border: 1px solid var(--picker-line);
   border-radius: var(--picker-radius);
@@ -55,11 +64,10 @@
   --picker-shadow: var(--glass-floating-shadow, none);
 }
 
-.zvms-theme-dialog[open] {
+.zvms-theme-overlay:not([hidden]) .zvms-theme-dialog {
   animation: zvms-theme-enter var(--yg-dur-slow, 260ms) var(--yg-ease-out, ease-out) both;
 }
 
-.zvms-theme-dialog::backdrop { background: color-mix(in srgb, CanvasText 32%, transparent); }
 .zvms-theme-dialog__title { margin: 0 0 var(--yg-space-2, 0.5rem); font-size: var(--yg-font-size-xl, 1.25rem); }
 .zvms-theme-dialog__guide, .zvms-theme-dialog__status { color: var(--picker-muted); margin: 0 0 var(--yg-space-4, 1rem); }
 .zvms-theme-dialog__status:empty { display: none; }
@@ -88,5 +96,5 @@
   to { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .zvms-theme-dialog[open] { animation: none; }
+  .zvms-theme-overlay:not([hidden]) .zvms-theme-dialog { animation: none; }
 }

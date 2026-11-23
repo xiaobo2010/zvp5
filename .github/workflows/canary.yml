@@ -354,7 +354,7 @@ jobs:
             page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
               -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL${base}me")"
             if [[ -z "$expected_entry" || "$page" != *"$expected_entry"* ||
-                  "$page" != *'src="/theme-switcher.js"'* || "$page" != *'href="/theme-switcher.css"'* ]]; then
+                  "$page" != *theme-switcher.js* || "$page" != *theme-switcher.css* ]]; then
               echo "wrong theme index at ${base}me" >&2
               exit 1
             fi

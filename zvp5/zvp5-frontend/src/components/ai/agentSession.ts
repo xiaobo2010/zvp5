@@ -22,7 +22,7 @@ import type { ChatTurn } from './chatSession'
  *
  * 与后端封闭注册表逐条对齐（`services/agent/tools.py` + `ops_tools` +
  * `tools_platform` + `tools_governance` + `tools_ops_extra` + `tools_scripts`，共
- * 56 条；`platform_help` 走 `TOOL_LABEL_KEYS` 覆盖，不在此列）。
+ * 57 条；`platform_help` 走 `TOOL_LABEL_KEYS` 覆盖，不在此列）。
  *
  * 这张表**不是权限判据**（权限在服务端），漏一条的后果只是界面显示「未知工具」；
  * 所以这里宁可列全，也不要靠「名字看着像就通配」——那会把模型编的名字也翻成
@@ -34,6 +34,7 @@ const KNOWN_TOOLS = [
   'list_activities',
   'get_activity',
   'activity_statistics',
+  'activity_types_summary',
   'list_activity_members',
   'user_volunteer_time',
   'user_activities',
@@ -98,7 +99,7 @@ const KNOWN_TOOL_SET = new Set(KNOWN_TOOLS)
 /**
  * 平台使用帮助：所有角色都可见（学生会也要查「这个功能怎么用」）。
  *
- * 它不在 KNOWN_TOOLS 里——那张表是与后端注册表对齐的 56 条，这一条是独立的
+ * 它不在 KNOWN_TOOLS 里——那张表是与后端注册表对齐的 57 条，这一条是独立的
  * 只读帮助入口，标签键也不走 snake_case 通配（`platformHelp`，与后端别名
  * `platformHelp → platform_help` 对应）。
  */
@@ -107,7 +108,7 @@ export const PLATFORM_HELP_TOOL = 'platform_help'
 /**
  * 义工管理域工具：非 admin（学生会）能看到的声明集合。
  *
- * 与后端 department 角色的工具白名单一致（10 条），顺序照后端声明；
+ * 与后端 department 角色的工具白名单一致（11 条），顺序照后端声明；
  * 运维工具（文件 / 数据库 / SSH）不在其中。
  */
 export const VOLUNTEER_AGENT_TOOLS = [
@@ -115,6 +116,7 @@ export const VOLUNTEER_AGENT_TOOLS = [
   'list_activities',
   'get_activity',
   'activity_statistics',
+  'activity_types_summary',
   'list_activity_members',
   'user_volunteer_time',
   'user_activities',
@@ -123,7 +125,7 @@ export const VOLUNTEER_AGENT_TOOLS = [
   'set_member_status'
 ] as const
 
-/** admin 的可见集合：注册表里的 56 条加平台帮助。 */
+/** admin 的可见集合：注册表里的 57 条加平台帮助。 */
 const ALL_AGENT_TOOLS = [...KNOWN_TOOLS, PLATFORM_HELP_TOOL]
 
 /**
