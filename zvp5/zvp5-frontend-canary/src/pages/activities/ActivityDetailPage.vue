@@ -201,7 +201,9 @@ async function saveRecord() {
 }
 
 async function loadMembers() {
-  if (!id.value) return
+  // 参与名单含全校学生姓名/学号/时长，后端只对管理员/学生会开放；
+  // 普通用户不请求、也不渲染这一块，避免 403 后出现空列表。
+  if (!id.value || !canManage.value) return
   memberLoading.value = true
   // 连续输入/翻页时只采用最后一次请求的结果，避免旧响应覆盖新结果。
   const ticket = ++memberRequest
@@ -329,7 +331,7 @@ onUnmounted(() => window.clearTimeout(memberSearchTimer))
         </div>
       </header>
 
-      <section class="members" aria-labelledby="members-title">
+      <section v-if="canManage" class="members" aria-labelledby="members-title">
         <div class="section-head">
           <h2 id="members-title" class="section-title">{{ t('activities.memberList') }}</h2>
           <span class="section-count num">{{ memberTotal }} {{ t('activities.members') }}</span>

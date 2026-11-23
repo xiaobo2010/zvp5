@@ -141,7 +141,9 @@ router.beforeEach((to) => {
   if (to.meta.public) return true
 
   if (!session.authenticated) {
-    return { name: 'login', query: { redirect: to.fullPath } }
+    // hash router 的 fullPath 可能带 `#/`，作为 redirect query 会被二次编码。
+    const redirect = to.fullPath.split('#')[0] || to.path
+    return { name: 'login', query: { redirect } }
   }
 
   if (to.meta.roles && !to.meta.roles.some((role) => session.roles.includes(role))) {
