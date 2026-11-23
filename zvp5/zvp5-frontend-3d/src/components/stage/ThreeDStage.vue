@@ -1589,8 +1589,10 @@ function extraTone(item: StageExtraItem) {
 
 /* Gecko composites a `backdrop-filter` card inside a preserved-3d track as an
    empty layer, so each card is painted from an opaque layered gradient
-   instead. Everything else (perspective, preserve-3d, depth transform, card
-   tilt/bob, glow, reflection, nebula, star canvas) stays. */
+   instead. It also drops the infinite `card-bob`: an animated transform on a
+   `preserve-3d` card is the second half of the same blank-card combination.
+   Colors, gradients, tilt, depth transforms, glow, reflection, nebula and the
+   star canvas all stay; only the continuous float is paused. */
 .stage.is-gecko .card {
   background:
     linear-gradient(
@@ -1601,6 +1603,7 @@ function extraTone(item: StageExtraItem) {
     );
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  animation: none;
 }
 
 /* Do not advertise a filter layer in Gecko: `will-change: filter` keeps an
