@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import type { UserRole } from '@/types/domain'
 import { useSessionStore } from '@/shared/stores/session'
 import { useUiStore } from '@/shared/stores/ui'
@@ -121,7 +121,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 export const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior(to, _from, saved) {
     if (saved) return saved
