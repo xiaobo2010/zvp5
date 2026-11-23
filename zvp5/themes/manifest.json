@@ -26,23 +26,6 @@
         "install": ["pnpm", "install", "--no-frozen-lockfile"],
         "command": ["pnpm", "exec", "vite", "build"]
       }
-    },
-    {
-      "id": "canary-anthropic",
-      "label": "Canary Anthropic",
-      "description": "暖色工作台：柔和中性色、圆角面板与自适应导航",
-      "status": "experimental",
-      "base": "/themes/canary-anthropic/",
-      "source": {
-        "kind": "git",
-        "ref": "canary-anthropic",
-        "path": "zvp5/zvp5-frontend-canary"
-      },
-      "build": {
-        "kind": "vite",
-        "install": ["pnpm", "install", "--frozen-lockfile"],
-        "command": ["pnpm", "exec", "vite", "build"]
-      }
     }
   ]
 }
