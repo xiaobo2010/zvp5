@@ -104,6 +104,22 @@ function xuehaiId(): string {
 
 let cachedToken = ''
 let cachedPayload: Record<string, unknown> | null = null
+let serverOffsetMs = 0
+
+/**
+ * The API responses carry a standard `Date` header. Keep the difference from
+ * the local clock so the stage can show a server-time card that keeps ticking.
+ */
+function noteServerClock(response: Response): void {
+  const header = response.headers.get('date')
+  if (!header) return
+  const parsed = Date.parse(header)
+  if (Number.isFinite(parsed)) serverOffsetMs = parsed - Date.now()
+}
+
+export function serverTimeOffset(): number {
+  return serverOffsetMs
+}
 
 function decodeTokenPayload(value: string): Record<string, unknown> | null {
   if (value === cachedToken) return cachedPayload
@@ -206,6 +222,8 @@ export async function canaryRequest<T>(path: string, init: RequestInit = {}): Pr
     headers,
     credentials: 'include'
   })
+
+  noteServerClock(response)
 
   let payload: unknown = null
   const text = await response.text()

@@ -82,6 +82,8 @@ export interface StageData {
   hours: StageHours
   activities: StageActivity[]
   extra: StageExtra
+  /** Difference between the API server clock and the local clock, in ms. */
+  serverOffsetMs: number
 }
 
 export const STAGE_MODULES: StageModuleMeta[] = [

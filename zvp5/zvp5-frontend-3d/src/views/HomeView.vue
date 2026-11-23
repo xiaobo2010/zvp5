@@ -10,6 +10,7 @@ import {
   isAuthError,
   isLoggedIn,
   readableError,
+  serverTimeOffset,
   type CanaryActivity,
   type CanaryActivityPage,
   type CanaryNotice,
@@ -82,7 +83,8 @@ async function load() {
       pending: Array.isArray(pending) ? pending : [],
       agents: Array.isArray(agents) ? agents : [],
       logs: Array.isArray(logs) ? logs : [],
-      notices: Array.isArray(notices?.notifications) ? (notices.notifications as CanaryNotice[]) : []
+      notices: Array.isArray(notices?.notifications) ? (notices.notifications as CanaryNotice[]) : [],
+      serverOffsetMs: serverTimeOffset()
     })
     state.value = 'ready'
   } catch (reason) {

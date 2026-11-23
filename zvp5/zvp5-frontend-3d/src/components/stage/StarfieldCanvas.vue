@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   warp?: boolean
+  reverse?: boolean
   reduced?: boolean
 }>()
 
@@ -39,7 +40,7 @@ function init() {
   
   ctx.scale(dpr, dpr)
   
-  const count = w < 720 ? 400 : 700
+  const count = w < 720 ? 140 : 260
   stars = Array.from({ length: count }, () => ({
     x: Math.random() * w - w / 2,
     y: Math.random() * h - h / 2,
@@ -60,18 +61,28 @@ function render() {
   const speed = props.warp ? 18 : 1.2
   const warpStretch = props.warp ? 8 : 1
   
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)'
   ctx.globalCompositeOperation = 'destination-out'
   ctx.fillRect(0, 0, w, h)
   ctx.globalCompositeOperation = 'source-over'
   
   for (const star of stars) {
-    star.z -= speed
-    if (star.z <= 1) {
-      star.z = 1000
-      star.x = Math.random() * w - cx
-      star.y = Math.random() * h - cy
-      star.pz = star.z
+    if (props.reverse) {
+      star.z += speed
+      if (star.z >= 1000) {
+        star.z = 1
+        star.x = Math.random() * w - cx
+        star.y = Math.random() * h - cy
+        star.pz = star.z
+      }
+    } else {
+      star.z -= speed
+      if (star.z <= 1) {
+        star.z = 1000
+        star.x = Math.random() * w - cx
+        star.y = Math.random() * h - cy
+        star.pz = star.z
+      }
     }
     
     const sx = (star.x / star.z) * 400 + cx
@@ -90,13 +101,14 @@ function render() {
       const py = (star.y / star.pz) * 400 + cy
       const dx = sx - px
       const dy = sy - py
-      const len = Math.sqrt(dx * dx + dy * dy) * warpStretch
-      
+      const ex = px + dx * warpStretch
+      const ey = py + dy * warpStretch
+
       ctx.strokeStyle = `rgba(169, 211, 255, ${opacity * 0.6})`
       ctx.lineWidth = r
       ctx.beginPath()
       ctx.moveTo(px, py)
-      ctx.lineTo(sx, sy)
+      ctx.lineTo(ex, ey)
       ctx.stroke()
     } else {
       ctx.fillStyle = `rgba(238, 246, 255, ${opacity})`
@@ -203,6 +215,12 @@ onBeforeUnmount(() => {
 
 watch(() => props.warp, () => {
   if (!props.warp && stars.length) {
+    stars.forEach(s => { s.pz = s.z })
+  }
+})
+
+watch(() => props.reverse, () => {
+  if (stars.length) {
     stars.forEach(s => { s.pz = s.z })
   }
 })

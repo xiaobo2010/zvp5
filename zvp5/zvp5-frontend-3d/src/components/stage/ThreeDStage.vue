@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import StarfieldCanvas from './StarfieldCanvas.vue'
 
 import type { StageActivity, StageData, StageExtraItem } from '@/types/stage'
@@ -11,88 +11,76 @@ const previousActive = ref(0)
 const transitioning = ref(false)
 const reduced = ref(false)
 const warp = ref(false)
+const reverse = ref(false)
 const parallaxX = ref(0)
 const parallaxY = ref(0)
 const isTouch = ref(false)
-/**
- * Flat mode keeps the content readable when the 3D scene cannot be trusted.
- *
- * Firefox on tablets (Firefox for Android on a coarse pointer) combines
- * `backdrop-filter`, `transform-style: preserve-3d` and a perspective track in
- * a way that can paint the card as an empty/black layer. The same combination
- * is also the first thing to break when a browser lacks CSS 3D support. In
- * flat mode the stage stops being a 3D scene entirely: the active card is a
- * normal in-flow block, no canvas is required, and the space backdrop is pure
- * CSS. Desktop Chrome/Safari keep the full 3D experience.
- */
-const flat = ref(detectFlat())
+const viewportWidth = ref(window.innerWidth)
+const serverTime = ref(new Date(Date.now() + (props.data.serverOffsetMs ?? 0)))
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
+let serverTimeTimer: ReturnType<typeof setInterval> | undefined
 
 let media: MediaQueryList | null = null
-let coarseMedia: MediaQueryList | null = null
 
 const GAP = 900
 const TRANSITION_DUR = 820
 
-function mediaMatches(query: string): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia(query).matches
-  )
-}
-
-function supportsCss3d(): boolean {
-  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return true
-  return (
-    CSS.supports('transform-style', 'preserve-3d') &&
-    CSS.supports('perspective', '1px')
-  )
-}
-
-function detectFlat(): boolean {
-  if (typeof window === 'undefined') return false
-  const isFirefox = /firefox|fxios/i.test(navigator.userAgent)
-  const coarse = mediaMatches('(pointer: coarse)') || mediaMatches('(hover: none)')
-  const touchCapable = navigator.maxTouchPoints > 0 || 'ontouchstart' in window
-  // Firefox + touch is the known-bad pairing; missing 3D support is a hard
-  // reason for everyone else.
-  return (isFirefox && (coarse || touchCapable)) || !supportsCss3d()
-}
-
 const modules = computed(() => props.data.modules)
 const total = computed(() => modules.value.length)
-const trackTransform = computed(() =>
-  flat.value || reduced.value
-    ? 'none'
-    : `rotateX(${parallaxY.value * 0.3}deg) rotateY(${parallaxX.value * 0.3}deg)`
-)
 const maxHour = computed(() =>
   Math.max(1, ...props.data.hours.points.map((p) => p.hours))
 )
-const recent = computed(() => props.data.activities.slice(0, 4))
-const extraItems = computed(() => props.data.extra.items.slice(0, 6))
+const recent = computed(() => props.data.activities.slice(0, 6))
+const extraItems = computed(() => props.data.extra.items)
+const agentItems = computed(() =>
+  extraItems.value.filter((item) => item.kind === 'agent').slice(0, 5)
+)
+const rightItems = computed(() =>
+  extraItems.value.filter((item) => item.kind !== 'agent').slice(0, 6)
+)
+const rightTitle = computed(() =>
+  props.data.identity.isAdmin
+    ? '风险日志'
+    : props.data.identity.isDepartment
+      ? '待审核'
+      : '通知与动态'
+)
+const isMobile = computed(() => viewportWidth.value <= 720)
+const averageHours = computed(() =>
+  props.data.hours.points.length > 0
+    ? props.data.hours.total / props.data.hours.points.length
+    : 0
+)
+
+function formatServerTime(): string {
+  return serverTime.value.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function formatServerDate(): string {
+  return serverTime.value.toLocaleDateString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short'
+  })
+}
+
+function getHourDelta(hours: number): string {
+  const delta = hours - averageHours.value
+  if (Math.abs(delta) < 0.05) return '与平均持平'
+  const prefix = delta > 0 ? '比平均多' : '比平均少'
+  return `${prefix} ${Math.abs(delta).toFixed(1)} h`
+}
+
+function tilt(position: 'left' | 'center' | 'right'): number {
+  if (reduced.value) return 0
+  if (position === 'center') return 0
+  if (isMobile.value) return position === 'left' ? 6 : -6
+  return position === 'left' ? 13 : -13
+}
 
 function depthStyle(index: number) {
   const raw = index - active.value
-  if (flat.value) {
-    // Only the active card participates in layout; the CSS hides the rest so a
-    // tall module can scroll the page instead of being clipped by a fixed 3D
-    // viewport. No transforms, no filters, no canvas dependency.
-    return {
-      transform: 'none',
-      filter: 'none',
-      opacity: raw === 0 ? '1' : '0',
-      visibility: raw === 0 ? 'visible' : 'hidden',
-      zIndex: '1'
-    } as const
-  }
-  // A rail jump can skip modules; clamp the visual offset so a card never
-  // travels behind the camera (z > perspective) or explodes in projection.
   const d = Math.max(-1, Math.min(1, raw))
-  // Keep a tiny non-zero Z even for the active card so the browser serializes
-  // every state as matrix3d; mixing matrix() and matrix3d() makes the depth
-  // transition jump instead of interpolating.
   const z = -d * GAP + 0.01
   const scale = 1 - Math.abs(d) * 0.16
   const blur = Math.abs(d) * 10
@@ -103,9 +91,9 @@ function depthStyle(index: number) {
 
   return {
     transform: `translate(-50%, -50%) translate3d(0, 0, ${z}px) scale(${scale})`,
-    // `blur(0px)` still creates a filter containing block. Firefox tablet
-    // flattens the backdrop-filter card inside it and paints nothing, so the
-    // active card must stay filter-free.
+    // `blur(0px)` still creates a filter containing block. Firefox on tablets
+    // can flatten the backdrop-filter card inside it and paint nothing, so the
+    // active card stays filter-free.
     filter: blur === 0 ? 'none' : `blur(${blur}px)`,
     opacity: String(opacity),
     visibility: isVisible ? 'visible' : 'hidden',
@@ -117,7 +105,7 @@ function goTo(index: number) {
   if (index < 0 || index >= total.value || transitioning.value) return
   previousActive.value = active.value
   active.value = index
-  if (flat.value) return
+  reverse.value = index < previousActive.value
   transitioning.value = true
   warp.value = true
 
@@ -125,6 +113,7 @@ function goTo(index: number) {
   transitionTimer = setTimeout(() => {
     transitioning.value = false
     warp.value = false
+    reverse.value = false
   }, TRANSITION_DUR)
 }
 
@@ -162,43 +151,39 @@ function checkTouch() {
   isTouch.value = 'ontouchstart' in window || navigator.maxTouchPoints > 0
 }
 
-function syncCapabilities() {
-  flat.value = detectFlat()
-  checkTouch()
+function onResize() {
+  viewportWidth.value = window.innerWidth
 }
 
 onMounted(() => {
   media = window.matchMedia('(prefers-reduced-motion: reduce)')
   syncMotion(media)
   media.addEventListener('change', syncMotion)
-  coarseMedia = window.matchMedia('(pointer: coarse)')
-  coarseMedia.addEventListener('change', syncCapabilities)
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('pointermove', onPointerMove)
-  syncCapabilities()
+  window.addEventListener('resize', onResize)
+  checkTouch()
+
+  // Server time ticker with 1s interval
+  serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
+  serverTimeTimer = setInterval(() => {
+    serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
   media?.removeEventListener('change', syncMotion)
-  coarseMedia?.removeEventListener('change', syncCapabilities)
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('resize', onResize)
   if (transitionTimer) clearTimeout(transitionTimer)
+  if (serverTimeTimer) clearInterval(serverTimeTimer)
 })
 
-function barDepth(index: number) {
-  return {
-    '--bar-z': `${index * -20}px`,
-    '--bar-tilt': `${index === 0 ? -10 : index === 2 ? 10 : 0}deg`
-  }
-}
-
 function activityDepth(index: number) {
-  const depths = [0, -70, -140, -210]
-  const tilts = [-4, 4, -3, 3]
+  const depths = [0, -40, -90, -30, -70, -120]
   return {
-    '--activity-z': `${depths[index] || 0}px`,
-    '--activity-tilt': `${tilts[index] || 0}deg`
+    '--card-z': `${depths[index] ?? 0}px`
   }
 }
 
@@ -226,7 +211,7 @@ function extraTone(item: StageExtraItem) {
 </script>
 
 <template>
-  <div class="stage" :class="{ 'is-reduced': reduced, 'is-flat': flat }">
+  <div class="stage" :class="{ 'is-reduced': reduced }">
     <!-- Background environment -->
     <div class="stage-backdrop">
       <div class="nebula nebula-1"></div>
@@ -235,184 +220,322 @@ function extraTone(item: StageExtraItem) {
       <div class="horizon-grid"></div>
     </div>
 
-    <StarfieldCanvas v-if="!flat" :warp="warp" :reduced="reduced" />
-    <!-- Flat mode paints its stars with CSS: the fallback must never depend on
-         a canvas context being available or animated. -->
-    <div v-else class="stage-stars" aria-hidden="true"></div>
+    <StarfieldCanvas :warp="warp" :reduced="reduced" :reverse="reverse" />
     <div class="stage-shade" aria-hidden="true"></div>
 
     <!-- 3D scene -->
     <div class="stage-scene">
       <div
         class="stage-track"
-        :style="{ transform: trackTransform }"
+        :style="{
+          transform: reduced
+            ? 'none'
+            : `rotateX(${parallaxY * 0.3}deg) rotateY(${parallaxX * 0.3}deg)`
+        }"
       >
         <div
           v-for="(module, index) in modules"
           :key="module.id"
-          class="stage-card-wrapper"
+          class="stage-module"
+          :data-module="module.id"
           :style="depthStyle(index)"
           :aria-hidden="index !== active ? 'true' : undefined"
         >
-          <div class="stage-card" :class="`module-${module.id}`">
-            <div class="card-brackets">
-              <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-              </svg>
-              <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-              </svg>
-              <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-              </svg>
-              <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-              </svg>
-            </div>
-
-            <div class="card-glow"></div>
-
-            <div class="card-header">
-              <div class="card-eyebrow">{{ module.eyebrow }}</div>
-              <h2 class="card-title">{{ module.title }}</h2>
-            </div>
-
-            <!-- Identity -->
-            <div v-if="module.id === 'identity'" class="card-content identity-content">
-              <div class="identity-hero">
-                <p class="identity-greeting">{{ data.identity.greeting }}</p>
-                <h3 class="identity-name">{{ data.identity.name }}</h3>
-                <div v-if="data.identity.pendingCount > 0" class="identity-badge">
-                  {{ data.identity.pendingCount }} 条待审批
+          <!-- Identity Module: 2-card layout -->
+          <template v-if="module.id === 'identity'">
+            <div class="cluster cluster--identity">
+              <!-- Left: Greeting + Name + Info + Server Time -->
+              <div
+                class="card card--identity-left"
+                :style="{ '--card-tilt': `${tilt('left')}deg` }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
                 </div>
-              </div>
+                <div class="card-glow"></div>
 
-              <div class="identity-grid">
-                <div class="identity-field">
-                  <span class="field-label">学号</span>
-                  <span class="field-value">{{ data.identity.studentId }}</span>
+                <div class="identity-hero">
+                  <p class="identity-greeting">{{ data.identity.greeting }}</p>
+                  <h3 class="identity-name">{{ data.identity.name }}</h3>
                 </div>
-                <div class="identity-field">
-                  <span class="field-label">班级</span>
-                  <span class="field-value">{{ data.identity.className }}</span>
-                </div>
-                <div class="identity-field">
-                  <span class="field-label">角色</span>
-                  <span class="field-value">{{ data.identity.rolesLabel }}</span>
-                </div>
-                <div class="identity-field identity-field--featured">
-                  <span class="field-label">累计时长</span>
-                  <span class="field-value field-value--large">{{ data.identity.totalHours }}</span>
-                  <span class="field-unit">h</span>
-                </div>
-              </div>
-            </div>
 
-            <!-- Hours -->
-            <div v-else-if="module.id === 'hours'" class="card-content hours-content">
-              <div class="hours-scene">
-                <div class="hours-floor"></div>
-                <div class="hours-chart">
-                  <div
-                    v-for="(point, idx) in data.hours.points"
-                    :key="point.key"
-                    class="hours-bar-container"
-                    :style="barDepth(idx)"
-                  >
-                    <div class="hours-bar" :style="{ '--bar-height': point.hours / maxHour }">
-                      <div class="bar-back"></div>
-                      <div class="bar-top"></div>
-                      <div class="bar-front"></div>
-                    </div>
-                    <div class="hours-bar-label">
-                      <span class="bar-label-text">{{ point.shortLabel }}</span>
-                      <span class="bar-label-value">{{ point.hours }}</span>
-                    </div>
+                <div class="identity-info">
+                  <div class="info-row">
+                    <span class="info-label">学号</span>
+                    <span class="info-value">{{ data.identity.studentId }}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">班级</span>
+                    <span class="info-value">{{ data.identity.className }}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">角色</span>
+                    <span class="info-value">{{ data.identity.rolesLabel }}</span>
+                  </div>
+                  <div class="server-time">
+                    <span class="info-label">服务器时间</span>
+                    <strong class="server-clock">{{ formatServerTime() }}</strong>
+                    <span class="server-date">{{ formatServerDate() }}</span>
                   </div>
                 </div>
+
+                <div class="card-reflection"></div>
               </div>
 
-              <div class="hours-summary">
-                <span class="summary-label">总计</span>
-                <span class="summary-value">{{ data.hours.total }}</span>
-                <span class="summary-unit">h</span>
+              <!-- Right: Total Hours + Pending Badge -->
+              <div
+                class="card card--identity-right"
+                :style="{ '--card-tilt': `${tilt('right')}deg` }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                </div>
+                <div class="card-glow"></div>
+
+                <div class="hours-display">
+                  <span class="hours-label">累计时长</span>
+                  <span class="hours-value">{{ data.identity.totalHours }}</span>
+                  <span class="hours-unit">h</span>
+                </div>
+
+                <div v-if="data.identity.pendingCount > 0" class="pending-badge">
+                  {{ data.identity.pendingCount }} 条待审批
+                </div>
+
+                <div class="card-reflection"></div>
               </div>
             </div>
+          </template>
 
-            <!-- Activities -->
-            <div v-else-if="module.id === 'activities'" class="card-content activities-content">
-              <svg class="activities-connections" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <!-- Hours Module: 3-bar layout -->
+          <template v-else-if="module.id === 'hours'">
+            <div class="cluster cluster--hours">
+              <div
+                v-for="(point, idx) in data.hours.points"
+                :key="point.key"
+                class="card card--hours-bar"
+                :style="{ '--card-tilt': `${tilt(idx === 0 ? 'left' : idx === 2 ? 'right' : 'center')}deg` }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                </div>
+                <div class="card-glow"></div>
+
+                <div class="bar-head">
+                  <span class="bar-label">{{ point.label }}</span>
+                  <span class="bar-index">0{{ idx + 1 }}</span>
+                </div>
+
+                <div class="bar-stage">
+                  <div class="bar-3d" :style="{ '--bar-height': point.hours / maxHour }">
+                    <div class="bar-front"></div>
+                  </div>
+                </div>
+
+                <div class="bar-display">
+                  <div class="bar-value">{{ point.hours }}<span class="bar-unit">h</span></div>
+                  <div class="bar-delta">{{ getHourDelta(point.hours) }}</div>
+                </div>
+
+                <div class="card-reflection"></div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Activities Module: 3×2 grid -->
+          <template v-else-if="module.id === 'activities'">
+            <div class="cluster cluster--activities">
+              <svg v-if="!isMobile" class="activities-connections" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="conn-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="rgb(169 211 255)" stop-opacity="0.3" />
-                    <stop offset="100%" stop-color="rgb(111 215 196)" stop-opacity="0.1" />
+                    <stop offset="0%" stop-color="rgb(169 211 255)" stop-opacity="0.55" />
+                    <stop offset="100%" stop-color="rgb(111 215 196)" stop-opacity="0.22" />
                   </linearGradient>
                 </defs>
                 <path
-                  d="M23 18 L77 25 L70 76 L27 68 Z"
+                  d="M16 20 L50 16 L84 24 L80 74 L50 80 L20 72 Z"
                   fill="none"
                   stroke="url(#conn-grad)"
-                  stroke-width="0.4"
+                  stroke-width="0.55"
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  d="M23 18 L70 76 M77 25 L27 68"
+                  d="M16 20 L80 74 M84 24 L20 72 M50 16 L50 80"
                   fill="none"
                   stroke="url(#conn-grad)"
-                  stroke-width="0.3"
-                  opacity="0.45"
+                  stroke-width="0.4"
+                  opacity="0.55"
                   vector-effect="non-scaling-stroke"
                 />
               </svg>
 
-              <div class="activities-space">
-                <div
-                  v-for="(activity, idx) in recent"
-                  :key="activity.id"
-                  class="activity-card"
-                  :style="{
-                    ...activityDepth(idx),
-                    '--tone-rgb': activityTone(activity)
-                  }"
-                >
-                  <div class="activity-status"></div>
-                  <h4 class="activity-title">{{ activity.name }}</h4>
-                  <div class="activity-meta">
-                    <span>{{ activity.dateLabel }}</span>
-                    <span class="meta-sep">·</span>
-                    <span>{{ activity.place }}</span>
-                  </div>
-                  <div class="activity-hours">
-                    {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
-                  </div>
+              <div
+                v-for="(activity, idx) in recent"
+                :key="activity.id"
+                class="card card--activity"
+                :style="{
+                  ...activityDepth(idx),
+                  '--tone-rgb': activityTone(activity),
+                  '--card-tilt': `${tilt(idx % 3 === 0 ? 'left' : idx % 3 === 2 ? 'right' : 'center')}deg`
+                }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
                 </div>
+                <div class="card-glow"></div>
+
+                <div class="activity-status"></div>
+                <h4 class="activity-title">{{ activity.name }}</h4>
+                <div class="activity-meta">
+                  <span>{{ activity.dateLabel }}</span>
+                  <span class="meta-sep">·</span>
+                  <span>{{ activity.place }}</span>
+                </div>
+                <div class="activity-hours">
+                  {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
+                </div>
+
+                <div class="card-reflection"></div>
               </div>
             </div>
+          </template>
 
-            <!-- Extra -->
-            <div v-else-if="module.id === 'extra'" class="card-content extra-content">
-              <div v-if="extraItems.length" class="extra-list">
-                <div
-                  v-for="item in extraItems"
-                  :key="item.id"
-                  class="extra-item"
-                  :style="{ '--tone-rgb': extraTone(item) }"
-                >
-                  <div class="extra-dot"></div>
-                  <div class="extra-info">
-                    <h4 class="extra-title">{{ item.title }}</h4>
-                    <p class="extra-meta">{{ item.meta }}</p>
-                    <p v-if="item.detail" class="extra-detail">{{ item.detail }}</p>
+          <!-- Extra Module: 2-card layout (agent + non-agent) -->
+          <template v-else-if="module.id === 'extra'">
+            <div class="cluster cluster--extra">
+              <!-- Left: Agent items -->
+              <div
+                class="card card--extra-left"
+                :style="{ '--card-tilt': `${tilt('left')}deg` }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                </div>
+                <div class="card-glow"></div>
+
+                <h3 class="extra-title">ZVAgent 执行记录</h3>
+                <div class="extra-list">
+                  <div
+                    v-for="item in agentItems"
+                    :key="item.id"
+                    class="extra-item"
+                    :style="{ '--tone-rgb': extraTone(item) }"
+                  >
+                    <div class="extra-dot"></div>
+                    <div class="extra-info">
+                      <h4 class="extra-item-title">{{ item.title }}</h4>
+                      <p class="extra-meta">{{ item.meta }}</p>
+                      <p v-if="item.detail" class="extra-detail">{{ item.detail }}</p>
+                    </div>
                   </div>
                 </div>
+                <div v-if="agentItems.length === 0" class="extra-empty">
+                  {{ data.extra.emptyLabel }}
+                </div>
+
+                <div class="card-reflection"></div>
               </div>
-              <div v-else class="extra-empty">
-                {{ data.extra.emptyLabel }}
+
+              <!-- Right: Non-agent items (by role) -->
+              <div
+                class="card card--extra-right"
+                :style="{ '--card-tilt': `${tilt('right')}deg` }"
+              >
+                <div class="card-brackets">
+                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                  </svg>
+                </div>
+                <div class="card-glow"></div>
+
+                <h3 class="extra-title">{{ rightTitle }}</h3>
+                <div class="extra-list">
+                  <div
+                    v-for="item in rightItems"
+                    :key="item.id"
+                    class="extra-item"
+                    :style="{ '--tone-rgb': extraTone(item) }"
+                  >
+                    <div class="extra-dot"></div>
+                    <div class="extra-info">
+                      <h4 class="extra-item-title">{{ item.title }}</h4>
+                      <p class="extra-meta">{{ item.meta }}</p>
+                      <p v-if="item.detail" class="extra-detail">{{ item.detail }}</p>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="rightItems.length === 0" class="extra-empty">
+                  {{ data.extra.emptyLabel }}
+                </div>
+
+                <div class="card-reflection"></div>
               </div>
             </div>
-          </div>
-
-          <div class="card-reflection"></div>
+          </template>
         </div>
       </div>
     </div>
@@ -601,23 +724,57 @@ function extraTone(item: StageExtraItem) {
   transform: none !important;
 }
 
-.stage-card-wrapper {
+.stage-module {
   position: absolute;
   left: 50%;
   top: 50%;
   width: 100%;
-  max-width: 620px;
   transform-style: preserve-3d;
   transition: all var(--transition-dur) var(--transition-ease);
   will-change: transform, opacity, filter;
 }
 
-/* Card Base */
-.stage-card {
+/* Cluster Container (multi-card layout per module) */
+.cluster {
   position: relative;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 900px;
   margin: 0 auto;
+  padding: 0 20px;
+}
+
+.cluster--identity {
+  gap: 32px;
+  align-items: stretch;
+}
+
+.cluster--hours {
+  gap: 28px;
+}
+
+.cluster--activities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  max-height: none;
+  overflow: visible;
+}
+
+.cluster--extra {
+  gap: 32px;
+}
+
+/* Card Base */
+.card {
+  position: relative;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 48px 52px;
+  padding: 32px;
   background: linear-gradient(
     135deg,
     rgb(16 24 42 / 0.82) 0%,
@@ -627,25 +784,17 @@ function extraTone(item: StageExtraItem) {
   border-radius: 2px;
   backdrop-filter: blur(20px);
   transform-style: preserve-3d;
-  animation: card-bob 4s ease-in-out infinite;
-  animation-play-state: var(--bob-play, running);
+  transform: perspective(1000px) translateZ(var(--card-z, 0px))
+    rotateY(var(--card-tilt, 0deg));
+  transition: transform 200ms ease-out;
   box-shadow:
     0 40px 120px rgb(0 0 0 / 0.5),
     inset 0 1px 0 rgb(169 211 255 / 0.08);
 }
 
-.is-reduced .stage-card {
-  animation: none;
-}
-
-@keyframes card-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+.card:hover {
+  transform: perspective(1000px) translateZ(calc(var(--card-z, 0px) + 8px))
+    rotateY(var(--card-tilt, 0deg));
 }
 
 .card-brackets {
@@ -711,46 +860,18 @@ function extraTone(item: StageExtraItem) {
   opacity: 0.6;
 }
 
-/* Card Header */
-.card-header {
-  margin-bottom: 36px;
-  transform: translateZ(10px);
-}
-
-.card-eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  color: rgb(169 211 255 / 0.6);
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-
-.card-title {
-  font-size: 28px;
-  font-weight: 300;
-  letter-spacing: -0.02em;
-  color: #eef6ff;
-}
-
-.card-content {
-  flex: 1;
-  transform: translateZ(5px);
-}
-
-/* Identity Module */
-.identity-content {
+/* Identity Module Cards */
+.card--identity-left,
+.card--identity-right {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 20px;
 }
 
 .identity-hero {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid rgb(169 211 255 / 0.08);
 }
 
 .identity-greeting {
@@ -766,303 +887,296 @@ function extraTone(item: StageExtraItem) {
   color: #eef6ff;
 }
 
-.identity-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 12px;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: #ffc46b;
-  background: rgb(255 196 107 / 0.08);
-  border: 1px solid rgb(255 196 107 / 0.2);
-  border-radius: 999px;
-  width: fit-content;
-}
-
-.identity-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-}
-
-.identity-field {
+.identity-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  background: rgb(16 24 42 / 0.3);
-  border: 1px solid rgb(169 211 255 / 0.06);
-  border-radius: 1px;
-}
-
-.identity-field--featured {
-  grid-column: 1 / -1;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.field-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: rgb(169 211 255 / 0.4);
-  text-transform: uppercase;
-}
-
-.field-value {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 400;
-  color: #a9d3ff;
-  letter-spacing: 0.02em;
-}
-
-.field-value--large {
-  font-size: 48px;
-  font-weight: 200;
-  color: #eef6ff;
-}
-
-.field-unit {
-  font-size: 20px;
-  font-weight: 300;
-  color: rgb(169 211 255 / 0.5);
-}
-
-/* Hours Module */
-.hours-content {
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-}
-
-.hours-scene {
-  position: relative;
-  height: 240px;
-  transform-style: preserve-3d;
-}
-
-.hours-floor {
-  position: absolute;
-  left: -10%;
-  right: -10%;
-  bottom: 26px;
-  height: 150px;
-  background-image:
-    linear-gradient(rgb(169 211 255 / 0.14) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(169 211 255 / 0.14) 1px, transparent 1px);
-  background-size: 48px 22px;
-  transform: perspective(420px) rotateX(66deg);
-  transform-origin: 50% 100%;
-  mask-image: linear-gradient(to top, #000 10%, transparent 90%);
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.hours-chart {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  height: 100%;
-  gap: 24px;
-  transform: rotateX(-16deg);
-  transform-origin: 50% 100%;
-  transform-style: preserve-3d;
-  perspective: 600px;
-}
-
-.hours-bar-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  transform: translateZ(var(--bar-z, 0)) rotateY(var(--bar-tilt, 0deg));
-  transform-style: preserve-3d;
-}
-
-.hours-bar {
-  position: relative;
-  width: 100%;
-  height: calc(var(--bar-height, 0.5) * 180px);
-  min-height: 24px;
-  transform-style: preserve-3d;
-}
-
-.bar-back,
-.bar-top,
-.bar-front {
-  position: absolute;
-}
-
-.hours-bar::before,
-.hours-bar::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  width: 30px;
-  height: 100%;
-  background: linear-gradient(90deg, rgb(60 110 170 / 0.55), rgb(20 40 70 / 0.85));
-  border: 1px solid rgb(169 211 255 / 0.12);
-}
-
-.hours-bar::before {
-  right: 0;
-  transform-origin: right center;
-  transform: rotateY(-90deg);
-}
-
-.hours-bar::after {
-  left: 0;
-  transform-origin: left center;
-  transform: rotateY(90deg);
-}
-
-.bar-back {
-  inset: 0;
-  background: rgb(16 24 42 / 0.6);
-  border: 1px solid rgb(169 211 255 / 0.08);
-  transform: translateZ(-30px);
-}
-
-.bar-top {
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 30px;
-  background: linear-gradient(
-    to bottom,
-    rgb(169 211 255 / 0.12),
-    rgb(169 211 255 / 0.04)
-  );
-  border: 1px solid rgb(169 211 255 / 0.1);
-  transform: rotateX(-90deg);
-  transform-origin: top;
-}
-
-.bar-front {
-  inset: 0;
-  background: linear-gradient(
-    180deg,
-    rgb(169 211 255 / 0.4) 0%,
-    rgb(169 211 255 / 0.15) 100%
-  );
-  border: 1px solid rgb(169 211 255 / 0.2);
-  box-shadow: inset 0 1px 20px rgb(169 211 255 / 0.1);
-}
-
-.hours-bar-label {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--font-mono);
-  text-align: center;
-}
-
-.bar-label-text {
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: rgb(169 211 255 / 0.4);
-  text-transform: uppercase;
-}
-
-.bar-label-value {
-  font-size: 20px;
-  font-weight: 200;
-  color: #a9d3ff;
-}
-
-.hours-summary {
-  display: flex;
-  align-items: baseline;
   gap: 12px;
   padding-top: 20px;
   border-top: 1px solid rgb(169 211 255 / 0.08);
 }
 
-.summary-label {
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.info-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.15em;
   color: rgb(169 211 255 / 0.4);
   text-transform: uppercase;
 }
 
-.summary-value {
-  font-size: 44px;
-  font-weight: 200;
-  color: #eef6ff;
+.info-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: #a9d3ff;
+  letter-spacing: 0.02em;
 }
 
-.summary-unit {
-  font-size: 18px;
+.info-value--mono {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.server-time {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  background: rgb(16 24 42 / 0.3);
+  border: 1px solid rgb(169 211 255 / 0.08);
+  border-radius: 1px;
+  margin-top: 6px;
+}
+
+.server-clock {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  color: #eef6ff;
+  line-height: 1;
+}
+
+.server-date {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: rgb(169 211 255 / 0.45);
+  text-transform: uppercase;
+}
+
+.hours-display {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+}
+
+.hours-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgb(169 211 255 / 0.4);
+  text-transform: uppercase;
+}
+
+.hours-value {
+  font-size: 56px;
+  font-weight: 200;
+  color: #eef6ff;
+  line-height: 1;
+}
+
+.hours-unit {
+  font-size: 20px;
   font-weight: 300;
   color: rgb(169 211 255 / 0.5);
 }
 
-/* Activities Module */
-.activities-content {
-  position: relative;
+.pending-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: #ffc46b;
+  background: rgb(255 196 107 / 0.08);
+  border: 1px solid rgb(255 196 107 / 0.2);
+  border-radius: 999px;
+  margin: 0 auto;
+}
+
+/* Hours Module Cards */
+.card--hours-bar {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 24px;
+  min-height: 380px;
+}
+
+.bar-head {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bar-index {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgb(169 211 255 / 0.35);
+}
+
+.bar-stage {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 195px;
+  display: flex;
+  align-items: flex-end;
   justify-content: center;
-  min-height: 280px;
-  transform: perspective(900px) rotateX(-6deg) rotateY(3deg);
+  padding-bottom: 10px;
+}
+
+.bar-stage::before {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 0;
+  height: 82px;
+  background-image:
+    linear-gradient(rgb(169 211 255 / 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(169 211 255 / 0.12) 1px, transparent 1px);
+  background-size: 28px 18px;
+  transform: perspective(300px) rotateX(72deg);
+  transform-origin: bottom;
+  mask-image: linear-gradient(to top, #000 10%, transparent 90%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.bar-stage::after {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(169 211 255 / 0.28),
+    transparent
+  );
+}
+
+.bar-3d {
+  position: relative;
+  width: 46%;
+  height: calc(var(--bar-height, 0.5) * 180px);
+  min-height: 18px;
   transform-style: preserve-3d;
 }
 
+.bar-3d::before,
+.bar-3d::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+}
+
+/* Isometric top cap: always visible from the front, unlike a horizontal 3D face. */
+.bar-3d::before {
+  top: -16px;
+  left: 16px;
+  right: 0;
+  height: 16px;
+  transform: skewX(-45deg);
+  background: linear-gradient(180deg, rgb(169 211 255 / 0.32), rgb(109 180 255 / 0.12));
+  border: 1px solid rgb(169 211 255 / 0.22);
+}
+
+/* Isometric right side, so the middle (untilted) bar still reads as a column. */
+.bar-3d::after {
+  top: -16px;
+  right: -16px;
+  bottom: 0;
+  width: 16px;
+  transform: skewY(-45deg);
+  background: linear-gradient(90deg, rgb(41 86 150 / 0.75), rgb(18 34 60 / 0.92));
+  border: 1px solid rgb(169 211 255 / 0.16);
+}
+
+.bar-front {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, rgb(169 211 255 / 0.6), rgb(61 141 255 / 0.22));
+  border: 1px solid rgb(169 211 255 / 0.35);
+  box-shadow:
+    inset 0 0 22px rgb(109 180 255 / 0.18),
+    0 0 26px rgb(109 180 255 / 0.12);
+}
+
+.bar-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.bar-value {
+  font-size: 44px;
+  font-weight: 200;
+  color: #a9d3ff;
+  line-height: 1;
+}
+
+.bar-unit {
+  font-size: 16px;
+  font-weight: 300;
+  color: rgb(169 211 255 / 0.5);
+  margin-left: 4px;
+}
+
+.bar-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgb(169 211 255 / 0.4);
+  text-transform: uppercase;
+}
+
+.bar-delta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgb(169 211 255 / 0.6);
+  letter-spacing: 0.02em;
+  padding-top: 8px;
+  border-top: 1px solid rgb(169 211 255 / 0.08);
+  width: 100%;
+  text-align: center;
+}
+
+/* Activities Module */
 .activities-connections {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: 0.65;
+  opacity: 0.5;
+  z-index: 2;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 5px rgb(169 211 255 / 0.35));
 }
 
-.activities-space {
+.card--activity {
   position: relative;
-  width: 100%;
-  height: 320px;
-  transform-style: preserve-3d;
+  z-index: 1;
+  padding: 20px;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
-.activity-card {
-  position: absolute;
-  width: 46%;
-  padding: 16px;
-  background: rgb(16 24 42 / 0.55);
-  border: 1px solid rgb(var(--tone-rgb) / 0.18);
-  border-radius: 1px;
-  transform: translateZ(var(--activity-z, 0)) rotateY(var(--activity-tilt, 0deg));
-  transform-style: preserve-3d;
-  transition: all 300ms ease-out;
-}
-
-.activity-card:nth-child(1) {
-  top: 0;
-  left: 0;
-}
-
-.activity-card:nth-child(2) {
-  top: 7%;
-  right: 0;
-}
-
-.activity-card:nth-child(3) {
-  bottom: 6%;
-  left: 4%;
-}
-
-.activity-card:nth-child(4) {
-  bottom: 0;
-  right: 2%;
-}
-
-.activity-card:hover {
+.card--activity:hover {
   background: rgb(16 24 42 / 0.6);
   border-color: rgb(var(--tone-rgb) / 0.3);
   box-shadow: 0 0 20px rgb(var(--tone-rgb) / 0.15);
@@ -1070,8 +1184,8 @@ function extraTone(item: StageExtraItem) {
 
 .activity-status {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 20px;
+  right: 20px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1085,6 +1199,7 @@ function extraTone(item: StageExtraItem) {
   color: #eef6ff;
   margin-bottom: 8px;
   letter-spacing: -0.01em;
+  padding-right: 20px;
 }
 
 .activity-meta {
@@ -1107,39 +1222,63 @@ function extraTone(item: StageExtraItem) {
   letter-spacing: 0.05em;
 }
 
-/* Extra Module */
-.extra-content {
-  flex: 1;
+/* Extra Module Cards */
+.card--extra-left,
+.card--extra-right {
   display: flex;
   flex-direction: column;
-  justify-content: safe center;
-  overflow-y: auto;
-  padding-right: 8px;
+  gap: 16px;
+  overflow: hidden;
+  max-height: 420px;
 }
 
-.extra-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.extra-content::-webkit-scrollbar-track {
-  background: rgb(16 24 42 / 0.3);
-}
-
-.extra-content::-webkit-scrollbar-thumb {
-  background: rgb(169 211 255 / 0.2);
-  border-radius: 2px;
+.card--extra-left .extra-title,
+.card--extra-right .extra-title {
+  flex-shrink: 0;
 }
 
 .extra-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.extra-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.extra-list::-webkit-scrollbar-track {
+  background: rgb(16 24 42 / 0.3);
+}
+
+.extra-list::-webkit-scrollbar-thumb {
+  background: rgb(169 211 255 / 0.2);
+  border-radius: 2px;
+}
+
+.extra-title {
+  font-size: 16px;
+  font-weight: 400;
+  color: #eef6ff;
+  letter-spacing: -0.01em;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgb(169 211 255 / 0.08);
+}
+
+.extra-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .extra-item {
   display: flex;
-  gap: 14px;
-  padding: 14px;
+  gap: 12px;
+  padding: 12px;
   background: rgb(16 24 42 / 0.3);
   border: 1px solid rgb(var(--tone-rgb) / 0.12);
   border-radius: 1px;
@@ -1158,43 +1297,54 @@ function extraTone(item: StageExtraItem) {
   background: rgb(var(--tone-rgb));
   box-shadow: 0 0 8px rgb(var(--tone-rgb) / 0.4);
   flex-shrink: 0;
-  margin-top: 5px;
+  margin-top: 4px;
 }
 
 .extra-info {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+  min-width: 0;
 }
 
-.extra-title {
-  font-size: 14px;
+.extra-item-title {
+  font-size: 13px;
   font-weight: 400;
   color: #eef6ff;
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .extra-meta {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   color: rgb(169 211 255 / 0.4);
   letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .extra-detail {
-  font-size: 12px;
+  font-size: 11px;
   color: rgb(169 211 255 / 0.5);
-  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .extra-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 200px;
+  height: 120px;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12px;
   color: rgb(169 211 255 / 0.3);
   letter-spacing: 0.05em;
 }
@@ -1347,290 +1497,95 @@ function extraTone(item: StageExtraItem) {
   border: 0;
 }
 
-/* CSS-only star field used by the flat fallback (no canvas context needed). */
-.stage-stars {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-color: #04070d;
-  background-image:
-    radial-gradient(1px 1px at 12% 18%, rgb(238 246 255 / 0.75), transparent 100%),
-    radial-gradient(1px 1px at 28% 62%, rgb(169 211 255 / 0.6), transparent 100%),
-    radial-gradient(1.5px 1.5px at 44% 32%, rgb(238 246 255 / 0.7), transparent 100%),
-    radial-gradient(1px 1px at 61% 78%, rgb(169 182 255 / 0.55), transparent 100%),
-    radial-gradient(1.5px 1.5px at 76% 24%, rgb(238 246 255 / 0.65), transparent 100%),
-    radial-gradient(1px 1px at 88% 56%, rgb(111 215 196 / 0.55), transparent 100%),
-    radial-gradient(1px 1px at 19% 86%, rgb(238 246 255 / 0.5), transparent 100%),
-    radial-gradient(1px 1px at 68% 12%, rgb(169 211 255 / 0.5), transparent 100%),
-    radial-gradient(2px 2px at 54% 8%, rgb(238 246 255 / 0.4), transparent 100%),
-    radial-gradient(2px 2px at 8% 48%, rgb(169 211 255 / 0.35), transparent 100%),
-    radial-gradient(ellipse 60% 50% at 50% 0%, rgb(24 43 78 / 0.55), transparent 70%),
-    radial-gradient(ellipse 70% 55% at 80% 95%, rgb(26 62 62 / 0.32), transparent 72%);
-}
-
-/* ------------------------------------------------------------------------- */
-/* Flat fallback                                                             */
-/* ------------------------------------------------------------------------- */
-
-/* Firefox tablet cannot reliably composite perspective + preserve-3d +
-   backdrop-filter in one tree. The flat stage drops all three and becomes a
-   normal scrolling document: readable active card, CSS star field, no canvas. */
-.stage.is-flat {
-  height: auto;
-  min-height: 100vh;
-  min-height: 100svh;
-  overflow: visible;
-}
-
-.stage.is-flat .stage-backdrop,
-.stage.is-flat .stage-shade {
-  position: absolute;
-}
-
-.stage.is-flat .stage-backdrop {
-  z-index: 0;
-}
-
-.stage.is-flat .stage-shade {
-  z-index: 1;
-}
-
-.stage.is-flat .nebula {
-  filter: none;
-  opacity: 0.12;
-}
-
-.stage.is-flat .horizon-grid {
-  transform: none;
-  height: 22%;
-  background: linear-gradient(
-    to top,
-    rgb(169 211 255 / 0.08),
-    transparent 100%
-  );
-  opacity: 0.5;
-}
-
-.stage.is-flat .stage-scene {
-  display: block;
-  height: auto;
-  min-height: 0;
-  padding: 96px 18px 150px;
-  perspective: none;
-}
-
-.stage.is-flat .stage-track {
-  height: auto;
-  transform: none !important;
-  transform-style: flat;
-  transition: none;
-}
-
-.stage.is-flat .stage-card-wrapper {
-  position: relative;
-  left: auto;
-  top: auto;
-  width: 100%;
-  margin: 0 auto;
-  transform: none !important;
-  filter: none !important;
-  transition: none;
-  transform-style: flat;
-  will-change: auto;
-}
-
-/* Inline `visibility`/`opacity` still switch cards; display:none keeps a
-   hidden module from reserving height in the normal document flow. */
-.stage.is-flat .stage-card-wrapper[aria-hidden='true'] {
-  display: none;
-}
-
-.stage.is-flat .stage-card {
-  max-height: none;
-  overflow: visible;
-  padding: 36px 28px;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgb(30 48 80 / 0.45), transparent 70%),
-    linear-gradient(135deg, rgb(12 18 32 / 0.96), rgb(7 11 20 / 0.98));
-  border-color: rgb(169 211 255 / 0.2);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  transform-style: flat;
-  animation: none;
-}
-
-.stage.is-flat .card-header,
-.stage.is-flat .card-content,
-.stage.is-flat .card-glow,
-.stage.is-flat .card-reflection,
-.stage.is-flat .hours-scene,
-.stage.is-flat .hours-chart,
-.stage.is-flat .hours-bar-container,
-.stage.is-flat .hours-bar,
-.stage.is-flat .activities-content,
-.stage.is-flat .activities-space,
-.stage.is-flat .activity-card {
-  transform: none !important;
-  transform-style: flat;
-}
-
-.stage.is-flat .card-glow,
-.stage.is-flat .card-reflection,
-.stage.is-flat .hours-floor,
-.stage.is-flat .activities-connections {
-  display: none;
-}
-
-.stage.is-flat .hours-chart {
-  height: 190px;
-  perspective: none;
-  gap: 14px;
-}
-
-.stage.is-flat .hours-bar {
-  height: calc(var(--bar-height, 0.5) * 150px);
-}
-
-.stage.is-flat .bar-back,
-.stage.is-flat .bar-top {
-  display: none;
-}
-
-.stage.is-flat .hours-bar::before,
-.stage.is-flat .hours-bar::after {
-  display: none;
-}
-
-.stage.is-flat .bar-front {
-  inset: 0;
-  transform: none;
-}
-
-.stage.is-flat .activities-space {
-  height: auto;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.stage.is-flat .activity-card {
-  position: static;
-  width: auto;
-}
-
-.stage.is-flat .activities-content {
-  min-height: 0;
-}
-
-.stage.is-flat .extra-content {
-  justify-content: flex-start;
-  overflow: visible;
-  padding-right: 0;
-}
-
-.stage.is-flat .nav-btn,
-.stage.is-flat .depth-rail {
-  background: rgb(16 24 42 / 0.9);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.stage.is-flat .stage-nav {
-  background: rgb(4 7 13 / 0.72);
-  border-radius: 2px;
-  padding: 6px 10px;
-  bottom: 18px;
-}
-
-@media (max-width: 720px) {
-  .stage.is-flat .stage-scene {
-    padding: 82px 12px 140px;
-  }
-
-  .stage.is-flat .stage-card {
-    max-height: none;
-    padding: 28px 20px;
-  }
-
-  .stage.is-flat .activities-space {
-    grid-template-columns: 1fr;
-  }
-
-  .stage.is-flat .identity-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Responsive */
 @media (max-width: 720px) {
   .stage-scene {
     padding: 64px 0 92px;
   }
 
-  .stage-card-wrapper {
-    width: calc(100% - 28px);
-  }
-
-  .stage-card {
-    max-height: calc(100dvh - 180px);
-    min-height: auto;
+  .cluster {
+    max-height: calc(100dvh - 190px);
     overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 36px 28px;
+    padding: 0 16px 8px;
   }
 
-  .card-title {
-    font-size: 22px;
+  .cluster--identity,
+  .cluster--extra {
+    flex-direction: column;
+  }
+
+  .cluster--hours {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .cluster--activities {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    max-height: calc(100dvh - 190px);
+    overflow-y: auto;
+  }
+
+  .card {
+    min-width: min(100%, 360px);
+    padding: 24px;
+    margin: 0 auto;
+  }
+
+  .card--identity-left,
+  .card--identity-right {
+    min-height: auto;
   }
 
   .identity-name {
     font-size: 28px;
   }
 
-  .field-value--large {
+  .hours-display {
+    padding: 32px 16px;
+  }
+
+  .hours-value {
+    font-size: 44px;
+  }
+
+  .card--hours-bar {
+    min-height: 230px;
+  }
+
+  .bar-stage {
+    min-height: 135px;
+  }
+
+  .bar-3d {
+    width: 60%;
+    height: calc(var(--bar-height, 0.5) * 115px);
+  }
+
+  .bar-value {
     font-size: 36px;
   }
 
-  .identity-grid {
-    grid-template-columns: 1fr;
+  .server-clock {
+    font-size: 22px;
   }
 
-  .hours-scene {
-    height: 180px;
+  .card--activity {
+    min-height: 120px;
   }
 
-  .hours-bar {
-    height: calc(var(--bar-height, 0.5) * 120px);
-  }
-
-  .bar-label-value {
-    font-size: 16px;
-  }
-
-  .summary-value {
-    font-size: 32px;
-  }
-
-  .activities-content {
-    transform: none;
-  }
-
-  .activities-space {
-    height: auto;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 14px;
+  .activity-title {
+    font-size: 14px;
+    padding-right: 16px;
   }
 
   .activities-connections {
     display: none;
   }
 
-  .activity-card {
-    position: static;
-    width: auto;
-    transform: none;
+  .card--extra-left,
+  .card--extra-right {
+    max-height: 300px;
   }
 
   .stage-nav {
@@ -1658,15 +1613,19 @@ function extraTone(item: StageExtraItem) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage-card {
-    animation: none;
+  .card {
+    transform: none !important;
+  }
+
+  .card:hover {
+    transform: none !important;
   }
 
   .stage-track {
     transform: none !important;
   }
 
-  .stage-card-wrapper {
+  .stage-module {
     transition: opacity var(--transition-dur) ease-out !important;
     transform: none !important;
     filter: none !important;

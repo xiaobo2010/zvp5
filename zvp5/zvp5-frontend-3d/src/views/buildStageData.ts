@@ -21,6 +21,8 @@ export interface StageSource {
   agents: HomeAgentRun[]
   logs: AdminLog[]
   notices: CanaryNotice[]
+  /** Server clock minus local clock, in milliseconds. */
+  serverOffsetMs?: number
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -258,7 +260,8 @@ export function buildStageData(source: StageSource): StageData {
   const roles = Array.isArray(source.profile.roles) ? source.profile.roles : []
   const isAdmin = roles.includes('admin')
   const isDepartment = roles.includes('department')
-  const now = new Date()
+  const serverOffsetMs = source.serverOffsetMs ?? 0
+  const now = new Date(Date.now() + serverOffsetMs)
   const totalHours = sumHours(source.time)
 
   const identity: StageIdentity = {
@@ -284,6 +287,7 @@ export function buildStageData(source: StageSource): StageData {
     identity,
     hours,
     activities: source.activities.map(mapActivity),
-    extra: buildExtra(source, isAdmin, isDepartment)
+    extra: buildExtra(source, isAdmin, isDepartment),
+    serverOffsetMs
   }
 }
