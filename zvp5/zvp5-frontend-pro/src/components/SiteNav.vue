@@ -504,6 +504,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   touch-action: none;
   transition:
     transform var(--handle-time) var(--ease-settle),
+    scale var(--handle-time) var(--ease-settle),
     color var(--handle-time) var(--ease-settle),
     box-shadow var(--handle-time) var(--ease-settle);
   box-shadow: var(--glass-floating-shadow);
@@ -554,7 +555,8 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 }
 
 .site-nav__handle:active {
-  transform: translateY(-50%) scale(0.96);
+  transform: translateY(-50%);
+  scale: 0.96;
 }
 
 .site-nav__handle:focus-visible {
@@ -905,6 +907,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 
   .site-nav__handle:active {
     transform: translateY(-50%);
+    scale: 1;
   }
 
   .site-nav__drawer {

@@ -991,18 +991,35 @@ onUnmounted(() => {
 .hours-feedback { margin-bottom: var(--space-4); }
 
 /* Apple-style "now" panel */
+/* Cross-platform liquid glass: the panel reads as glass from its own layered
+   gradients, rim light and inner shadow. It deliberately does not depend on
+   `backdrop-filter`; Gecko on tablets can allocate an empty backdrop layer and
+   leave the clock sitting on a transparent rectangle. */
 .greeting__panel {
   position: relative;
+  isolation: isolate;
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
   padding: 10px 18px 10px 10px;
   border-radius: var(--radius-pill);
-  background: var(--glass-floating-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-floating-shadow);
+  background: rgba(247, 251, 255, 0.82);
+  background:
+    radial-gradient(120% 180% at 8% 18%, rgba(255, 255, 255, 0.94), transparent 55%),
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.68),
+      rgba(232, 244, 255, 0.38) 58%,
+      rgba(247, 242, 255, 0.5)
+    ),
+    var(--glass-floating-bg, #f5f9ffd9);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(74, 109, 143, 0.08),
+    inset 1px 0 0 rgba(255, 255, 255, 0.6),
+    0 4px 12px rgba(47, 78, 103, 0.08),
+    0 20px 48px rgba(51, 79, 108, 0.12);
   overflow: hidden;
 }
 
@@ -1010,14 +1027,34 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: 0;
   background:
-    radial-gradient(circle at 14% 30%, rgba(0, 122, 255, 0.15), transparent 34%),
-    radial-gradient(circle at 90% 62%, rgba(255, 149, 0, 0.12), transparent 38%);
+    radial-gradient(circle at 14% 30%, rgba(0, 122, 255, 0.16), transparent 34%),
+    radial-gradient(circle at 90% 62%, rgba(255, 149, 0, 0.13), transparent 38%);
+  pointer-events: none;
+}
+
+/* A single soft refraction band, kept inside the pill. */
+.greeting__panel::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    transparent 16%,
+    rgba(255, 255, 255, 0.42) 40%,
+    rgba(255, 255, 255, 0.04) 52%,
+    transparent 64%
+  );
+  opacity: 0.62;
   pointer-events: none;
 }
 
 .greeting__clock-orb {
   position: relative;
+  isolation: isolate;
   z-index: 2;
   width: 66px;
   height: 66px;
@@ -1026,17 +1063,33 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+  background: rgba(246, 251, 255, 0.9);
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(213, 236, 255, 0.56));
-  border: 1px solid rgba(255, 255, 255, 0.86);
+    radial-gradient(
+      circle at 32% 24%,
+      rgba(255, 255, 255, 0.98) 0%,
+      rgba(255, 255, 255, 0.55) 26%,
+      transparent 56%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.82),
+      rgba(211, 235, 255, 0.46) 58%,
+      rgba(244, 238, 255, 0.56)
+    ),
+    var(--glass-floating-bg, #f5f9ffd9);
+  border: 1px solid rgba(255, 255, 255, 0.94);
   box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.9),
-    0 6px 18px rgba(0, 122, 255, 0.14);
+    inset 0 1px 2px rgba(255, 255, 255, 0.98),
+    inset 0 -3px 8px rgba(54, 101, 145, 0.12),
+    0 6px 18px rgba(0, 122, 255, 0.16);
+  overflow: hidden;
 }
 
 .greeting__clock-light {
   position: absolute;
   inset: -6px;
+  z-index: 0;
   border-radius: 50%;
   background: conic-gradient(
     from 210deg,
@@ -1045,7 +1098,7 @@ onUnmounted(() => {
     rgba(255, 149, 0, 0.26),
     rgba(0, 122, 255, 0.32)
   );
-  opacity: 0.32;
+  opacity: 0.38;
   pointer-events: none;
 }
 

@@ -481,6 +481,7 @@ onUnmounted(() => {
 
 .clock-orb {
   position: relative;
+  isolation: isolate;
   width: 120px;
   height: 120px;
   margin-bottom: var(--space-4);
@@ -489,26 +490,73 @@ onUnmounted(() => {
 .orb-halo {
   position: absolute;
   inset: -12px;
+  z-index: 0;
   border-radius: 50%;
-  background: conic-gradient(from 35deg, #e4ecff54, #b4d6ec9e, #ffcbb380, #e4ecff54);
-  opacity: 0.62;
-  border: 1px solid #ffffffa8;
+  background: conic-gradient(
+    from 35deg,
+    rgba(228, 236, 255, 0.33),
+    rgba(180, 214, 236, 0.62),
+    rgba(255, 203, 179, 0.5),
+    rgba(228, 236, 255, 0.33)
+  );
+  opacity: 0.7;
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  pointer-events: none;
 }
 
+/* Same cross-platform glass recipe as the home clock: explicit gradients and
+   rim highlights instead of a backdrop-filter layer. */
 .orb-core {
   position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--glass-floating-bg);
+  overflow: hidden;
+  background: rgba(246, 251, 255, 0.9);
+  background:
+    radial-gradient(
+      circle at 32% 24%,
+      rgba(255, 255, 255, 0.98) 0%,
+      rgba(255, 255, 255, 0.5) 28%,
+      transparent 58%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.82),
+      rgba(211, 235, 255, 0.48) 58%,
+      rgba(244, 238, 255, 0.58)
+    ),
+    var(--glass-floating-bg, #f5f9ffd9);
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-floating-shadow);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.98),
+    inset 0 -4px 10px rgba(54, 101, 145, 0.13),
+    0 6px 18px rgba(0, 122, 255, 0.14),
+    0 20px 44px rgba(51, 79, 108, 0.16);
+}
+
+.orb-core::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    transparent 22%,
+    rgba(255, 255, 255, 0.38) 44%,
+    transparent 62%
+  );
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .time-display {
+  position: relative;
+  z-index: 1;
   font-size: var(--font-size-title-3);
   font-weight: 600;
   letter-spacing: -0.02em;

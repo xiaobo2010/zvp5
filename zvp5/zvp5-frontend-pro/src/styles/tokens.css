@@ -164,70 +164,42 @@
   --section-gap: clamp(80px, 12vw, 160px);
 }
 
-@supports (color: color-mix(in srgb, white, black)) {
-  .pro-app {
-    --surface-matte: linear-gradient(
-      148deg,
-      color-mix(in srgb, white 84%, var(--palette-main, #cfe5f8)),
-      color-mix(in srgb, white 65%, var(--palette-edge, #d8eee6)) 68%,
-      color-mix(in srgb, white 73%, var(--palette-low, #f7efdd))
-    );
-    --glass-bg: linear-gradient(
-      147deg,
-      #fffdf9e8,
-      color-mix(in srgb, var(--palette-main, #cfe5f8) 55%, #ffffffe0) 57%,
-      color-mix(in srgb, var(--palette-low, #f7efdd) 63%, #ffffffad)
-    );
-    --glass-floating-bg: linear-gradient(
-      145deg,
-      #fffffff0,
-      color-mix(in srgb, var(--palette-main, #cfe5f8) 45%, #ffffffbc) 60%,
-      color-mix(in srgb, var(--palette-low, #f7efdd) 46%, #ffffffe3)
-    );
-    --nav-highlight: linear-gradient(
-      148deg,
-      color-mix(in srgb, white 70%, var(--palette-main, #cfe5f8)),
-      color-mix(in srgb, white 24%, var(--palette-main, #cfe5f8)) 50%,
-      color-mix(in srgb, var(--accent-ink) 24%, var(--palette-low, #f7efdd))
-    );
-  }
+/* Surfaces are deliberately explicit per palette rather than mixed at runtime.
+   Gecko builds on tablets can report `color-mix()` support and still hand a
+   gradient with mixed custom properties back as an invalid value; when that
+   happens every control that reads `--glass-floating-bg` loses its tint while
+   the hard-coded Manage buttons keep working. Solid palette gradients are
+   supported everywhere and keep the same visible design. */
+.palette-dawn {
+  --surface-matte: linear-gradient(150deg, #fff6f0, #faf4f6 66%, #fbf6e8);
+  --glass-bg: linear-gradient(147deg, #fff7f1e8, #f3ecf7c0 57%, #fdf4e6d6);
+  --glass-floating-bg: linear-gradient(145deg, #fffaf6f0, #f6eff8d8 60%, #fdf6eae8);
+  --nav-highlight: linear-gradient(148deg, #fdeee3, #f7d9cf 55%, #e5bdb1);
+  --glass-tint: rgb(134 69 57 / 0.06);
 }
 
-@supports not (color: color-mix(in srgb, white, black)) {
-  /* Explicit per-palette surfaces for Gecko builds without `color-mix` (or
-     without `@property` interpolation). Without these the palette classes
-     only changed the accent variables and every card fell back to white. */
-  .palette-dawn {
-    --surface-matte: linear-gradient(150deg, #fff6f0, #faf4f6 66%, #fbf6e8);
-    --glass-bg: linear-gradient(147deg, #fff7f1e8, #f3ecf7c0 57%, #fdf4e6d6);
-    --glass-floating-bg: linear-gradient(145deg, #fffaf6f0, #f6eff8d8 60%, #fdf6eae8);
-    --nav-highlight: linear-gradient(148deg, #fdeee3, #f7d9cf 55%, #e5bdb1);
-    --glass-tint: rgb(134 69 57 / 0.06);
-  }
+.palette-day {
+  --surface-matte: linear-gradient(150deg, #f7fbff, #f4faf7 66%, #fdfbf3);
+  --glass-bg: linear-gradient(147deg, #f8fcfff0, #e7f3ffd0 57%, #fbf7ecd8);
+  --glass-floating-bg: linear-gradient(145deg, #fbfdfff5, #edf6ffdd 60%, #fdf9efe8);
+  --nav-highlight: linear-gradient(148deg, #e4f3ff, #c4e0fa 55%, #a9cdf3);
+  --glass-tint: rgb(30 85 123 / 0.06);
+}
 
-  .palette-day {
-    --surface-matte: linear-gradient(150deg, #f7fbff, #f4faf7 66%, #fdfbf3);
-    --glass-bg: linear-gradient(147deg, #f8fcfff0, #e7f3ffd0 57%, #fbf7ecd8);
-    --glass-floating-bg: linear-gradient(145deg, #fbfdfff5, #edf6ffdd 60%, #fdf9efe8);
-    --nav-highlight: linear-gradient(148deg, #e4f3ff, #c4e0fa 55%, #a9cdf3);
-    --glass-tint: rgb(30 85 123 / 0.06);
-  }
+.palette-dusk {
+  --surface-matte: linear-gradient(150deg, #fdf3ef, #f7f1fa 66%, #f8eef3);
+  --glass-bg: linear-gradient(147deg, #fdf5f1e8, #f0eaf9c9 57%, #f9eaf0da);
+  --glass-floating-bg: linear-gradient(145deg, #fef8f5f0, #f4effbdb 60%, #fbedf2e8);
+  --nav-highlight: linear-gradient(148deg, #f9e7dd, #ecd4e8 55%, #d6bcdc);
+  --glass-tint: rgb(112 61 113 / 0.06);
+}
 
-  .palette-dusk {
-    --surface-matte: linear-gradient(150deg, #fdf3ef, #f7f1fa 66%, #f8eef3);
-    --glass-bg: linear-gradient(147deg, #fdf5f1e8, #f0eaf9c9 57%, #f9eaf0da);
-    --glass-floating-bg: linear-gradient(145deg, #fef8f5f0, #f4effbdb 60%, #fbedf2e8);
-    --nav-highlight: linear-gradient(148deg, #f9e7dd, #ecd4e8 55%, #d6bcdc);
-    --glass-tint: rgb(112 61 113 / 0.06);
-  }
-
-  .palette-night {
-    --surface-matte: linear-gradient(150deg, #f3f6fd, #f1f8fb 66%, #f4f3fc);
-    --glass-bg: linear-gradient(147deg, #f6f9ffe8, #e8f1fac9 57%, #efeef9da);
-    --glass-floating-bg: linear-gradient(145deg, #f9fbfff0, #eef6fddb 60%, #f2f1fce8);
-    --nav-highlight: linear-gradient(148deg, #e2eafa, #cbd9f2 55%, #b7c6e6);
-    --glass-tint: rgb(62 79 133 / 0.06);
-  }
+.palette-night {
+  --surface-matte: linear-gradient(150deg, #f3f6fd, #f1f8fb 66%, #f4f3fc);
+  --glass-bg: linear-gradient(147deg, #f6f9ffe8, #e8f1fac9 57%, #efeef9da);
+  --glass-floating-bg: linear-gradient(145deg, #f9fbfff0, #eef6fddb 60%, #f2f1fce8);
+  --nav-highlight: linear-gradient(148deg, #e2eafa, #cbd9f2 55%, #b7c6e6);
+  --glass-tint: rgb(62 79 133 / 0.06);
 }
 
 .pro-app {
