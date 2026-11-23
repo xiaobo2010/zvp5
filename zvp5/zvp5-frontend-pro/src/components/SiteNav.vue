@@ -652,7 +652,12 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   background:
     radial-gradient(ellipse at 18% 0%, #ffffffd9, transparent 62%),
     var(--nav-highlight);
+  border: 1px solid var(--palette-main, #cfe5f8);
   border: 1px solid color-mix(in srgb, var(--accent-ink) 32%, transparent);
+  box-shadow:
+    0 6px 16px var(--glass-tint, rgb(42 106 170 / 0.08)),
+    0 1px 3px #1230521f,
+    inset 0 1px 0 #ffffffe6;
   box-shadow:
     0 6px 16px color-mix(in srgb, var(--accent-ink) 16%, transparent),
     0 1px 3px #1230521f,
@@ -778,6 +783,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #ffffffb8, var(--palette-edge, #d8eee6));
   background: linear-gradient(135deg, #ffffffb8, color-mix(in srgb, var(--palette-edge, #d8eee6) 32%, #ffffff8f));
   box-shadow: var(--glass-rim), 0 1px 3px #1230520a;
   color: var(--color-text-primary);
@@ -825,10 +831,12 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 
 .site-nav__drawer-link.is-selected {
   color: var(--accent-ink);
+  border-color: var(--accent-ink);
   border-color: color-mix(in srgb, var(--color-brand) 38%, var(--glass-border));
 }
 
 .site-nav__drawer-link:active {
+  border-color: var(--color-brand);
   border-color: color-mix(in srgb, var(--color-brand) 34%, var(--glass-border));
   box-shadow: inset 0 1px 3px #12305229, var(--glass-rim);
 }
@@ -940,6 +948,7 @@ async function handleNavClick(event: MouseEvent, path: string, navigate: (event:
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .site-nav__indicator {
+    background: var(--palette-main, #cfe5f8);
     background: color-mix(in srgb, white 38%, var(--palette-main, #cfe5f8));
     border-color: var(--accent-ink);
     box-shadow: none;

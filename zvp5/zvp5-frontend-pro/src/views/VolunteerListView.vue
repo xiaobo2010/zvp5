@@ -1022,6 +1022,7 @@ onBeforeUnmount(() => {
 .status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
 
 .detail-status--action {
+  border: 1px solid currentColor;
   border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
   cursor: pointer;
   transition:

@@ -31,6 +31,10 @@
   background:
     radial-gradient(ellipse 6px 4px at 6px 15px, white 12%, #ffffff70 61%, transparent),
     radial-gradient(ellipse at 40px 7px, #fffffff2, transparent 39px),
+    linear-gradient(var(--feedback-tint), var(--feedback-tint));
+  background:
+    radial-gradient(ellipse 6px 4px at 6px 15px, white 12%, #ffffff70 61%, transparent),
+    radial-gradient(ellipse at 40px 7px, #fffffff2, transparent 39px),
     linear-gradient(var(--feedback-tint), color-mix(in srgb, var(--feedback-tint) 83%, var(--feedback-ink)));
   opacity: 0;
 }
@@ -41,6 +45,9 @@
   height: var(--feedback-drop-size);
   border: 1px solid #ffffffd9;
   border-radius: 50%;
+  background:
+    radial-gradient(ellipse 55% 36% at 34% 26%, white 8%, #ffffff96 48%, transparent),
+    radial-gradient(circle at 56% 68%, var(--feedback-tint) 31%, var(--feedback-ink) 98%);
   background:
     radial-gradient(ellipse 55% 36% at 34% 26%, white 8%, #ffffff96 48%, transparent),
     radial-gradient(circle at 56% 68%, var(--feedback-tint) 31%, color-mix(in srgb, var(--feedback-tint) 68%, var(--feedback-ink)) 98%);

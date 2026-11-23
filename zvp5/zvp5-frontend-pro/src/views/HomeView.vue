@@ -1240,6 +1240,7 @@ onUnmounted(() => {
 /* Total Hours - Frosted Glass */
 .total-hours {
   position: relative;
+  background: var(--surface-matte);
   background:
     radial-gradient(ellipse at 12% 0%, color-mix(in srgb, var(--palette-main) 54%, transparent), transparent 55%),
     radial-gradient(ellipse at 98% 100%, color-mix(in srgb, var(--palette-low) 58%, transparent), transparent 48%),

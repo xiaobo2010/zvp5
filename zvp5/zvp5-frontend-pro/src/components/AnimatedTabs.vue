@@ -308,6 +308,10 @@ onBeforeUnmount(() => {
   background: var(--nav-highlight);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.72));
   box-shadow:
+    0 2px 6px var(--glass-tint, rgb(42 106 170 / 0.08)),
+    0 0 0 0.5px rgba(255, 255, 255, 0.4),
+    var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
+  box-shadow:
     0 2px 6px color-mix(in srgb, var(--accent-ink) 10%, transparent),
     0 0 0 0.5px rgba(255, 255, 255, 0.4),
     var(--glass-rim, inset 0 0.5px 0 rgba(255, 255, 255, 0.92));
@@ -401,6 +405,7 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .animated-tabs__indicator {
+    background: var(--palette-main, #cfe5f8);
     background: color-mix(in srgb, white 38%, var(--palette-main, #cfe5f8));
     border-color: var(--accent-ink);
   }

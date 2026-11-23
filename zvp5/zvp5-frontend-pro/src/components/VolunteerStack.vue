@@ -145,6 +145,7 @@ function handleCardKeydown(event: KeyboardEvent, id: string) {
   position: relative;
   padding: 14px clamp(14px, 4vw, 28px) calc(var(--card-overlap) + 14px);
   background: linear-gradient(125deg, #fbfcff 24%, var(--palette-edge, #dce9f5));
+  border-color: var(--palette-edge, #dce9f5);
   border-color: color-mix(in srgb, var(--accent-ink) 22%, #fff);
   box-shadow: var(--glass-rim), 0 3px 12px #102c471f;
   transition:
