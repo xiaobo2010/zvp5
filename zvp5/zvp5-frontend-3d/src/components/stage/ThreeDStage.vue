@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import StarfieldCanvas from './StarfieldCanvas.vue'
 
 import type { StageActivity, StageData, StageExtraItem } from '@/types/stage'
@@ -12,61 +12,21 @@ const transitioning = ref(false)
 const reduced = ref(false)
 const warp = ref(false)
 const reverse = ref(false)
-const parallaxX = ref(0)
-const parallaxY = ref(0)
-const isTouch = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const serverTime = ref(new Date(Date.now() + (props.data.serverOffsetMs ?? 0)))
-/**
- * Flat mode is the *last* resort for browsers without CSS 3D.
- *
- * `perspective` + `transform-style: preserve-3d` are what make this scene a
- * scene; without them every card collapses onto one another. Only a hard
- * capability failure (`CSS.supports`) gets the flat fallback — Firefox keeps
- * the 3D scene through `is-gecko`, which drops just the properties that make
- * Gecko paint the card blank instead of flattening the whole stage.
- */
-const flat = ref(detectFlat())
-/**
- * Gecko (Firefox) mode keeps perspective, preserve-3d, depth transforms,
- * card tilt/bob, nebula, glow and the star canvas. It removes the one
- * known-bad combination: `backdrop-filter` (and a `filter`/
- * `will-change: filter`) on the card that lives inside a preserved-3d track.
- * In Gecko that mix promotes an empty compositing layer and the card paints as
- * a blank/black rectangle.
- */
-const gecko = ref(detectGecko())
+const stageRoot = ref<HTMLElement | null>(null)
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
 let serverTimeTimer: ReturnType<typeof setInterval> | undefined
+let rafId: number | undefined
+let targetX = 0
+let targetY = 0
+let currentX = 0
+let currentY = 0
 
 let media: MediaQueryList | null = null
 
 const GAP = 900
-const TRANSITION_DUR = 820
-
-function supportsCss3d(): boolean {
-  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return true
-  return (
-    CSS.supports('transform-style', 'preserve-3d') &&
-    CSS.supports('perspective', '1px')
-  )
-}
-
-function detectGecko(): boolean {
-  if (typeof document === 'undefined') return false
-  const style = document.documentElement?.style
-  // `MozAppearance` only exists in Gecko. FxIOS reports a WebKit UA, so the
-  // UA check stays as a secondary signal for Firefox on iOS.
-  if (style && 'MozAppearance' in style) return true
-  return /fxios/i.test(navigator.userAgent)
-}
-
-function detectFlat(): boolean {
-  if (typeof window === 'undefined') return false
-  // No blanket Firefox/touch rule: a Firefox tablet keeps the 3D scene and
-  // only sheds the compositing combination that breaks it (`is-gecko`).
-  return !supportsCss3d()
-}
+const TRANSITION_DUR = 650
 
 const modules = computed(() => props.data.modules)
 const total = computed(() => modules.value.length)
@@ -133,7 +93,6 @@ function depthStyle(index: number) {
   const d = Math.max(-1, Math.min(1, raw))
   const z = -d * GAP + 0.01
   const scale = 1 - Math.abs(d) * 0.16
-  const blur = Math.abs(d) * 10
   const opacity = raw === 0 ? 1 : 0
   const isVisible = transitioning.value
     ? index === active.value || index === previousActive.value
@@ -141,14 +100,19 @@ function depthStyle(index: number) {
 
   return {
     transform: `translate(-50%, -50%) translate3d(0, 0, ${z}px) scale(${scale})`,
-    // A filter (even `blur(0px)`) creates a containing block. In Gecko that
-    // containing block flattens the preserved-3d card and can paint nothing,
-    // so Gecko keeps the depth transform but never the per-card blur.
-    filter: gecko.value || blur === 0 ? 'none' : `blur(${blur}px)`,
     opacity: String(opacity),
     visibility: isVisible ? 'visible' : 'hidden',
     zIndex: String(100 - Math.abs(raw))
   } as const
+}
+
+function resetActiveScroll() {
+  const id = modules.value[active.value]?.id
+  if (!id) return
+  const cluster = stageRoot.value?.querySelector<HTMLElement>(
+    `.stage-module[data-module="${id}"] .cluster`
+  )
+  if (cluster) cluster.scrollTop = 0
 }
 
 function goTo(index: number) {
@@ -156,22 +120,20 @@ function goTo(index: number) {
   previousActive.value = active.value
   active.value = index
   reverse.value = index < previousActive.value
-  if (flat.value) {
-    // The flat fallback has no depth transition; the card swap is a direct
-    // display change and must not lock the navigation for 820ms.
-    if (transitionTimer) clearTimeout(transitionTimer)
-    transitioning.value = false
-    warp.value = false
-    return
-  }
   transitioning.value = true
   warp.value = true
+  stageRoot.value?.classList.add('is-transitioning')
+  requestAnimationFrame(resetActiveScroll)
 
   if (transitionTimer) clearTimeout(transitionTimer)
   transitionTimer = setTimeout(() => {
     transitioning.value = false
     warp.value = false
     reverse.value = false
+    stageRoot.value?.classList.remove('is-transitioning')
+    // The incoming module's scroll container can be shifted by the Z transition;
+    // put it back at the top once the scene has settled.
+    requestAnimationFrame(resetActiveScroll)
   }, TRANSITION_DUR)
 }
 
@@ -194,29 +156,49 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
-  if (reduced.value || isTouch.value) return
-  const x = (event.clientX / window.innerWidth - 0.5) * 2
-  const y = (event.clientY / window.innerHeight - 0.5) * 2
-  parallaxX.value = x * 3
-  parallaxY.value = y * 3
+  if (reduced.value || event.pointerType === 'touch') return
+  targetX = (event.clientX / window.innerWidth - 0.5) * 2
+  targetY = (event.clientY / window.innerHeight - 0.5) * 2
+  startPointerLoop()
+}
+
+function startPointerLoop() {
+  if (rafId !== undefined) return
+  rafId = requestAnimationFrame(updatePointerFrame)
+}
+
+function updatePointerFrame() {
+  const root = stageRoot.value
+  if (!root) {
+    rafId = undefined
+    return
+  }
+
+  const lerpCoeff = 0.14
+  currentX += (targetX - currentX) * lerpCoeff
+  currentY += (targetY - currentY) * lerpCoeff
+
+  const settled =
+    Math.abs(targetX - currentX) < 0.001 &&
+    Math.abs(targetY - currentY) < 0.001
+  if (settled) {
+    currentX = targetX
+    currentY = targetY
+  }
+
+  // Mouse X drives rotateY, mouse Y drives rotateX.
+  root.style.setProperty('--pointer-x', `${(currentY * 3.2).toFixed(2)}deg`)
+  root.style.setProperty('--pointer-y', `${(currentX * 3.2).toFixed(2)}deg`)
+
+  rafId = settled ? undefined : requestAnimationFrame(updatePointerFrame)
 }
 
 function syncMotion(e: MediaQueryListEvent | MediaQueryList) {
   reduced.value = e.matches
 }
 
-function checkTouch() {
-  isTouch.value = 'ontouchstart' in window || navigator.maxTouchPoints > 0
-}
-
 function onResize() {
   viewportWidth.value = window.innerWidth
-}
-
-function syncCapabilities() {
-  flat.value = detectFlat()
-  gecko.value = detectGecko()
-  checkTouch()
 }
 
 onMounted(() => {
@@ -226,7 +208,6 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('resize', onResize)
-  syncCapabilities()
 
   // Server time ticker with 1s interval
   serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
@@ -242,12 +223,66 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (transitionTimer) clearTimeout(transitionTimer)
   if (serverTimeTimer) clearInterval(serverTimeTimer)
+  if (rafId !== undefined) cancelAnimationFrame(rafId)
 })
 
-function activityDepth(index: number) {
-  const depths = [0, -40, -90, -30, -70, -120]
+// Seeded PRNG: stable per activity id, but irregular to the eye.
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return function () {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+function activityScatterStyle(activity: StageActivity, index: number): Record<string, string> {
+  if (isMobile.value) return {}
+
+  // Hand-placed irregular anchors (percent of the 1040x500 field), then seeded
+  // jitter. This is intentionally not a grid: the three top cards and three
+  // lower cards sit at different heights and depths.
+  const slots = [
+    [4, 10],
+    [28, 4],
+    [55, 14],
+    [12, 62],
+    [46, 46],
+    [73, 66]
+  ]
+  const visibleCount = Math.max(1, recent.value.length)
+  const slotIndex =
+    visibleCount > 1
+      ? Math.round((index * (slots.length - 1)) / (visibleCount - 1))
+      : 0
+  const [baseX, baseY] = slots[slotIndex]
+
+  let seed = 0
+  for (let i = 0; i < activity.id.length; i++) {
+    seed = (seed * 31 + activity.id.charCodeAt(i)) | 0
+  }
+  const rng = seededRandom(seed)
+
+  const left = Math.min(74, Math.max(2, baseX + (rng() - 0.5) * 3.2))
+  const top = Math.min(70, Math.max(2, baseY + (rng() - 0.5) * 4.5))
+  const width = 22 + rng() * 2
+  const height = 124 + Math.round(rng() * 14)
+  const rotation = (rng() - 0.5) * 5
+  const zDepth = -30 - Math.round(rng() * 120)
+
+  // Tilt follows the actual x position, not the index.
+  const center = left + width / 2
+  const tilt = Math.max(-13, Math.min(13, ((center - 50) / 50) * 12))
+
   return {
-    '--card-z': `${depths[index] ?? 0}px`
+    position: 'absolute',
+    left: `${left.toFixed(2)}%`,
+    top: `${top.toFixed(2)}%`,
+    width: `${width.toFixed(2)}%`,
+    height: `${height}px`,
+    transform: `rotate(${rotation.toFixed(2)}deg)`,
+    '--card-z': `${zDepth}px`,
+    '--card-tilt': `${tilt.toFixed(1)}deg`,
+    zIndex: String(1 + index)
   }
 }
 
@@ -275,7 +310,7 @@ function extraTone(item: StageExtraItem) {
 </script>
 
 <template>
-  <div class="stage" :class="{ 'is-reduced': reduced, 'is-flat': flat, 'is-gecko': gecko }">
+  <div ref="stageRoot" class="stage" :class="{ 'is-reduced': reduced }">
     <!-- Background environment -->
     <div class="stage-backdrop">
       <div class="nebula nebula-1"></div>
@@ -289,14 +324,7 @@ function extraTone(item: StageExtraItem) {
 
     <!-- 3D scene -->
     <div class="stage-scene">
-      <div
-        class="stage-track"
-        :style="{
-          transform: reduced
-            ? 'none'
-            : `rotateX(${parallaxY * 0.3}deg) rotateY(${parallaxX * 0.3}deg)`
-        }"
-      >
+      <div class="stage-track">
         <div
           v-for="(module, index) in modules"
           :key="module.id"
@@ -399,25 +427,9 @@ function extraTone(item: StageExtraItem) {
               <div
                 v-for="(point, idx) in data.hours.points"
                 :key="point.key"
-                class="card card--hours-bar"
+                class="hours-item"
                 :style="{ '--card-tilt': `${tilt(idx === 0 ? 'left' : idx === 2 ? 'right' : 'center')}deg` }"
               >
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
-
                 <div class="bar-head">
                   <span class="bar-label">{{ point.label }}</span>
                   <span class="bar-index">0{{ idx + 1 }}</span>
@@ -433,77 +445,52 @@ function extraTone(item: StageExtraItem) {
                   <div class="bar-value">{{ point.hours }}<span class="bar-unit">h</span></div>
                   <div class="bar-delta">{{ getHourDelta(point.hours) }}</div>
                 </div>
-
-                <div class="card-reflection"></div>
               </div>
             </div>
           </template>
 
-          <!-- Activities Module: 3×2 grid -->
+          <!-- Activities Module: irregular scatter field -->
           <template v-else-if="module.id === 'activities'">
             <div class="cluster cluster--activities">
-              <svg v-if="!isMobile || flat" class="activities-connections" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="conn-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="rgb(169 211 255)" stop-opacity="0.55" />
-                    <stop offset="100%" stop-color="rgb(111 215 196)" stop-opacity="0.22" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M16 20 L50 16 L84 24 L80 74 L50 80 L20 72 Z"
-                  fill="none"
-                  stroke="url(#conn-grad)"
-                  stroke-width="0.55"
-                  vector-effect="non-scaling-stroke"
-                />
-                <path
-                  d="M16 20 L80 74 M84 24 L20 72 M50 16 L50 80"
-                  fill="none"
-                  stroke="url(#conn-grad)"
-                  stroke-width="0.4"
-                  opacity="0.55"
-                  vector-effect="non-scaling-stroke"
-                />
-              </svg>
-
               <div
                 v-for="(activity, idx) in recent"
                 :key="activity.id"
-                class="card card--activity"
-                :style="{
-                  ...activityDepth(idx),
-                  '--tone-rgb': activityTone(activity),
-                  '--card-tilt': `${tilt(idx % 3 === 0 ? 'left' : idx % 3 === 2 ? 'right' : 'center')}deg`
-                }"
+                class="activity-card-wrapper"
+                :style="activityScatterStyle(activity, idx)"
               >
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
+                <div
+                  class="card card--activity"
+                  :style="{ '--tone-rgb': activityTone(activity) }"
+                >
+                  <div class="card-brackets">
+                    <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
+                      <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
+                    </svg>
+                    <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
+                      <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
+                    </svg>
+                    <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
+                      <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
+                    </svg>
+                    <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
+                      <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
+                    </svg>
+                  </div>
+                  <div class="card-glow"></div>
 
-                <div class="activity-status"></div>
-                <h4 class="activity-title">{{ activity.name }}</h4>
-                <div class="activity-meta">
-                  <span>{{ activity.dateLabel }}</span>
-                  <span class="meta-sep">·</span>
-                  <span>{{ activity.place }}</span>
-                </div>
-                <div class="activity-hours">
-                  {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
-                </div>
+                  <div class="activity-status"></div>
+                  <h4 class="activity-title">{{ activity.name }}</h4>
+                  <div class="activity-meta">
+                    <span>{{ activity.dateLabel }}</span>
+                    <span class="meta-sep">·</span>
+                    <span>{{ activity.place }}</span>
+                  </div>
+                  <div class="activity-hours">
+                    {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
+                  </div>
 
-                <div class="card-reflection"></div>
+                  <div class="card-reflection"></div>
+                </div>
               </div>
             </div>
           </template>
@@ -687,8 +674,14 @@ function extraTone(item: StageExtraItem) {
   min-height: 100vh;
   overflow: hidden;
   background: #04070d;
-  --transition-dur: 820ms;
+  --transition-dur: 650ms;
   --transition-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --pointer-x: 0deg;
+  --pointer-y: 0deg;
+}
+
+.is-transitioning .stage-module {
+  will-change: transform, opacity;
 }
 
 .stage-backdrop {
@@ -794,8 +787,10 @@ function extraTone(item: StageExtraItem) {
   top: 50%;
   width: 100%;
   transform-style: preserve-3d;
-  transition: all var(--transition-dur) var(--transition-ease);
-  will-change: transform, opacity, filter;
+  transition:
+    transform var(--transition-dur) var(--transition-ease),
+    opacity var(--transition-dur) var(--transition-ease),
+    visibility var(--transition-dur);
 }
 
 /* Cluster Container (multi-card layout per module) */
@@ -809,6 +804,7 @@ function extraTone(item: StageExtraItem) {
   max-width: 900px;
   margin: 0 auto;
   padding: 0 20px;
+  overflow-anchor: none;
 }
 
 .cluster--identity {
@@ -821,11 +817,25 @@ function extraTone(item: StageExtraItem) {
 }
 
 .cluster--activities {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  max-height: none;
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 1040px;
+  height: 500px;
+  padding: 0;
   overflow: visible;
+}
+
+.activity-card-wrapper {
+  position: absolute;
+  transform-style: preserve-3d;
+}
+
+.activity-card-wrapper .card {
+  width: 100%;
+  height: 100%;
+  flex: none;
+  min-height: 0;
 }
 
 .cluster--extra {
@@ -840,47 +850,26 @@ function extraTone(item: StageExtraItem) {
   box-sizing: border-box;
   padding: 32px;
   background: linear-gradient(
-    135deg,
-    rgb(16 24 42 / 0.82) 0%,
-    rgb(10 14 24 / 0.9) 100%
+    160deg,
+    rgb(18 31 54 / 0.96),
+    rgb(10 19 35 / 0.97)
   );
-  border: 1px solid rgb(169 211 255 / 0.12);
+  border: 1px solid rgb(172 210 255 / 0.3);
   border-radius: 2px;
-  backdrop-filter: blur(20px);
   transform-style: preserve-3d;
   transform: perspective(1000px) translateZ(var(--card-z, 0px))
-    rotateY(var(--card-tilt, 0deg));
-  transition: transform 200ms ease-out;
-  animation: card-bob 5.6s ease-in-out infinite;
-  animation-play-state: var(--bob-play, running);
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateX(var(--pointer-x, 0deg));
+  transition: none;
   box-shadow:
-    0 40px 120px rgb(0 0 0 / 0.5),
-    inset 0 1px 0 rgb(169 211 255 / 0.08);
-}
-
-/* `translate` composes with the tilt transform, so the float never fights the
-   per-card rotateY. Slight negative delays keep neighbours out of phase. */
-.cluster > .card:nth-child(2) {
-  animation-delay: -1.7s;
-}
-
-.cluster > .card:nth-child(3) {
-  animation-delay: -3.1s;
-}
-
-@keyframes card-bob {
-  0%,
-  100% {
-    translate: 0 0;
-  }
-  50% {
-    translate: 0 -4px;
-  }
+    0 22px 56px rgb(0 0 0 / 0.36),
+    inset 0 1px 0 rgb(169 211 255 / 0.05);
 }
 
 .card:hover {
-  transform: perspective(1000px) translateZ(calc(var(--card-z, 0px) + 8px))
-    rotateY(var(--card-tilt, 0deg));
+  transform: perspective(1000px) translateZ(calc(var(--card-z, 0px) + 6px))
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateX(var(--pointer-x, 0deg));
 }
 
 .card-brackets {
@@ -924,10 +913,10 @@ function extraTone(item: StageExtraItem) {
   background: linear-gradient(
     90deg,
     transparent,
-    rgb(169 211 255 / 0.4),
+    rgb(169 211 255 / 0.2),
     transparent
   );
-  box-shadow: 0 0 20px rgb(169 211 255 / 0.3);
+  box-shadow: 0 0 20px rgb(169 211 255 / 0.15);
 }
 
 .card-reflection {
@@ -940,10 +929,9 @@ function extraTone(item: StageExtraItem) {
   background: linear-gradient(
     to top,
     transparent,
-    rgb(169 211 255 / 0.03)
+    rgb(169 211 255 / 0.015)
   );
-  filter: blur(20px);
-  opacity: 0.6;
+  opacity: 0.18;
 }
 
 /* Identity Module Cards */
@@ -962,7 +950,7 @@ function extraTone(item: StageExtraItem) {
 
 .identity-greeting {
   font-size: 13px;
-  color: rgb(169 211 255 / 0.5);
+  color: rgb(212 230 248 / 0.82);
   letter-spacing: 0.03em;
 }
 
@@ -990,16 +978,17 @@ function extraTone(item: StageExtraItem) {
 
 .info-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.15em;
-  color: rgb(169 211 255 / 0.4);
+  color: rgb(210 228 247 / 0.84);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   text-transform: uppercase;
 }
 
 .info-value {
   font-family: var(--font-mono);
   font-size: 14px;
-  color: #a9d3ff;
+  color: #c4e2ff;
   letter-spacing: 0.02em;
 }
 
@@ -1032,7 +1021,7 @@ function extraTone(item: StageExtraItem) {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: rgb(169 211 255 / 0.45);
+  color: rgb(205 225 247 / 0.76);
   text-transform: uppercase;
 }
 
@@ -1048,9 +1037,9 @@ function extraTone(item: StageExtraItem) {
 
 .hours-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
-  color: rgb(169 211 255 / 0.4);
+  color: rgb(208 228 248 / 0.82);
   text-transform: uppercase;
 }
 
@@ -1064,7 +1053,7 @@ function extraTone(item: StageExtraItem) {
 .hours-unit {
   font-size: 20px;
   font-weight: 300;
-  color: rgb(169 211 255 / 0.5);
+  color: rgb(205 225 247 / 0.82);
 }
 
 .pending-badge {
@@ -1081,14 +1070,23 @@ function extraTone(item: StageExtraItem) {
 }
 
 /* Hours Module Cards */
-.card--hours-bar {
+.hours-item {
   display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   padding: 24px;
   min-height: 380px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  transform-style: preserve-3d;
+  transform: perspective(1000px)
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateX(var(--pointer-x, 0deg));
 }
 
 .bar-head {
@@ -1103,7 +1101,7 @@ function extraTone(item: StageExtraItem) {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
-  color: rgb(169 211 255 / 0.35);
+  color: rgb(198 220 244 / 0.7);
 }
 
 .bar-stage {
@@ -1209,8 +1207,9 @@ function extraTone(item: StageExtraItem) {
 .bar-value {
   font-size: 44px;
   font-weight: 200;
-  color: #a9d3ff;
+  color: #d3ebff;
   line-height: 1;
+  text-shadow: 0 2px 14px rgb(0 0 0 / 0.6);
 }
 
 .bar-unit {
@@ -1222,16 +1221,18 @@ function extraTone(item: StageExtraItem) {
 
 .bar-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
-  color: rgb(169 211 255 / 0.4);
+  color: rgb(208 228 248 / 0.85);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   text-transform: uppercase;
 }
 
 .bar-delta {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: rgb(169 211 255 / 0.6);
+  color: rgb(208 228 248 / 0.85);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   letter-spacing: 0.02em;
   padding-top: 8px;
   border-top: 1px solid rgb(169 211 255 / 0.08);
@@ -1240,32 +1241,22 @@ function extraTone(item: StageExtraItem) {
 }
 
 /* Activities Module */
-.activities-connections {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  opacity: 0.5;
-  z-index: 2;
-  mix-blend-mode: screen;
-  filter: drop-shadow(0 0 5px rgb(169 211 255 / 0.35));
-}
-
 .card--activity {
   position: relative;
   z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   padding: 20px;
-  min-height: 140px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 }
 
 .card--activity:hover {
-  background: rgb(16 24 42 / 0.6);
-  border-color: rgb(var(--tone-rgb) / 0.3);
-  box-shadow: 0 0 20px rgb(var(--tone-rgb) / 0.15);
+  background: rgb(14 24 43 / 0.97);
+  border-color: rgb(var(--tone-rgb) / 0.34);
+  box-shadow: none;
 }
 
 .activity-status {
@@ -1290,8 +1281,9 @@ function extraTone(item: StageExtraItem) {
 
 .activity-meta {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: rgb(169 211 255 / 0.4);
+  font-size: 13px;
+  color: rgb(208 228 248 / 0.86);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   letter-spacing: 0.02em;
   margin-bottom: 8px;
 }
@@ -1304,7 +1296,7 @@ function extraTone(item: StageExtraItem) {
 .activity-hours {
   font-family: var(--font-mono);
   font-size: 13px;
-  color: #a9d3ff;
+  color: #c8e5ff;
   letter-spacing: 0.05em;
 }
 
@@ -1395,7 +1387,7 @@ function extraTone(item: StageExtraItem) {
 }
 
 .extra-item-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 400;
   color: #eef6ff;
   letter-spacing: -0.01em;
@@ -1406,8 +1398,9 @@ function extraTone(item: StageExtraItem) {
 
 .extra-meta {
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: rgb(169 211 255 / 0.4);
+  font-size: 13px;
+  color: rgb(208 228 248 / 0.86);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   letter-spacing: 0.02em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1416,7 +1409,7 @@ function extraTone(item: StageExtraItem) {
 
 .extra-detail {
   font-size: 11px;
-  color: rgb(169 211 255 / 0.5);
+  color: rgb(198 220 244 / 0.8);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -1431,7 +1424,7 @@ function extraTone(item: StageExtraItem) {
   height: 120px;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: rgb(169 211 255 / 0.3);
+  color: rgb(198 220 244 / 0.66);
   letter-spacing: 0.05em;
 }
 
@@ -1455,11 +1448,10 @@ function extraTone(item: StageExtraItem) {
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.08em;
-  color: #a9d3ff;
-  background: rgb(16 24 42 / 0.6);
-  border: 1px solid rgb(169 211 255 / 0.15);
+  color: #c7e4ff;
+  background: rgb(10 17 31 / 0.92);
+  border: 1px solid rgb(169 211 255 / 0.22);
   border-radius: 1px;
-  backdrop-filter: blur(16px);
   cursor: pointer;
   transition: all 200ms ease-out;
 }
@@ -1488,10 +1480,9 @@ function extraTone(item: StageExtraItem) {
   align-items: center;
   gap: 12px;
   padding: 16px 20px;
-  background: rgb(16 24 42 / 0.6);
-  border: 1px solid rgb(169 211 255 / 0.15);
+  background: rgb(10 17 31 / 0.92);
+  border: 1px solid rgb(169 211 255 / 0.22);
   border-radius: 1px;
-  backdrop-filter: blur(16px);
 }
 
 .rail-track {
@@ -1583,296 +1574,6 @@ function extraTone(item: StageExtraItem) {
   border: 0;
 }
 
-/* ------------------------------------------------------------------------- */
-/* Gecko (Firefox) — keep the 3D scene, drop the blank-card combination      */
-/* ------------------------------------------------------------------------- */
-
-/* Gecko composites a `backdrop-filter` card inside a preserved-3d track as an
-   empty layer, so each card is painted from an opaque layered gradient
-   instead. It also drops the infinite `card-bob`: an animated transform on a
-   `preserve-3d` card is the second half of the same blank-card combination.
-   Colors, gradients, tilt, depth transforms, glow, reflection, nebula and the
-   star canvas all stay; only the continuous float is paused. */
-.stage.is-gecko .card {
-  background:
-    linear-gradient(
-      135deg,
-      rgb(22 33 56 / 0.94) 0%,
-      rgb(13 20 35 / 0.97) 58%,
-      rgb(8 13 24 / 0.99) 100%
-    );
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  animation: none;
-}
-
-/* Do not advertise a filter layer in Gecko: `will-change: filter` keeps an
-   empty filter layer alive and re-introduces the blank card. Transform and
-   opacity are the only animated properties here. */
-.stage.is-gecko .stage-module {
-  transition:
-    transform var(--transition-dur) var(--transition-ease),
-    opacity var(--transition-dur) var(--transition-ease);
-  will-change: transform, opacity;
-}
-
-/* Outside the 3D tree the glass controls are safe; make them a touch more
-   opaque so the tablet still reads them against the bright nebula. */
-.stage.is-gecko .nav-btn,
-.stage.is-gecko .depth-rail {
-  background: rgb(14 22 38 / 0.78);
-}
-
-/* ------------------------------------------------------------------------- */
-/* Flat fallback — only for browsers without CSS 3D                          */
-/* ------------------------------------------------------------------------- */
-
-/* The flat stage is a normal scrolling document, but it must not look dead:
-   colors, glow, connections, colored bars and an enter animation all stay. */
-.stage.is-flat {
-  height: auto;
-  min-height: 100vh;
-  min-height: 100svh;
-  overflow: visible;
-}
-
-.stage.is-flat .stage-backdrop,
-.stage.is-flat .stage-shade {
-  position: absolute;
-}
-
-.stage.is-flat .stage-backdrop {
-  z-index: 0;
-}
-
-.stage.is-flat .stage-shade {
-  z-index: 1;
-}
-
-/* Smaller blur than the 3D backdrop so the color survives on software
-   compositing instead of washing out to black. */
-.stage.is-flat .nebula {
-  filter: blur(64px);
-  opacity: 0.2;
-}
-
-.stage.is-flat .horizon-grid {
-  transform: none;
-  height: 22%;
-  background:
-    linear-gradient(to top, rgb(111 215 196 / 0.06), transparent 100%),
-    linear-gradient(90deg, rgb(169 211 255 / 0.05) 1px, transparent 1px);
-  background-size: 100% 100%, 38px 100%;
-  opacity: 0.6;
-}
-
-.stage.is-flat .stage-scene {
-  display: block;
-  height: auto;
-  min-height: 0;
-  padding: 96px 18px 150px;
-  perspective: none;
-}
-
-.stage.is-flat .stage-track {
-  height: auto;
-  transform: none !important;
-  transform-style: flat;
-}
-
-.stage.is-flat .stage-module {
-  position: relative;
-  left: auto;
-  top: auto;
-  width: 100%;
-  margin: 0 auto;
-  transform: none !important;
-  filter: none !important;
-  transition: opacity 240ms var(--ease-smooth);
-  transform-style: flat;
-  will-change: auto;
-}
-
-/* Hidden modules must not reserve height in the normal document flow. */
-.stage.is-flat .stage-module[aria-hidden='true'] {
-  display: none;
-}
-
-/* Clusters become a plain wrapping grid so a tall module scrolls the page
-   instead of being clipped by the 3D viewport. */
-.stage.is-flat .cluster {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  align-items: stretch;
-  gap: 14px;
-  max-width: 100%;
-  max-height: none;
-  padding: 0;
-  overflow: visible;
-}
-
-.stage.is-flat .cluster--identity,
-.stage.is-flat .cluster--extra {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
-.stage.is-flat .cluster--hours {
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-}
-
-.stage.is-flat .cluster--activities {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
-}
-
-.stage.is-flat .card {
-  flex: none;
-  min-width: 0;
-  max-height: none;
-  overflow: visible;
-  padding: 28px 24px;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgb(43 78 128 / 0.5), transparent 72%),
-    radial-gradient(ellipse at 88% 100%, rgb(24 92 86 / 0.26), transparent 66%),
-    linear-gradient(135deg, rgb(14 21 37 / 0.97), rgb(7 11 20 / 0.99));
-  border-color: rgb(169 211 255 / 0.22);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  transform: none !important;
-  transform-style: flat;
-  animation: flat-card-in 460ms var(--transition-ease) both;
-}
-
-.stage.is-flat .card:hover {
-  transform: none !important;
-}
-
-@keyframes flat-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Glow and reflection stay as flat 2D decoration. Their base transforms are
-   already 2D-compatible (translateZ is ignored without a 3D context). */
-.stage.is-flat .card-glow {
-  width: 74%;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(169 211 255 / 0.55),
-    rgb(111 215 196 / 0.4),
-    transparent
-  );
-  box-shadow: 0 0 18px rgb(169 211 255 / 0.32);
-  opacity: 0.9;
-}
-
-.stage.is-flat .card-reflection {
-  bottom: -44px;
-  width: 82%;
-  height: 32px;
-  background: linear-gradient(
-    to top,
-    rgb(111 215 196 / 0.1),
-    rgb(169 211 255 / 0.03) 55%,
-    transparent
-  );
-  filter: blur(14px);
-  opacity: 0.8;
-}
-
-/* Bars keep their colored front face and 2D floor grid. */
-.stage.is-flat .bar-stage::before {
-  transform: none;
-  height: 100%;
-  background-size: 34px 18px;
-  opacity: 0.45;
-}
-
-.stage.is-flat .bar-3d {
-  transform-style: flat;
-}
-
-.stage.is-flat .bar-3d::before,
-.stage.is-flat .bar-3d::after {
-  display: none;
-}
-
-.stage.is-flat .bar-front {
-  background: linear-gradient(
-    180deg,
-    rgb(169 211 255 / 0.62) 0%,
-    rgb(111 215 196 / 0.28) 60%,
-    rgb(169 211 255 / 0.18) 100%
-  );
-  border-color: rgb(169 211 255 / 0.3);
-  box-shadow:
-    inset 0 1px 18px rgb(169 211 255 / 0.18),
-    0 0 16px rgb(111 215 196 / 0.12);
-}
-
-/* Keep the connection lines: they are plain SVG, no 3D needed. */
-.stage.is-flat .activities-connections {
-  display: block;
-  opacity: 0.55;
-}
-
-.stage.is-flat .card--extra-left,
-.stage.is-flat .card--extra-right {
-  max-height: none;
-  overflow: visible;
-}
-
-.stage.is-flat .extra-list {
-  overflow: visible;
-  max-height: none;
-}
-
-.stage.is-flat .nav-btn,
-.stage.is-flat .depth-rail {
-  background: rgb(16 24 42 / 0.9);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.stage.is-flat .stage-nav {
-  background: rgb(4 7 13 / 0.72);
-  border-radius: 2px;
-  padding: 6px 10px;
-  bottom: 18px;
-}
-
-@media (max-width: 720px) {
-  .stage.is-flat .stage-scene {
-    padding: 82px 12px 140px;
-  }
-
-  .stage.is-flat .cluster {
-    max-height: none;
-    overflow: visible;
-    padding: 0;
-  }
-
-  .stage.is-flat .cluster--identity,
-  .stage.is-flat .cluster--hours,
-  .stage.is-flat .cluster--extra,
-  .stage.is-flat .cluster--activities {
-    grid-template-columns: 1fr;
-  }
-
-  .stage.is-flat .card {
-    min-width: 0;
-    padding: 24px 20px;
-  }
-}
-
 /* Responsive */
 @media (max-width: 720px) {
   .stage-scene {
@@ -1892,18 +1593,34 @@ function extraTone(item: StageExtraItem) {
 
   .cluster--hours {
     flex-direction: column;
+    justify-content: flex-start;
     gap: 16px;
   }
 
   .cluster--activities {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
     gap: 14px;
+    height: auto;
     max-height: calc(100dvh - 190px);
     overflow-y: auto;
+    padding: 0 16px 8px;
+  }
+
+  .activity-card-wrapper {
+    position: static;
+    width: 100%;
+    height: auto;
+    transform: none;
+    left: 0;
+    top: 0;
   }
 
   .card {
-    min-width: min(100%, 360px);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 24px;
     margin: 0 auto;
   }
@@ -1925,8 +1642,10 @@ function extraTone(item: StageExtraItem) {
     font-size: 44px;
   }
 
-  .card--hours-bar {
-    min-height: 230px;
+  .hours-item {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 0;
   }
 
   .bar-stage {
@@ -1946,6 +1665,11 @@ function extraTone(item: StageExtraItem) {
     font-size: 22px;
   }
 
+  .activity-card-wrapper .card {
+    width: 100%;
+    height: auto;
+  }
+
   .card--activity {
     min-height: 120px;
   }
@@ -1953,10 +1677,6 @@ function extraTone(item: StageExtraItem) {
   .activity-title {
     font-size: 14px;
     padding-right: 16px;
-  }
-
-  .activities-connections {
-    display: none;
   }
 
   .card--extra-left,
@@ -1989,11 +1709,10 @@ function extraTone(item: StageExtraItem) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card {
-    transform: none !important;
-  }
-
-  .card:hover {
+  .card,
+  .card:hover,
+  .hours-item,
+  .activity-card-wrapper {
     transform: none !important;
   }
 
@@ -2001,29 +1720,10 @@ function extraTone(item: StageExtraItem) {
     transform: none !important;
   }
 
-  /* Depth jumps are movement: switch them instantly. The module's transform
-     must stay (it centres the card cluster); opacity still fades. */
   .stage-module {
-    transition:
-      transform 1ms linear,
-      opacity var(--transition-dur) ease-out !important;
-  }
-
-  .card {
-    animation: none;
-  }
-
-  .stage.is-flat .card {
-    animation: flat-card-fade 320ms ease-out both;
-  }
-}
-
-@keyframes flat-card-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
+    transition: opacity var(--transition-dur) ease-out !important;
+    transform: none !important;
+    filter: none !important;
   }
 }
 </style>
