@@ -4,9 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDark } from '@vueuse/core'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
-import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs'
-import { ElInput } from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { ElSegmented } from 'element-plus/es/components/segmented/index.mjs'
@@ -25,8 +23,6 @@ import {
 } from '@/api/user/device'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import {
-  isValidXuehaiId,
-  normalizeXuehaiId,
   primaryDeviceBanReason,
   primaryDeviceCardState,
   primaryDeviceErrorMessage
@@ -188,9 +184,6 @@ const deviceLoading = ref(false)
 const deviceFailed = ref(false)
 const deviceBinding = ref(false)
 const deviceSaving = ref(false)
-const changeDialogVisible = ref(false)
-const changeValue = ref('')
-const changeError = ref('')
 
 const deviceState = computed(() =>
   deviceStatus.value ? primaryDeviceCardState(deviceStatus.value) : null
@@ -245,36 +238,6 @@ async function bindCurrentDevice() {
     ElMessage.error(primaryDeviceErrorMessage(error, t('device.profile.bindFailed')))
   } finally {
     deviceBinding.value = false
-  }
-}
-
-function openChangeDialog() {
-  changeValue.value = ''
-  changeError.value = ''
-  changeDialogVisible.value = true
-}
-
-async function submitChange() {
-  const next = normalizeXuehaiId(changeValue.value)
-  if (!isValidXuehaiId(next)) {
-    changeError.value = t('device.profile.changeInvalid')
-    return
-  }
-  deviceSaving.value = true
-  try {
-    await withTemporaryToken(String(user._id), t('device.profile.verifyChangeReason'), (token) =>
-      setMyPrimaryDevice(next, token)
-    )
-    changeDialogVisible.value = false
-    ElMessage.success(t('device.profile.changeSuccess'))
-    await loadDevice()
-  } catch (error) {
-    if (isTemporaryTokenCancelled(error)) {
-      return
-    }
-    changeError.value = primaryDeviceErrorMessage(error, t('device.profile.changeFailed'))
-  } finally {
-    deviceSaving.value = false
   }
 }
 
@@ -516,9 +479,6 @@ onMounted(async () => {
               {{ t('device.profile.bind') }}
             </ElButton>
             <template v-else-if="deviceState.bound">
-              <ElButton :disabled="!deviceState.canChange" @click="openChangeDialog">
-                {{ t('device.profile.change') }}
-              </ElButton>
               <ElButton
                 text
                 type="danger"
@@ -533,35 +493,6 @@ onMounted(async () => {
         </template>
       </div>
     </section>
-
-    <ElDialog
-      v-model="changeDialogVisible"
-      :title="t('device.profile.changeTitle')"
-      width="min(420px, 92vw)"
-      append-to-body
-      class="profile-device-dialog"
-    >
-      <p class="profile-device-dialog-hint">{{ t('device.profile.changeHint') }}</p>
-      <ElInput
-        v-model="changeValue"
-        class="profile-device-dialog-input"
-        :maxlength="32"
-        :placeholder="t('device.profile.changePlaceholder')"
-        clearable
-        @keydown.enter.prevent="submitChange"
-      />
-      <p v-if="changeError" class="profile-device-dialog-error" role="alert">
-        {{ changeError }}
-      </p>
-      <template #footer>
-        <ElButton @click="changeDialogVisible = false">
-          {{ t('device.profile.changeCancel') }}
-        </ElButton>
-        <ElButton type="primary" :loading="deviceSaving" @click="submitChange">
-          {{ t('device.profile.changeSubmit') }}
-        </ElButton>
-      </template>
-    </ElDialog>
 
     <section class="phx-panel profile-notices-card" style="--phx-i: 3">
       <div class="yg-card__header">

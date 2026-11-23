@@ -23,11 +23,7 @@ import { ZActivityList } from '@/components'
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import type { User } from '@/../types'
 import api from '@/api'
-import {
-  clearUserPrimaryDevice,
-  issueTempPassword,
-  type TempPasswordIssueResult
-} from '@/api/user/device'
+import { issueTempPassword, type TempPasswordIssueResult } from '@/api/user/device'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import { aiErrorOf } from '@/api/ai/errors'
 import { useClipboard } from '@vueuse/core'
@@ -362,44 +358,6 @@ function forgetTempPassword() {
   tempPasswordIssued.value = null
 }
 
-async function clearPrimaryDevice() {
-  if (!user.value) return
-  try {
-    await ElMessageBox.confirm(
-      t('manage.personalPanel.clearDevice.confirm', { name: user.value.name }),
-      t('manage.personalPanel.clearDevice.title'),
-      {
-        type: 'warning',
-        confirmButtonText: t('manage.personalPanel.clearDevice.confirmButton'),
-        cancelButtonText: t('action.cancel', '取消'),
-        confirmButtonClass: 'el-button--danger'
-      }
-    )
-  } catch {
-    return
-  }
-  try {
-    await withTemporaryToken(
-      String(userStore._id),
-      t('manage.personalPanel.clearDevice.verifyReason'),
-      (token) => clearUserPrimaryDevice(id.value, token)
-    )
-    ElNotification({
-      title: t('manage.personalPanel.clearDevice.done', { name: user.value.name }),
-      type: 'success'
-    })
-    await getUser()
-  } catch (error) {
-    if (isTemporaryTokenCancelled(error)) return
-    ElMessage({
-      message: describeDeviceError(error, 'manage.personalPanel.clearDevice.failed'),
-      type: 'error',
-      grouping: true,
-      plain: true
-    })
-  }
-}
-
 // ---- 义工智能分析 ----
 // volunteer 场景是只读的：结果只展示在弹窗里，没有可写回的对象，因此不监听
 // ZSceneRunDialog 的 apply，弹窗会自动隐藏「写回」按钮。
@@ -536,11 +494,6 @@ watch(
           <span v-if="canIssueTempPassword && user" class="phx-action">
             <ElButton text bg :loading="tempPasswordIssuing" @click="issueTempPasswordForUser">
               {{ t('manage.personalPanel.tempPassword.action') }}
-            </ElButton>
-          </span>
-          <span v-if="isAdmin && user" class="phx-action">
-            <ElButton type="danger" text bg @click="clearPrimaryDevice">
-              {{ t('manage.personalPanel.clearDevice.action') }}
             </ElButton>
           </span>
           <ElTooltip
