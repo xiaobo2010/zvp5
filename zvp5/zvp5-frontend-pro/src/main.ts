@@ -48,6 +48,9 @@ function installTouchPressFeedback() {
 
       release()
       pressed = target
+      // 同一按钮连点时，先强制一次样式计算，动画才会从头重播，而不是被
+      // 浏览器合并成「类没变过」。
+      void target.offsetWidth
       target.classList.add('is-touch-pressed')
       window.setTimeout(release, 420)
     },
