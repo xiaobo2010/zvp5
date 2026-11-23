@@ -20,12 +20,12 @@ from fastapi.routing import Mount
 import main
 from tests.route_utils import iter_leaf_routes
 
-# 展开 FastAPI 的 included-router 容器后，223 个叶子路由 = 221 条带 methods 的
+# 展开 FastAPI 的 included-router 容器后，224 个叶子路由 = 222 条带 methods 的
 # 路由（included-router 的条目经 ``_EffectiveRouteContext`` 包装 + main 自挂的
 # 裸 ``APIRoute``）+ 1 个 socket.io Mount + 1 个 WebSocket 路由。
 # 文档路由不计入：``docs_url`` / ``openapi_url`` 都是 None（见
 # tests/test_cert_endpoint.py）。
-TOTAL_ROUTE_OBJECTS = 224
+TOTAL_ROUTE_OBJECTS = 225
 
 FROZEN_ROUTES: list[tuple[str, tuple[str, ...]]] = [
     ('/api/', ('GET',)),
@@ -224,6 +224,7 @@ FROZEN_ROUTES: list[tuple[str, tuple[str, ...]]] = [
     ('/api/v1/themes/entry', ('GET',)),
     ('/api/v1/themes/me', ('GET',)),
     ('/api/v1/themes/me', ('PUT',)),
+    ('/api/v1/themes/server-time', ('GET',)),
     ('/api/v1/themes/stats', ('GET',)),
     ('/api/v1/times', ('GET',)),
     ('/api/v1/users', ('GET',)),

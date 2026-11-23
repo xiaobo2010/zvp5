@@ -11,10 +11,10 @@
 
 拆分前的路由 dump 是 262 条（含 V053 站内通知已读、Agent 实时事件路由与 V054
 Agent 警示已确认的 GET/POST）。逐条真相源是 ``tests/test_route_snapshot.py``；
-这里只钉总数：当前 224 条（262 → 删 mcp 10 条 / amalgamation 1 条 / 两条失效
+这里只钉总数：当前 225 条（262 → 删 mcp 10 条 / amalgamation 1 条 / 两条失效
 legacy 重定向，+2 条 agent ack；v1 收口时 users/groups 四份 router 合并为
 单文件、legacy_redirects 整模块退役，净减 18 条；2026-11-19 死端点清理再减
-12 条；2026-11-21 主题端点再 +4；2026-11-23 主题入口再 +1）。新增路由时把这里的数字一起改（并跑一次
+12 条；2026-11-21 主题端点再 +4；2026-11-23 主题入口再 +1；服务器时间端点再 +1）。新增路由时把这里的数字一起改（并跑一次
 ``tests/test_api_metrics.py`` 之类的路由相关用例）。
 """
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 import main
 from tests.route_utils import iter_leaf_routes
 
-PRE_SPLIT_ROUTE_COUNT = 224
+PRE_SPLIT_ROUTE_COUNT = 225
 ROUTER_COUNT = 30
 
 

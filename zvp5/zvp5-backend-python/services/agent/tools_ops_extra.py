@@ -29,10 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -46,6 +44,7 @@ from db.models import users as users_table
 from db.oracle.session import session_scope
 from services import adb_backup, db_content, settings_runtime
 from services.ai import config as ai_config
+from services.server_time import server_time_payload
 from util.dual_auth import audit_system_op
 from util.serialization import iso_str_nonempty
 
@@ -1394,66 +1393,12 @@ async def _impl_ban_history(
 # 读工具 7：server_time
 # --------------------------------------------------------------------------- #
 
-_WEEKDAYS = (
-    "星期一",
-    "星期二",
-    "星期三",
-    "星期四",
-    "星期五",
-    "星期六",
-    "星期日",
-)
-
-
-def _zone_name(aware: datetime) -> str:
-    """进程当前时区名（``Asia/Shanghai`` 这种），拿不到就退 ``tzname()``。
-
-    顺序：``TZ`` 环境变量 → ``/etc/timezone`` → ``/etc/localtime`` 软链 →
-    ``tzname()``。前三个给的是 IANA 名，告诉模型「这是东八区」比 ``CST`` 这种
-    可能被误读成北美中部的缩写可靠。
-    """
-    env = os.environ.get("TZ", "").strip().lstrip(":")
-    if env:
-        return env
-    try:
-        text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
-    except OSError:
-        text = ""
-    if text:
-        return text
-    try:
-        target = str(Path("/etc/localtime").resolve())
-    except OSError:
-        target = ""
-    if "zoneinfo/" in target:
-        return target.split("zoneinfo/", 1)[1]
-    return aware.tzname() or "UTC"
-
-
 async def _impl_server_time(user: dict) -> dict:
-    """权威时间基准。**naive 侧走 ``device_guard._to_local_naive`` 同一口径**：
-    封禁落库的 ``USERS.BAN_UNTIL`` 是本地墙钟 naive，直接喂 aware UTC 会差出一个
-    时区偏移（东八区「封 24 小时」实际只封 16 小时）。
-    """
-    from services.device_guard import _to_local_naive
+    """权威时间基准；实现与公开的 ``/themes/server-time`` 共用一份。
 
-    aware = datetime.now().astimezone()
-    naive = _to_local_naive(aware) or datetime.now()
-    return _cap(
-        {
-            "kind": "server_time",
-            "now_iso": aware.isoformat(timespec="seconds"),
-            "timezone": _zone_name(aware),
-            "epoch_seconds": int(aware.timestamp()),
-            "weekday": _WEEKDAYS[naive.weekday()],
-            # 与封禁落库同口径的墙钟值：给「封到几点」时直接用它加时长。
-            "local_naive": naive.isoformat(sep=" ", timespec="seconds"),
-            "note": (
-                "local_naive 是本地墙钟 naive（与 BAN_UNTIL 落库口径一致）；"
-                "now_iso 带时区偏移。两者指向同一时刻。"
-            ),
-        }
-    )
+    前端也要按服务器墙钟选配色，不能各写一套 ``datetime.now()`` 口径。
+    """
+    return _cap(server_time_payload())
 
 
 # --------------------------------------------------------------------------- #
