@@ -81,6 +81,17 @@ def is_valid_theme_id(value: object) -> bool:
     return _clean(value) in THEME_IDS
 
 
+def theme_path(value: object) -> str:
+    """主题 id → 该主题整站入口路径。
+
+    **页面入口只由后端给出**：根主题是 ``/``，其余是 ``/themes/<id>/``。
+    前端不再自己拼路径，也不再维护一份主题目录；清单/注册表增删主题时，
+    切换器、登录后跳转和独立 Pro 站都读同一个字段。
+    """
+    theme_id = normalize_theme_id(value)
+    return "/" if theme_id == DEFAULT_THEME else f"/themes/{theme_id}/"
+
+
 def theme_items() -> list[dict]:
     """``GET /api/v1/themes`` 的 ``items``：注册表顺序 + 对外字段。"""
     return [
@@ -89,6 +100,8 @@ def theme_items() -> list[dict]:
             "label": theme.label,
             "description": theme.description,
             "status": theme.status,
+            # 后端直接返回页面入口，客户端只负责跳转，不自行推导路径。
+            "path": theme_path(theme.id),
         }
         for theme in THEMES
     ]

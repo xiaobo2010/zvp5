@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ZButtonOrCard, ZActivityMember, ZActivityDuration } from '@/components'
 import type { ActivityMember, Activity } from '@/../types/v2'
-import { toRefs, watch } from 'vue'
+import { computed, toRefs, watch } from 'vue'
 import { User as IconUser, Minus, EditPen, Search } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useI18n } from 'vue-i18n'
@@ -59,6 +59,11 @@ const size = ref(membersCount.value)
 const pageLoading = ref(false)
 
 const usersSelected = ref<ActivityMember[]>(modelValue.value ?? [])
+// 参与名单只对管理员/学生会开放（后端同口径）。普通用户连请求都不发，
+// 避免活动详情页出现 403 或空名单。
+const canReadMembers = computed(
+  () => user.position.includes('admin') || user.position.includes('department')
+)
 
 function handleSelectionChange(val: ActivityMember[]) {
   emits('update:modelValue', val)
@@ -82,6 +87,11 @@ function goRegister() {
 let requestId = 0
 
 async function refreshMembers() {
+  if (!canReadMembers.value) {
+    members.value = []
+    size.value = 0
+    return
+  }
   const current = ++requestId
   pageLoading.value = true
   try {
@@ -167,6 +177,7 @@ watch(search, debouncedRefresh)
 
 <template>
   <ZButtonOrCard
+    v-if="canReadMembers"
     v-model:open="open"
     :mode="mode === 'inline' ? 'card' : mode"
     pop-type="dialog"

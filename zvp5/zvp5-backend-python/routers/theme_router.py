@@ -28,6 +28,7 @@ from services.theme_registry import (
     is_valid_theme_id,
     normalize_theme_id,
     theme_items,
+    theme_path,
 )
 from util.object_id import get_current_user
 
@@ -52,7 +53,21 @@ async def list_themes(user=Depends(get_current_user)):
 async def read_my_theme(user=Depends(get_current_user)):
     """当前账号的主题；库里为 NULL 或未知历史值时回默认主题。"""
     stored = await backends.get_users_repo().get_theme(user["id"])
-    return {"status": "ok", "data": {"theme": normalize_theme_id(stored)}}
+    theme = normalize_theme_id(stored)
+    return {"status": "ok", "data": {"theme": theme, "path": theme_path(theme)}}
+
+
+@router.get("/entry")
+async def read_theme_entry(user=Depends(get_current_user)):
+    """后端决定登录后应加载哪一个整站入口。
+
+    客户端（根站、Pro、Anthropic）只认这个响应里的 ``path``：账号偏好是
+    Pro 就返回 ``/themes/canary-pro/``，是默认主题就返回 ``/``。主题目录、
+    路径约定和默认值都留在服务端，前端不再各自拼一份。
+    """
+    stored = await backends.get_users_repo().get_theme(user["id"])
+    theme = normalize_theme_id(stored)
+    return {"status": "ok", "data": {"theme": theme, "path": theme_path(theme)}}
 
 
 @router.put("/me")

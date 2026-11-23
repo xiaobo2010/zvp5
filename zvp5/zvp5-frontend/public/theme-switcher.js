@@ -7,6 +7,7 @@
   const base = meta.content.replace(/\/+$/, '')
   const active = /^\/themes\/([a-z0-9-]+)(?:\/|$)/.exec(location.pathname)?.[1] || 'canary'
   const guideKey = `zvms.theme-guide.v1.${active}`
+  const pendingKey = 'zvms.theme.pending'
   const english = document.documentElement.lang.toLowerCase().startsWith('en')
   const text = english
     ? { title: 'Choose a theme', guide: 'Pick a layout to get started. You can change it from your profile at any time.', dismiss: 'Not now', current: 'Current', loading: 'Loading themes…', error: 'Themes could not be loaded. Close and try again.', saving: 'Saving…', local: 'Saved on this device.' }
@@ -18,6 +19,10 @@
 
   function write(key, value) {
     try { localStorage.setItem(key, value) } catch { /* 隐私模式仍可切换 */ }
+  }
+
+  function remove(key) {
+    try { localStorage.removeItem(key) } catch { /* 同上 */ }
   }
 
   function element(tag, className, content) {
@@ -58,6 +63,42 @@
 
   async function loadThemes() {
     if (choices) return choices
+    const token = read('token')
+    if (token) {
+      try {
+        // 主题目录的权威来源是后端注册表；后端同时给出每个主题的页面入口
+        // ``path``，前端不再自己拼 ``/themes/<id>/``。
+        let endpoint = `${base}/v1/themes`
+        try {
+          if (new URL(base).origin !== location.origin) {
+            endpoint = `${location.origin}/api/v1/themes`
+          }
+        } catch { /* meta 不是绝对地址时只走它本身 */ }
+        const response = await fetch(endpoint, {
+          headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+          cache: 'no-store'
+        })
+        if (response.ok) {
+          const payload = await response.json()
+          const items = Array.isArray(payload?.data?.items) ? payload.data.items : []
+          const catalog = items.filter((item) => {
+            if (!item || typeof item.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(item.id)) return false
+            if (typeof item.label !== 'string' || !item.label) return false
+            return typeof item.path === 'string' && /^\/(?:themes\/[a-z0-9][a-z0-9-]*\/)?$/.test(item.path)
+          }).map((item) => ({
+            id: item.id,
+            label: item.label,
+            description: typeof item.description === 'string' ? item.description : '',
+            status: item.status,
+            base: item.path
+          }))
+          if (catalog.length) {
+            choices = catalog
+            return choices
+          }
+        }
+      } catch { /* 后端不可用时回落静态清单 */ }
+    }
     const response = await fetch('/themes.json', {
       headers: { Accept: 'application/json' },
       cache: 'no-store'
@@ -88,6 +129,9 @@
       method: 'PUT',
       headers,
       body: JSON.stringify({ theme: id }),
+      // 页面随即整页跳转；keepalive 让这次偏好写入在卸载后继续完成，
+      // 否则切主题后刷新/换设备会读回旧偏好。
+      keepalive: true,
       signal: controller.signal
     }).then((response) => response.ok).catch(() => false).finally(() => clearTimeout(timeout))
   }
@@ -104,6 +148,43 @@
     } catch { /* meta 不是绝对地址时只走它本身 */ }
     if (sameOrigin && await requestTheme(sameOrigin, id, token)) return true
     return requestTheme(`${base}/v1/themes/me`, id, token)
+  }
+
+  function apiEndpoint(path) {
+    try {
+      if (new URL(base).origin !== location.origin) return `${location.origin}/api${path}`
+    } catch { /* meta 不是绝对地址时只走它本身 */ }
+    return `${base}${path}`
+  }
+
+  /**
+   * 后端决定当前账号应加载哪一套前端。入口页（`/` 或 `/themes/<id>/`）
+   * 与后端返回的 path 不一致时整页跳转；带 `#/...` 的深链接只在同主题内保留。
+   */
+  async function followBackendEntry() {
+    const token = read('token')
+    if (!token || read(pendingKey)) return
+    if (new URL(location.href).searchParams.has('choose-theme')) return
+    if (location.pathname.endsWith('/login') || location.hash.startsWith('#/login')) return
+    try {
+      const response = await fetch(apiEndpoint('/v1/themes/entry'), {
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+        cache: 'no-store'
+      })
+      if (!response.ok) return
+      const payload = await response.json()
+      const path = payload?.data?.path
+      if (typeof path !== 'string' || !/^\/(?:themes\/[a-z0-9][a-z0-9-]*\/)?$/.test(path)) return
+      const current = active === 'canary' ? '/' : `/themes/${active}/`
+      if (path === current) return
+      location.replace(path === '/' ? '/' : `${path}${location.hash}`)
+    } catch { /* 后端不可达时保留当前入口 */ }
+  }
+
+  /** 上一次切换没写进后端时，在当前页补写一次；成功后解除入口锁定。 */
+  async function retryPending() {
+    if (!read(pendingKey) || !read('token')) return
+    if (await save(active)) remove(pendingKey)
   }
 
   function clearQuery() {
@@ -127,9 +208,15 @@
     saving = true
     write(guideKey, 'done')
     write('zvms.theme', theme.id)
-    // 先切换页面，再尽力同步账号：平板跨域失败也不该卡住整站切换。
+    // 先让后端确认偏好，再整页跳转：否则页面卸载会取消 PUT，刷新/换设备时
+    // 后端仍返回旧主题（“刷新回旧版”的另一半原因）。
     if (theme.id !== active) {
-      void save(theme.id)
+      status.textContent = text.saving
+      list.querySelectorAll('button').forEach((button) => { button.disabled = true })
+      dismiss.disabled = true
+      const saved = await save(theme.id)
+      if (saved) remove(pendingKey)
+      else write(pendingKey, '1')
       location.assign(theme.base)
       return
     }
@@ -140,8 +227,10 @@
     saving = false
     dismiss.disabled = false
     if (saved) {
+      remove(pendingKey)
       close()
     } else {
+      write(pendingKey, '1')
       list.querySelectorAll('button').forEach((button) => { button.disabled = false })
       status.textContent = text.local
       dismiss.focus()
@@ -197,6 +286,9 @@
     event.preventDefault()
     void open(false, trigger)
   })
+
+  void retryPending()
+  void followBackendEntry()
 
   const url = new URL(location.href)
   if (url.searchParams.has('choose-theme')) {

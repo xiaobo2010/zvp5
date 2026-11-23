@@ -68,7 +68,13 @@ jobs:
           python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
       - name: Run backend tests
         # 与 main 的 ci.yml 同一套：SQLite 替身 + conftest 隔离，不连真实库。
-        run: python -m pytest -q
+        run: |
+          status=0
+          python -m pytest -q --junitxml=/tmp/zvp5-pytest.xml || status=$?
+          if [ "$status" -ne 0 ]; then
+            python -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/zvp5-pytest.xml').getroot(); [print('::error title=Pytest::'+c.get('classname','')+'::'+c.get('name','')+' — '+((c.find('failure') if c.find('failure') is not None else c.find('error')).get('message') or '')[:300]) for c in root.iter('testcase') if c.find('failure') is not None or c.find('error') is not None]" || true
+          fi
+          exit "$status"
       - name: Compile backend
         run: python -m compileall -q routers services util db typings tasks
 

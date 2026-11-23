@@ -268,6 +268,11 @@ async def get_activity_v2(activity_id: str, user=Depends(get_current_user)):
         # 一次跨洋 RTT）。
         raise HTTPException(status_code=404, detail="Activity not found")
 
+    # 草稿/待审/驳回的活动不是公开内容。普通用户只能按 id 打开已生效活动；
+    # 管理员/学生会保留审核所需的全部状态。
+    if not _is_volunteer_manager(user) and activity.get("status") != "effective":
+        raise HTTPException(status_code=404, detail="Activity not found")
+
     members = await backends.get_members_repo().count_for_activity(activity_id)
 
     return {"activity": activity, "members_count": members}
@@ -731,6 +736,12 @@ async def get_activities_v3(
 ):
     repo = backends.get_activities_repo()
     atypes = [type] if type else None
+
+    # 普通用户只看已生效活动；pending/refused/draft 是审核工作台的数据，
+    # 只有 admin/department 能按状态查。否则任何登录学生都能翻到未发布的
+    # 活动标题、地点和描述。
+    if not _is_volunteer_manager(user):
+        status = "effective"
 
     # 不传 ``sort`` 时不排序，沿用 repo 固定的 oid DESC（旧行为）。
     sort_column = None

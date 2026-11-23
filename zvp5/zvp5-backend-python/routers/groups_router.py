@@ -75,6 +75,28 @@ def _is_group_manager(user: dict) -> bool:
     return "admin" in per or "department" in per
 
 
+async def _ensure_group_read_scope(user: dict, group_id: str) -> None:
+    """班级级数据（成员、活动、时长）只对管理员或本班学生开放。
+
+    ``GET /groups/{id}`` 早已按这条规则收敛；成员/活动/时长三个列表此前漏了
+    同一道闸，任何登录学生只要拿到班号就能翻别的班。超级权限组（权限组）没有
+    ``class_id``，因此自然只对 admin/department 开放。
+
+    ``user`` 来自 ``get_current_user``：真实请求一定带 ``class_id``（可能为
+    ``None``）；测试或旧调用没带时回读一次用户档案，保持同样的放行判定。
+    """
+    if _is_group_manager(user):
+        return
+
+    class_id = user.get("class_id")
+    if class_id is None:
+        current = await backends.get_users_repo().get_by_oid(user.get("id"))
+        class_id = current.get("class_id") if current is not None else None
+
+    if class_id is None or str(class_id) != str(group_id):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+
 async def _list_permission_group_members(
     permission_group: dict, query: str, page: int, size: int, pwdm: bool, session
 ):
@@ -243,11 +265,12 @@ async def get_group_users_v3(
     """
     List the live members of a class (`zvms_new.users` by `class_id`).
 
-    Permission: any authenticated user (class and permission groups alike);
-    ``get_current_user`` already enforces the login.
+    Permission: admin/department, or the member's own class. Permission groups
+    are manager-only because a student has no ``class_id`` matching them.
     """
 
-    validate_object_id(group_id)
+    group_id = str(validate_object_id(group_id))
+    await _ensure_group_read_scope(user, group_id)
 
     # 一个 session_scope 装下全部读取：权限组判定 / 班级 / 成员页共享一次 checkout。
     async with session_scope() as session:
@@ -299,6 +322,7 @@ async def get_group_activities_v2(
     """
 
     class_oid = validate_object_id(group_id)
+    await _ensure_group_read_scope(user, str(class_oid))
 
     # ``search`` 按字面量关键字处理（仓储侧转义 LIKE 通配符）；``regex`` 保留
     # 只是为了不破坏旧客户端的 query 参数。
@@ -345,6 +369,7 @@ async def read_group_time(
     # 优先，避免班级时长搜索被静默忽略（q 为空时再用 search）。
     query = query or search
     class_oid = validate_object_id(group_id)
+    await _ensure_group_read_scope(user, str(class_oid))
     user_times, count = await backends.get_time_repo().list_by_class(
         str(class_oid),
         query,
