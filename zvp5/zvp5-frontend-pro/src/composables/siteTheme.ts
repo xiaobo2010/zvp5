@@ -39,8 +39,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+async function loadBackendThemes(signal: AbortSignal): Promise<SiteTheme[] | null> {
+  const token = readToken()
+  if (!token) return null
+  try {
+    const response = await fetch(`${API_BASE}/v1/themes`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal,
+    })
+    if (!response.ok) return null
+    const payload: unknown = await response.json()
+    if (!isRecord(payload) || payload.status !== 'ok' || !isRecord(payload.data)) return null
+    const items = payload.data.items
+    if (!Array.isArray(items)) return null
+    const themes: SiteTheme[] = []
+    for (const item of items) {
+      if (!isRecord(item) || !isThemeId(item.id) || typeof item.label !== 'string' ||
+          (item.status !== 'stable' && item.status !== 'experimental') ||
+          typeof item.path !== 'string' ||
+          !/^\/(?:themes\/[a-z0-9][a-z0-9-]*\/)?$/.test(item.path)) continue
+      themes.push({
+        id: item.id,
+        label: item.label,
+        description: typeof item.description === 'string' ? item.description : '',
+        status: item.status,
+        base: item.path,
+      })
+    }
+    return themes.length > 1 ? themes : null
+  } catch {
+    // 后端不可达时退回构建产物里的静态清单。
+    return null
+  }
+}
+
 export async function loadSiteThemes(signal: AbortSignal): Promise<SiteTheme[]> {
   if (switchesSiteOrigin()) return standaloneThemes
+
+  // 主题目录以后端注册表为准：新增主题（例如 canary-anthropic）只要后端
+  // 注册表有，Pro 的选择器就会出现，不需要等 Pro 再发一版快照。
+  const backend = await loadBackendThemes(signal)
+  if (backend) return backend
 
   // This file is emitted at the host root, including when Pro runs at a Vite subpath.
   const response = await fetch('/themes.json', {

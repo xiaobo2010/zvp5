@@ -100,11 +100,14 @@ const router = createRouter({
 router.beforeEach((to) => {
   const auth = isLoggedIn()
   const roles = Array.isArray(to.meta.roles) ? (to.meta.roles as string[]) : []
+  // hash router 的 ``to.fullPath`` 可能自带 `#/`；把它塞进 query 会变成
+  // `/login?redirect=/me%23/`，登录后再跳回错误地址。只保留路径和查询串。
+  const redirect = to.fullPath.split('#')[0] || to.path
   if (to.meta.requiresAuth && !auth) {
-    return { path: '/login', query: { redirect: to.fullPath } }
+    return { path: '/login', query: { redirect } }
   }
   if (roles.length > 0) {
-    if (!auth) return { path: '/login', query: { redirect: to.fullPath } }
+    if (!auth) return { path: '/login', query: { redirect } }
     if (!hasAnyRole(...roles)) return { path: '/404', replace: true }
   }
   return true
