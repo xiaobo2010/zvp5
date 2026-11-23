@@ -219,7 +219,9 @@ jobs:
           # frontend-pro 没有自己的 .node-version，沿用主前端的版本保持一致。
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend-pro/pnpm-lock.yaml
+          cache-dependency-path: |
+            zvp5/zvp5-frontend-pro/pnpm-lock.yaml
+            zvp5/zvp5-frontend-3d/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build preview bundle
@@ -233,6 +235,24 @@ jobs:
           # 入口 chunk 必须真的产出了，避免只留下一个空壳 index.html。
           entry="$(grep -o 'src="/assets/[^"]*"' dist/index.html | head -n1 | sed -e 's|src="||' -e 's|"$||')"
           [[ -f "dist$entry" ]] || { echo "entry chunk $entry missing" >&2; exit 1; }
+      - name: Build 3D concept bundle
+        shell: bash
+        working-directory: zvp5/zvp5-frontend-3d
+        run: |
+          set -euo pipefail
+          # 与 Pro 同源同账号：构建产物挂在 /3d/，复用同一个 Worker 与登录态。
+          pnpm install --frozen-lockfile
+          pnpm run build
+          [[ -f dist/index.html ]] || { echo "3D dist/index.html missing" >&2; exit 1; }
+          grep -F 'src="/3d/assets/' dist/index.html >/dev/null
+      - name: Merge 3D concept into preview assets
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          rm -rf zvp5/zvp5-frontend-pro/dist/3d
+          cp -R zvp5/zvp5-frontend-3d/dist zvp5/zvp5-frontend-pro/dist/3d
+          test -f zvp5/zvp5-frontend-pro/dist/3d/index.html
       - name: Deploy to Cloudflare Worker
         shell: bash
         working-directory: .
@@ -297,11 +317,25 @@ jobs:
             }
           done
 
+          entry3d="$(grep -o 'src="/3d/assets/[^"]*"' "$dist_dir/3d/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry3d" ]] || { echo "could not find 3D entry asset" >&2; exit 1; }
+          page3d="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/3d/index.html")"
+          [[ "$page3d" == *"src=\"$entry3d\""* ]] || {
+            echo "wrong 3D entry at /3d/index.html" >&2
+            exit 1
+          }
+          root3d="$(curl -fsSL --compressed -A "$PROBE_UA" -H 'Accept: text/html' "$CANARY_URL/3d/")"
+          [[ "$root3d" == *"src=\"$entry3d\""* ]] || {
+            echo "wrong 3D entry at /3d/" >&2
+            exit 1
+          }
+
           {
             echo '### Canary Pro preview deployed'
             echo
             echo "- URL: $CANARY_URL"
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Entry chunk: \`$entry\`"
+            echo "- 3D concept: $CANARY_URL/3d/"
             echo '- Worker: zvp-yuren-canary-pro (zvp5-frontend-pro static assets)'
           } >> "$GITHUB_STEP_SUMMARY"
