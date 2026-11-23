@@ -462,6 +462,7 @@ const isPhiRoute = computed(() => {
     path.startsWith('/activities') ||
     path.startsWith('/activity/') ||
     path === '/me' ||
+    path === '/notifications' ||
     path === '/about' ||
     path === '/ai' ||
     path.startsWith('/ai/') ||
@@ -473,7 +474,7 @@ const isPhiRoute = computed(() => {
   )
 })
 
-// 服务端/管理台已在各自外壳内挂蜂窝底纹；其余 Phi 页面与独立通知页由 App 统一补一层。
+// 服务端/管理台已在各自外壳内挂蜂窝底纹；其余 Phi 页面由 App 统一补一层。
 // 登录页有自己的缓存背景，不重复叠。
 const hasLocalHexGrid = computed(() => {
   const path = route.path
@@ -487,7 +488,7 @@ const hasLocalHexGrid = computed(() => {
 
 const showPageHex = computed(
   () =>
-    (isPhiRoute.value || route.path === '/notifications') &&
+    isPhiRoute.value &&
     !hasLocalHexGrid.value &&
     route.path !== '/user/login'
 )
@@ -584,8 +585,6 @@ onMounted(async () => {
   try {
     if (userStore.isLogin && route.path !== '/maintenance') {
       await userStore.refreshUser().catch(() => {})
-      // 已登录刷新页面时同步账号主题偏好
-      await userStore.syncThemeFromServer()
       resetPassword()
     }
   } catch {

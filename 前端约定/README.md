@@ -13,7 +13,6 @@
 └── css/
     ├── main.css         ← 样式总入口（业务页面只需引入这一个文件）
     ├── design-tokens.css← 设计令牌（颜色/字体/间距/圆角/阴影/动效，唯一事实来源）
-    ├── theme-variants.css← 运行时主题变体（canary / canary2 / canary-pro）
     ├── base.css         ← 基础样式（Reset、排版、栅格、布局骨架、毛玻璃/G2 工具）
     └── components/
         ├── buttons.css       ← 按钮、图标按钮、链接、按钮组
@@ -48,9 +47,22 @@
 
 - **主题**：`<html data-theme="dark">` 手动暗色；`data-theme="light"` 手动浅色；
   不设置则跟随系统。
-- **主题变体**：`<html data-theme-variant="canary|canary2|canary-pro">` 切换配色
-  变体，与明暗正交；新增变体 = 后端 `services/theme_registry.py` 加一条 +
-  `css/theme-variants.css` 加一段 `html[data-theme-variant='...'] .yg-phi`。
+- **主题变体（整站多构建）**：每个主题都是**一份完整的前端构建**，挂同一域名下的
+  不同路径。主题清单是唯一事实源：`zvp5/themes/manifest.json`。
+  - 默认主题 `canary` → `/`（本仓库 `zvp5/zvp5-frontend`，`build.kind: "root"`）
+  - 其它主题 `<id>` → `/themes/<id>/`（清单里声明源码分支/目录与构建命令）
+  - 构建：CI 在根 canary 构建后跑 `node zvp5/deployment/build-theme-apps.mjs`，
+    按清单用 worktree 取出各分支前端，各自 `install` + `vite build --base=<base>`，
+    产物并入 `zvp5/zvp5-frontend/dist/themes/<id>/`，并生成运行清单
+    `dist/themes.json`（只含 `id/label/description/status/base`，不含源码信息）。
+  - 切换：`/me` 的主题下拉（先 `/api/v1/themes`，失败读 `/themes.json`）与子应用
+    注入的 `theme-switcher.js`（读 `/themes.json`）都只做「写
+    `localStorage['zvms.theme']` + `PUT /v1/themes/me` + `location.assign(清单 base)`」；
+    同源所以 token 共享，登录态无缝。路径约定在 `src/utils/theme.ts`
+    （`DEFAULT_THEME` + `THEME_PREFIX='/themes/'`），没有任何主题 id 列表。
+  - 新增主题 = 清单加一条（`id/label/description/status/base/source/build`）+
+    后端 `services/theme_registry.py` 加一条；**不要**改 Worker / CI / 前端映射，
+    它们都从清单派生。**不要**复制外壳组件或用几行 `--yg-*` 覆盖冒充新主题。
 - **预览**：双击打开 `demo.html` 查看全部标准组件的实际效果。
 
 ## 给智能体的三条底线

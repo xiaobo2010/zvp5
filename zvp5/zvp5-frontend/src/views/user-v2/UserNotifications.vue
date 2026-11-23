@@ -212,14 +212,14 @@ onMounted(async () => {
    - 未读用强调色六边形角标（clip-path，无图片）
    ========================================================================== */
 .notif-page {
-  --phx-accent: var(--yg-color-primary);
-  --phx-ink: var(--yg-text-primary);
-  --phx-muted: var(--yg-text-tertiary);
-  --phx-surface: var(--yg-bg-surface);
-  --phx-sunken: var(--yg-bg-surface-sunken);
+  --phx-accent: var(--phi-accent);
+  --phx-ink: var(--phi-ink);
+  --phx-muted: var(--phi-ink-3);
+  --phx-surface: var(--phi-panel);
+  --phx-sunken: var(--phi-sunken);
   --phx-line: color-mix(in srgb, var(--phx-accent) 22%, transparent);
-  --phx-line-soft: color-mix(in srgb, var(--phx-ink) 10%, transparent);
-  --phx-hard: color-mix(in srgb, var(--phx-accent) 16%, #000);
+  --phx-line-soft: var(--phi-line);
+  --phx-hard: color-mix(in srgb, var(--phx-accent) 16%, var(--phx-sunken));
   --phx-display: var(--phi-display, Bebas, Impact, sans-serif);
   --phx-hud: var(--phi-hud, Rajdhani, 'Arial Narrow', sans-serif);
   --phx-ease: cubic-bezier(0.19, 1, 0.22, 1);
@@ -237,11 +237,6 @@ onMounted(async () => {
   max-width: 860px;
   margin: 0 auto;
   padding: var(--yg-space-6);
-}
-
-html[data-theme='light'] .notif-page {
-  --phx-accent: #007a70;
-  --phx-hard: #101418;
 }
 
 /* ---------- 页头：HUD 编号 + 细网格 + 斜线 ---------- */
@@ -608,7 +603,7 @@ html[data-theme='light'] .notif-page {
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  background: var(--yg-border-default);
+  background: var(--phi-line-strong);
   clip-path: polygon(
     25% 0,
     75% 0,
@@ -719,14 +714,14 @@ html[data-theme='light'] .notif-page {
 }
 
 .notif-btn--primary {
-  color: var(--yg-bg-page);
+  color: var(--phx-surface);
   background: var(--phx-accent);
   border-color: transparent;
   font-weight: var(--yg-font-weight-semibold);
 }
 
 .notif-btn--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--phx-accent) 84%, #000);
+  background: color-mix(in srgb, var(--phx-accent) 90%, var(--phx-surface));
 }
 
 .notif-btn:focus-visible {

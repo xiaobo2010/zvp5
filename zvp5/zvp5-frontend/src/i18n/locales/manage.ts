@@ -180,17 +180,6 @@ export const zhCN = {
       failed: '签发临时密码失败',
       verifyReason:
         '临时密码能直接登录目标账号，属于最高危操作，请输入你自己的密码确认身份。'
-    },
-    clearDevice: {
-      action: '清除主设备',
-      title: '清除主设备',
-      confirm:
-        '确定要清除 {name} 的主学海设备绑定吗？这是换机或丢失旧平板时的人工出口，清除后绑定立即解除，该用户下次登录会被要求重新绑定。',
-      confirmButton: '清除',
-      done: '已清除 {name} 的主设备绑定',
-      failed: '清除主设备失败',
-      verifyReason:
-        '清除他人主设备等同于帮对方换机，请输入你自己的密码确认这是管理员本人的操作。'
     }
   },
   upload: {

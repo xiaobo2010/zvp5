@@ -1,0 +1,48 @@
+{
+  "default": "canary",
+  "prefix": "/themes/",
+  "themes": [
+    {
+      "id": "canary",
+      "label": "Canary",
+      "description": "经典 Phi 设计：暗色棱角、青色判定线与现有导航",
+      "status": "stable",
+      "base": "/",
+      "build": { "kind": "root" }
+    },
+    {
+      "id": "canary-pro",
+      "label": "Canary Pro",
+      "description": "Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",
+      "status": "stable",
+      "base": "/themes/canary-pro/",
+      "source": {
+        "kind": "git",
+        "ref": "v5-canary-pro",
+        "path": "zvp5/zvp5-frontend-pro"
+      },
+      "build": {
+        "kind": "vite",
+        "install": ["pnpm", "install", "--no-frozen-lockfile"],
+        "command": ["pnpm", "exec", "vite", "build"]
+      }
+    },
+    {
+      "id": "canary-anthropic",
+      "label": "Canary Anthropic",
+      "description": "暖色工作台：柔和中性色、圆角面板与自适应导航",
+      "status": "experimental",
+      "base": "/themes/canary-anthropic/",
+      "source": {
+        "kind": "git",
+        "ref": "canary-anthropic",
+        "path": "zvp5/zvp5-frontend-canary"
+      },
+      "build": {
+        "kind": "vite",
+        "install": ["pnpm", "install", "--frozen-lockfile"],
+        "command": ["pnpm", "exec", "vite", "build"]
+      }
+    }
+  ]
+}

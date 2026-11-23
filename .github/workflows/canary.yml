@@ -181,12 +181,11 @@ jobs:
       - workflow-security
       - dependency-security
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: zvp5/zvp5-frontend
-    # token 存在 canary* environment 里，两个 environment 都只接受 v5-canary /
-    # v5-canary2 分支的 job：
+    # token 存在 canary* environment 里，两个 environment 都只接受 v5-canary 分支的 job：
     #   - canary      = 带 required_reviewers，部署前必须仓库所有者手动放行；
     #   - canary-auto = 不放行闸，只给 allowlist 里那个账号自己推的提交用。
     # 选择依据是 **github.actor（推送者身份）**，不是提交里的 author 字段：author 是
@@ -274,6 +273,13 @@ jobs:
             throw new Error("manifest icons must stay on the preview origin")
           }
           NODE
+      - name: Build theme apps (full branch frontends)
+        # 主题 = 整站多构建：清单 zvp5/themes/manifest.json 声明每个主题的
+        # 来源分支/目录与构建命令，构建器取 worktree 各自 install + build，
+        # 产物并入 dist/themes/<id>/ 并生成运行清单 dist/themes.json。
+        # 新增主题只改清单 + 后端 registry，不需要动本 workflow。
+        working-directory: .
+        run: node zvp5/deployment/build-theme-apps.mjs
       - name: Drop service worker from the preview bundle
         shell: bash
         run: |
@@ -336,6 +342,24 @@ jobs:
             exit 1
           }
 
+          # 主题清单、共享引导和各子应用深链接都应来自本次发布。
+          for asset in themes.json theme-switcher.js theme-switcher.css; do
+            actual="$(curl -fsS --compressed -A "$PROBE_UA" "$CANARY_URL/$asset" | sha256sum)"
+            expected="$(sha256sum < "$dist_dir/$asset")"
+            [[ "$actual" == "$expected" ]] || { echo "stale theme asset: $asset" >&2; exit 1; }
+          done
+          for base in $(node -p 'require("./zvp5/zvp5-frontend/dist/themes.json").themes.map(t => t.base).join(" ")'); do
+            # 边缘可能为 HTML 增添脚本，只比对构建产物的入口资源和主题引导引用。
+            expected_entry="$(grep -o 'src="[^" ]*/assets/[^" ]*\.js"' "$dist_dir${base}index.html" | head -n1)"
+            page="$(curl -fsS --compressed -A "$PROBE_UA" -H 'Accept: text/html' \
+              -H 'Sec-Fetch-Mode: navigate' "$CANARY_URL${base}me")"
+            if [[ -z "$expected_entry" || "$page" != *"$expected_entry"* ||
+                  "$page" != *'src="/theme-switcher.js"'* || "$page" != *'href="/theme-switcher.css"'* ]]; then
+              echo "wrong theme index at ${base}me" >&2
+              exit 1
+            fi
+          done
+
           # 预览站的 service worker 已被移除，`/sw.js` 应回落到 SPA 的 index.html；
           # 若仍返回 application/javascript，说明浏览器会跑旧的预缓存壳。
           sw_type="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{content_type}' "$CANARY_URL/sw.js" | tr -d '\r')"
@@ -354,7 +378,7 @@ jobs:
             -H "Origin: $CANARY_URL" \
             -H 'Access-Control-Request-Method: POST' \
             -H 'Access-Control-Request-Headers: authorization,content-type' \
-            "$VITE_API_BASE/users/login" || echo 000)"
+            "$VITE_API_BASE/v1/users/auth" || echo 000)"
           cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
           rm -f "$cors_hdr"
           [[ "$cors_origin" == "$CANARY_URL" ]] || {

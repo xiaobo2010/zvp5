@@ -7,7 +7,7 @@ import { getUserPositions } from '@/utils/groupPosition'
 import { clearCache } from '@/utils/idbCache'
 import { clearMemoryCache } from '@/utils/requestCache'
 import { useGroupsStore } from '@/stores/groups'
-import { readStoredTheme, setStoredTheme } from '@/utils/theme'
+import { readStoredTheme, setStoredTheme, themePath, isRootApp } from '@/utils/theme'
 
 interface UserTime {
   onCampus: number
@@ -91,13 +91,18 @@ export const useUserStore = defineStore('user', {
         await this.setUserInformation(information)
         this.shouldResetPassword = Boolean(result.weak_password)
         this.isLogin = true
-        // 登录成功后同步账号主题偏好
-        await this.syncThemeFromServer()
+        await this.applyAccountThemeAfterLogin()
       }
     },
     async refreshUser() {
       const result = (await api.user.readOne_v3(this._id)) as User
       await this.setUserInformation(result)
+    },
+    async restoreSessionProfile(oid: string, token: string) {
+      const profile = await api.user.readOne_v3(oid)
+      if (localStorage.getItem('token') !== token) return
+      await this.setUserInformation(profile)
+      this.isLogin = true
     },
     getUser() {
       return {
@@ -179,16 +184,35 @@ export const useUserStore = defineStore('user', {
       }
       return strength >= 3
     },
-    /** 立即应用主题偏好：写 DOM 属性 + 落设备缓存。 */
-    applyThemePreference(theme: string) {
+    /**
+     * 立即应用主题偏好：落设备缓存并更新 store。
+     * 主题是整站多构建，只有跳转才能真的换掉应用，所以这里只记账不跳转。
+     */
+    applyThemePreference(theme: string): string {
       this.theme = setStoredTheme(theme)
+      return this.theme
     },
-    /** 从服务器同步账号主题偏好：登录后调用，失败静默（保留本地值）。 */
-    async syncThemeFromServer() {
+    /**
+     * 完成登录时应用账号默认主题。刷新与会话恢复保留当前页面的主题和路径。
+     */
+    async applyAccountThemeAfterLogin() {
       try {
+        if (new URLSearchParams(window.location.search).has('choose-theme')) return
         const { theme } = await api.theme.getMyTheme()
-        if (theme) {
-          this.applyThemePreference(theme)
+        if (!theme) {
+          return
+        }
+        const resolved = this.applyThemePreference(theme)
+        if (typeof window === 'undefined' || !isRootApp(window.location.pathname)) {
+          return
+        }
+        if (resolved === 'canary') return
+        const response = await fetch('/themes.json', { headers: { Accept: 'application/json' } })
+        if (!response.ok) return
+        const manifest = (await response.json()) as { themes?: { id: string; base: string }[] }
+        const target = themePath(resolved)
+        if (manifest.themes?.some((item) => item.id === resolved && item.base === target)) {
+          window.location.assign(target)
         }
       } catch {
         // 同步失败不影响登录流程，保留设备缓存的主题

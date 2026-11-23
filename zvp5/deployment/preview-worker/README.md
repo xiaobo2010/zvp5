@@ -60,6 +60,28 @@ VITE_PAGE_BASE=https://canary.xiaobopisces.top/  # PWA start_url/scope 锚在预
 发布后自动冒烟：比对线上入口 chunk 与本地产物的 sha256、确认 `/sw.js` 回落到
 `text/html`（旧 service worker 不能被当成 JS 下发）、确认后端 CORS 回显预览域。
 
+## 同源多主题（`/themes/<id>/`）
+
+主题不是同一套页面换外壳，而是各自独立的完整前端构建。清单是唯一事实源：
+`zvp5/themes/manifest.json`。CI 在根 canary 构建之后跑
+`node zvp5/deployment/build-theme-apps.mjs`：按清单里每条主题的
+`source`（`git` 的 ref/path 或仓库内 `local` path）取 worktree，应用声明的
+`patch`，执行 `install` + `command`（自动追加 `--base=<base>`），产物并入
+`zvp5/zvp5-frontend/dist/themes/<id>/`，同时生成运行清单 `dist/themes.json`
+（`id/label/description/status/base`）。子应用的切换器读取这份运行清单。
+
+Worker 只对 `/themes/<slug>/...` 的 **HTML 导航请求**（`Accept` 含 `text/html`
+且末段无扩展名）改写成该子应用自己的 `index.html`，这样深链接不会落到根 canary
+的 index；静态资源仍按原路径取。Worker 里**没有**主题 id 列表——新增主题不需要
+改 Worker，只要清单里有、构建产物在 `dist/themes/<id>/`。根路径与 https 强制逻辑不变。
+
+`assets.run_worker_first` 要覆盖 `/themes/*`。否则浏览器刷新发送的
+`Sec-Fetch-Mode: navigate` 会触发 Cloudflare 的根 SPA 回落，绕过主题路由。
+发布冒烟检查会带上这个请求头，核对子应用深链接返回的入口资源。
+
+源码接入、清单示例、后端注册和上线验证见 [新主题接入指南](../../themes/README.md)。
+
+
 ## 步骤（手工应急）
 
 分支预览在仓库内的 git worktree 里构建（分支名已由 `愚人节ui` 改名 `phigros` 后又改名 `v5-canary`）：
