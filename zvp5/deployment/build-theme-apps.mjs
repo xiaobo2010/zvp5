@@ -43,6 +43,8 @@ const MAIN_DIST = path.join(REPO_ROOT, 'zvp5', 'zvp5-frontend', 'dist')
 
 /** 主题 id 的唯一定义：小写字母/数字开头，后续小写字母/数字/连字符。 */
 const THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+/** 主题引导/清单的缓存版本；改脚本或引导文案时同步递增。 */
+const SWITCHER_VERSION = '20261123'
 
 class ThemeBuildError extends Error {}
 
@@ -237,11 +239,12 @@ function finalizeApp(theme, apiBase) {
     }
     html = html.replace('</head>', `  ${meta}\n  </head>`)
   }
-  if (!html.includes('href="/theme-switcher.css"')) {
-    html = html.replace('</head>', '  <link rel="stylesheet" href="/theme-switcher.css">\n  </head>')
+  const stylesheet = `<link rel="stylesheet" href="/theme-switcher.css?v=${SWITCHER_VERSION}">`
+  if (!html.includes('theme-switcher.css')) {
+    html = html.replace('</head>', `  ${stylesheet}\n  </head>`)
   }
 
-  const script = '<script src="/theme-switcher.js" defer></script>'
+  const script = `<script src="/theme-switcher.js?v=${SWITCHER_VERSION}" defer></script>`
   if (!html.includes('theme-switcher.js')) {
     if (!html.includes('</body>')) {
       fail(`${theme.id}: index.html has no </body> to inject the theme switcher`)

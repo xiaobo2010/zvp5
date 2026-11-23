@@ -58,7 +58,10 @@
 
   async function loadThemes() {
     if (choices) return choices
-    const response = await fetch('/themes.json', { headers: { Accept: 'application/json' } })
+    const response = await fetch('/themes.json', {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store'
+    })
     if (!response.ok) throw new Error('Theme catalog unavailable')
     const manifest = await response.json()
     choices = manifest.themes.filter((item) => {

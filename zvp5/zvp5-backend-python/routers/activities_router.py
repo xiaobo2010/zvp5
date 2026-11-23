@@ -775,8 +775,15 @@ async def get_activity_members_v3(
     user=Depends(get_current_user)
 ):
     """
-    Get activity members (ULTRA FAST impl)
+    Get activity members (ULTRA FAST impl).
+
+    参与名单含全校学生的姓名、学号与时长，只对管理员/学生会开放。
+    普通学生通过活动详情只能看活动本身，不能枚举参与人。
     """
+
+    per = user.get("per") or []
+    if "admin" not in per and "department" not in per:
+        raise HTTPException(status_code=403, detail="权限不足")
 
     validate_object_id(activity_id)
 

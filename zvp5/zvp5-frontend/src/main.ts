@@ -56,6 +56,25 @@ import { applyPerfAttributes } from './utils/devicePerf'
 // 渲染模式偏好：mount 之前写 data-render-mode，避免先按精细档画一帧
 import { installRenderMode } from './utils/renderMode'
 
+// 旧生产包曾注册过 Service Worker；如果当前部署已没有 /sw.js，继续让它
+// 控制页面只会一直返回旧入口。先探测脚本，确认缺失后注销并清掉旧缓存。
+async function retireLegacyServiceWorker() {
+  if (!('serviceWorker' in navigator)) return
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    if (!registrations.length) return
+    const probe = await fetch('/sw.js', { method: 'HEAD', cache: 'no-store' })
+    if (probe.ok) return
+    await Promise.all(registrations.map((registration) => registration.unregister()))
+    if ('caches' in window) {
+      await Promise.all((await caches.keys()).map((key) => caches.delete(key)))
+    }
+  } catch {
+    // 探测/清缓存失败不阻塞页面加载。
+  }
+}
+void retireLegacyServiceWorker()
+
 const themeRedirect = themeHashRedirect(
   window.location.pathname,
   window.location.search,

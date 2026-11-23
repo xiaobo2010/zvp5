@@ -136,6 +136,20 @@ def _bind(repo, session):
     return repo
 
 
+def test_member_page_is_manager_only() -> None:
+    app = FastAPI()
+    app.include_router(activities.router, prefix=PREFIX)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": MEMBER_OIDS[0],
+        "per": ["student"],
+    }
+
+    response = TestClient(app).get(f"{PREFIX}/{ACTIVITY_ID}/members")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "权限不足"
+
+
 def test_member_page_reads_the_users_once_and_embeds_them(embed) -> None:
     client, users, members, session = embed
 
