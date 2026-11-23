@@ -1061,6 +1061,12 @@ onMounted(() => {
         <p class="yg-text-sm yg-text-tertiary">
           {{ reviewTarget?.name }} · {{ reviewTarget ? planLabel(reviewTarget) : '' }}
         </p>
+        <section class="ai-schedule__review-prompt">
+          <h3 class="ai-schedule__review-prompt-title">
+            {{ t('ai.schedule.fields.prompt') }}
+          </h3>
+          <pre class="ai-schedule__review-prompt-text">{{ reviewTarget?.prompt_text || '—' }}</pre>
+        </section>
         <ElRadioGroup v-model="reviewDecision">
           <ElRadio value="approved">{{ t('ai.schedule.reviewDialog.approve') }}</ElRadio>
           <ElRadio value="rejected">{{ t('ai.schedule.reviewDialog.reject') }}</ElRadio>
@@ -1164,6 +1170,36 @@ onMounted(() => {
   margin-top: var(--yg-space-1);
   font-size: var(--yg-font-size-xs);
   color: var(--yg-text-warning);
+}
+
+/* 审核抽屉必须让管理员先看到原提示词：只给任务名和计划，等于让人闭眼批准。 */
+.ai-schedule__review-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-3);
+  border: 1px solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.ai-schedule__review-prompt-title {
+  margin: 0;
+  font-size: var(--yg-font-size-sm);
+  font-weight: 600;
+  color: var(--yg-text-primary);
+}
+
+.ai-schedule__review-prompt-text {
+  max-height: 34vh;
+  margin: 0;
+  overflow: auto;
+  color: var(--yg-text-primary);
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-relaxed);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ai-schedule__error {
