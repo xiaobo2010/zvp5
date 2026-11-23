@@ -15,12 +15,7 @@ import { useGroupsStore } from '@/stores/groups'
 import { useHeaderStore } from '@/stores/header'
 import { modifyPasswordDialogs } from '@/views/user/modifyPasswordDialogs'
 import { listActive, type NotificationRecord } from '@/api/notifications'
-import {
-  clearMyPrimaryDevice,
-  readMyDevice,
-  setMyPrimaryDevice,
-  type MyDeviceStatus
-} from '@/api/user/device'
+import { clearMyPrimaryDevice, readMyDevice, type MyDeviceStatus } from '@/api/user/device'
 import { isTemporaryTokenCancelled, withTemporaryToken } from '@/plugins/short-token'
 import {
   primaryDeviceBanReason,
@@ -182,7 +177,6 @@ function markNoticeRead(id: string) {
 const deviceStatus = ref<MyDeviceStatus | null>(null)
 const deviceLoading = ref(false)
 const deviceFailed = ref(false)
-const deviceBinding = ref(false)
 const deviceSaving = ref(false)
 
 const deviceState = computed(() =>
@@ -212,32 +206,6 @@ async function loadDevice() {
     deviceFailed.value = true
   } finally {
     deviceLoading.value = false
-  }
-}
-
-async function bindCurrentDevice() {
-  const xuehaiId = deviceStatus.value?.xuehai_id ?? ''
-  if (!xuehaiId || deviceBinding.value) {
-    return
-  }
-  deviceBinding.value = true
-  try {
-    if (deviceStatus.value?.primary_xuehai_id) {
-      await withTemporaryToken(String(user._id), t('device.profile.verifyChangeReason'), (token) =>
-        setMyPrimaryDevice(xuehaiId, token)
-      )
-    } else {
-      await setMyPrimaryDevice(xuehaiId)
-    }
-    ElMessage.success(t('device.profile.bindSuccess'))
-    await loadDevice()
-  } catch (error) {
-    if (isTemporaryTokenCancelled(error)) {
-      return
-    }
-    ElMessage.error(primaryDeviceErrorMessage(error, t('device.profile.bindFailed')))
-  } finally {
-    deviceBinding.value = false
   }
 }
 
@@ -467,28 +435,18 @@ onMounted(async () => {
           </p>
 
           <div
-            v-if="deviceState.bound || deviceState.isXuehaiDevice"
+            v-if="deviceState.bound"
             class="profile-device-actions"
           >
             <ElButton
-              v-if="deviceState.canBind"
-              type="primary"
-              :loading="deviceBinding"
-              @click="bindCurrentDevice"
+              text
+              type="danger"
+              :disabled="!deviceState.canUnbind"
+              :loading="deviceSaving"
+              @click="unbindPrimaryDevice"
             >
-              {{ t('device.profile.bind') }}
+              {{ t('device.profile.unbind') }}
             </ElButton>
-            <template v-else-if="deviceState.bound">
-              <ElButton
-                text
-                type="danger"
-                :disabled="!deviceState.canUnbind"
-                :loading="deviceSaving"
-                @click="unbindPrimaryDevice"
-              >
-                {{ t('device.profile.unbind') }}
-              </ElButton>
-            </template>
           </div>
         </template>
       </div>
