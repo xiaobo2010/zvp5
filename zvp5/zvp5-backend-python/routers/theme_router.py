@@ -4,6 +4,8 @@
 
 * ``GET ""`` —— 登录用户读取**可选主题注册表**（:mod:`services.theme_registry`）。
   前端据此渲染主题选择器，不需要为了加主题发版后端。
+* ``GET /server-time`` —— 公开的服务器时间；Pro 的「配色跟随时间」用它选
+  阶段，不信任平板本地时钟/时区。
 * ``GET /me`` / ``PUT /me`` —— 当前账号的主题偏好，落在 ``USERS.THEME``。
   读路径对 NULL / 已下线 id 回落到默认主题（显示偏好不该让页面 500）；写路径
   严格命中注册表，未知主题 400 且**不写库**。改主题不轮换 ``session_id``：
@@ -17,11 +19,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from db import backends
 from routers.system_router import _require_system_admin
+from services.server_time import server_time_payload
 from services.theme_registry import (
     DEFAULT_THEME,
     THEMES,
@@ -47,6 +50,17 @@ class ThemeUpdateRequest(BaseModel):
 async def list_themes(user=Depends(get_current_user)):
     """可选主题列表（注册表顺序）。"""
     return {"status": "ok", "data": {"default": DEFAULT_THEME, "items": theme_items()}}
+
+
+@router.get("/server-time")
+async def read_server_time(response: Response):
+    """公开的服务器时间：给前端按服务器墙钟选择自动配色。
+
+    无鉴权是刻意的：登录页也要用同一阶段配色；响应只含时间/时区，没有账号
+    信息。实现复用 ZVAgent ``server_time`` 工具，避免两套时区口径。
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok", "data": server_time_payload()}
 
 
 @router.get("/me")

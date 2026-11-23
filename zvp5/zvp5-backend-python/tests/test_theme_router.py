@@ -95,6 +95,27 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     assert "canary-anthropic" not in paths
 
 
+def test_server_time_is_public_and_returns_theme_phase_hour(make_client) -> None:
+    """Pro 自动配色不登录也要能拿到服务器墙钟；hour 必须是 0-23。"""
+    client = make_client(_FakeUsersRepo())
+
+    response = client.get(f"{PREFIX}/server-time")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    assert data["kind"] == "server_time"
+    assert isinstance(data["now_iso"], str) and data["now_iso"]
+    assert isinstance(data["timezone"], str) and data["timezone"]
+    assert isinstance(data["epoch_seconds"], int)
+    assert isinstance(data["weekday"], str) and data["weekday"].startswith("星期")
+    assert isinstance(data["hour"], int)
+    assert 0 <= data["hour"] <= 23
+    assert " " in data["local_naive"]
+
+
 def test_get_me_falls_back_to_default_when_stored_value_is_null(make_client) -> None:
     client = make_client(_FakeUsersRepo(theme=None))
 
