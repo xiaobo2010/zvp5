@@ -60,8 +60,10 @@ function render() {
   const speed = props.warp ? 18 : 1.2
   const warpStretch = props.warp ? 8 : 1
   
-  ctx.fillStyle = 'rgba(4, 7, 13, 0.15)'
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'
+  ctx.globalCompositeOperation = 'destination-out'
   ctx.fillRect(0, 0, w, h)
+  ctx.globalCompositeOperation = 'source-over'
   
   for (const star of stars) {
     star.z -= speed
@@ -115,8 +117,7 @@ function renderStatic() {
   const cx = w / 2
   const cy = h / 2
   
-  ctx.fillStyle = 'rgba(4, 7, 13, 1)'
-  ctx.fillRect(0, 0, w, h)
+  ctx.clearRect(0, 0, w, h)
   
   for (const star of stars) {
     const sx = (star.x / star.z) * 400 + cx

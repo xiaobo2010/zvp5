@@ -34,7 +34,10 @@ function depthStyle(index: number) {
   // A rail jump can skip modules; clamp the visual offset so a card never
   // travels behind the camera (z > perspective) or explodes in projection.
   const d = Math.max(-1, Math.min(1, raw))
-  const z = -d * GAP
+  // Keep a tiny non-zero Z even for the active card so the browser serializes
+  // every state as matrix3d; mixing matrix() and matrix3d() makes the depth
+  // transition jump instead of interpolating.
+  const z = -d * GAP + 0.01
   const scale = 1 - Math.abs(d) * 0.16
   const blur = Math.abs(d) * 10
   const opacity = raw === 0 ? 1 : 0
@@ -116,12 +119,19 @@ onBeforeUnmount(() => {
 })
 
 function barDepth(index: number) {
-  return { '--bar-z': `${index * -20}px` }
+  return {
+    '--bar-z': `${index * -20}px`,
+    '--bar-tilt': `${index === 0 ? -10 : index === 2 ? 10 : 0}deg`
+  }
 }
 
 function activityDepth(index: number) {
-  const depths = [0, -40, -80, -120]
-  return { '--activity-z': `${depths[index] || 0}px` }
+  const depths = [0, -70, -140, -210]
+  const tilts = [-4, 4, -3, 3]
+  return {
+    '--activity-z': `${depths[index] || 0}px`,
+    '--activity-tilt': `${tilts[index] || 0}deg`
+  }
 }
 
 function activityTone(activity: StageActivity) {
@@ -154,11 +164,11 @@ function extraTone(item: StageExtraItem) {
       <div class="nebula nebula-1"></div>
       <div class="nebula nebula-2"></div>
       <div class="nebula nebula-3"></div>
-      <div class="vignette"></div>
       <div class="horizon-grid"></div>
     </div>
 
     <StarfieldCanvas :warp="warp" :reduced="reduced" />
+    <div class="stage-shade" aria-hidden="true"></div>
 
     <!-- 3D scene -->
     <div class="stage-scene">
@@ -271,8 +281,21 @@ function extraTone(item: StageExtraItem) {
                     <stop offset="100%" stop-color="rgb(111 215 196)" stop-opacity="0.1" />
                   </linearGradient>
                 </defs>
-                <line x1="20" y1="20" x2="80" y2="80" stroke="url(#conn-grad)" stroke-width="0.3" />
-                <line x1="80" y1="20" x2="20" y2="80" stroke="url(#conn-grad)" stroke-width="0.3" />
+                <path
+                  d="M23 18 L77 25 L70 76 L27 68 Z"
+                  fill="none"
+                  stroke="url(#conn-grad)"
+                  stroke-width="0.4"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  d="M23 18 L70 76 M77 25 L27 68"
+                  fill="none"
+                  stroke="url(#conn-grad)"
+                  stroke-width="0.3"
+                  opacity="0.45"
+                  vector-effect="non-scaling-stroke"
+                />
               </svg>
 
               <div class="activities-space">
@@ -452,11 +475,17 @@ function extraTone(item: StageExtraItem) {
   background: radial-gradient(circle, rgb(169 182 255) 0%, transparent 60%);
 }
 
-.vignette {
-  position: absolute;
+.stage-shade {
+  position: fixed;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 20%, rgb(4 7 13) 100%);
-  opacity: 0.6;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    transparent 30%,
+    rgb(4 7 13 / 0.45) 72%,
+    rgb(4 7 13 / 0.88) 100%
+  );
 }
 
 .horizon-grid {
@@ -520,11 +549,12 @@ function extraTone(item: StageExtraItem) {
 .stage-card {
   position: relative;
   margin: 0 auto;
+  box-sizing: border-box;
   padding: 48px 52px;
   background: linear-gradient(
     135deg,
-    rgb(16 24 42 / 0.75) 0%,
-    rgb(10 14 24 / 0.85) 100%
+    rgb(16 24 42 / 0.82) 0%,
+    rgb(10 14 24 / 0.9) 100%
   );
   border: 1px solid rgb(169 211 255 / 0.12);
   border-radius: 2px;
@@ -637,6 +667,7 @@ function extraTone(item: StageExtraItem) {
 }
 
 .card-content {
+  flex: 1;
   transform: translateZ(5px);
 }
 
@@ -747,16 +778,19 @@ function extraTone(item: StageExtraItem) {
 
 .hours-floor {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(169 211 255 / 0.15),
-    transparent
-  );
+  left: -10%;
+  right: -10%;
+  bottom: 26px;
+  height: 150px;
+  background-image:
+    linear-gradient(rgb(169 211 255 / 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(169 211 255 / 0.14) 1px, transparent 1px);
+  background-size: 48px 22px;
+  transform: perspective(420px) rotateX(66deg);
+  transform-origin: 50% 100%;
+  mask-image: linear-gradient(to top, #000 10%, transparent 90%);
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .hours-chart {
@@ -766,6 +800,8 @@ function extraTone(item: StageExtraItem) {
   justify-content: space-around;
   height: 100%;
   gap: 24px;
+  transform: rotateX(-16deg);
+  transform-origin: 50% 100%;
   transform-style: preserve-3d;
   perspective: 600px;
 }
@@ -776,7 +812,7 @@ function extraTone(item: StageExtraItem) {
   align-items: center;
   gap: 12px;
   flex: 1;
-  transform: translateZ(var(--bar-z, 0));
+  transform: translateZ(var(--bar-z, 0)) rotateY(var(--bar-tilt, 0deg));
   transform-style: preserve-3d;
 }
 
@@ -792,6 +828,29 @@ function extraTone(item: StageExtraItem) {
 .bar-top,
 .bar-front {
   position: absolute;
+}
+
+.hours-bar::before,
+.hours-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 30px;
+  height: 100%;
+  background: linear-gradient(90deg, rgb(60 110 170 / 0.55), rgb(20 40 70 / 0.85));
+  border: 1px solid rgb(169 211 255 / 0.12);
+}
+
+.hours-bar::before {
+  right: 0;
+  transform-origin: right center;
+  transform: rotateY(-90deg);
+}
+
+.hours-bar::after {
+  left: 0;
+  transform-origin: left center;
+  transform: rotateY(90deg);
 }
 
 .bar-back {
@@ -812,7 +871,7 @@ function extraTone(item: StageExtraItem) {
     rgb(169 211 255 / 0.04)
   );
   border: 1px solid rgb(169 211 255 / 0.1);
-  transform: rotateX(90deg);
+  transform: rotateX(-90deg);
   transform-origin: top;
 }
 
@@ -880,7 +939,12 @@ function extraTone(item: StageExtraItem) {
 /* Activities Module */
 .activities-content {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   min-height: 280px;
+  transform: perspective(900px) rotateX(-6deg) rotateY(3deg);
+  transform-style: preserve-3d;
 }
 
 .activities-connections {
@@ -889,25 +953,46 @@ function extraTone(item: StageExtraItem) {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: 0.6;
+  opacity: 0.65;
 }
 
 .activities-space {
   position: relative;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  width: 100%;
+  height: 320px;
   transform-style: preserve-3d;
 }
 
 .activity-card {
-  position: relative;
+  position: absolute;
+  width: 46%;
   padding: 16px;
-  background: rgb(16 24 42 / 0.4);
-  border: 1px solid rgb(var(--tone-rgb) / 0.15);
+  background: rgb(16 24 42 / 0.55);
+  border: 1px solid rgb(var(--tone-rgb) / 0.18);
   border-radius: 1px;
-  transform: translateZ(var(--activity-z, 0));
+  transform: translateZ(var(--activity-z, 0)) rotateY(var(--activity-tilt, 0deg));
+  transform-style: preserve-3d;
   transition: all 300ms ease-out;
+}
+
+.activity-card:nth-child(1) {
+  top: 0;
+  left: 0;
+}
+
+.activity-card:nth-child(2) {
+  top: 7%;
+  right: 0;
+}
+
+.activity-card:nth-child(3) {
+  bottom: 6%;
+  left: 4%;
+}
+
+.activity-card:nth-child(4) {
+  bottom: 0;
+  right: 2%;
 }
 
 .activity-card:hover {
@@ -957,7 +1042,10 @@ function extraTone(item: StageExtraItem) {
 
 /* Extra Module */
 .extra-content {
-  max-height: 360px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
   overflow-y: auto;
   padding-right: 8px;
 }
@@ -1204,6 +1292,7 @@ function extraTone(item: StageExtraItem) {
 
   .stage-card {
     max-height: calc(100dvh - 180px);
+    min-height: auto;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 36px 28px;
@@ -1241,7 +1330,13 @@ function extraTone(item: StageExtraItem) {
     font-size: 32px;
   }
 
+  .activities-content {
+    transform: none;
+  }
+
   .activities-space {
+    height: auto;
+    display: grid;
     grid-template-columns: 1fr;
     gap: 14px;
   }
@@ -1251,7 +1346,9 @@ function extraTone(item: StageExtraItem) {
   }
 
   .activity-card {
-    transform: translateZ(0);
+    position: static;
+    width: auto;
+    transform: none;
   }
 
   .stage-nav {
