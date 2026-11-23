@@ -27,11 +27,6 @@ export const zhCN = {
     otherDevice: '非本机',
     unboundHint: '尚未绑定主设备。绑定后只有主设备可以登录。',
     bindNonDeviceHint: '请在学海平板上打开本应用完成绑定。',
-    bind: '设为本机主设备',
-    bindSuccess: '主设备已绑定',
-    bindFailed: '绑定失败，请稍后重试',
-    verifyChangeReason:
-      '更换主设备会让旧平板立即失去登录权限，请输入密码确认这是你本人的操作。',
     unbind: '解绑主设备',
     unbindTitle: '解绑主设备？',
     unbindWarning: '解绑后账号回到未绑定状态，下次登录将被强制重新绑定。',
