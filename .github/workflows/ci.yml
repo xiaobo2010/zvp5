@@ -366,6 +366,27 @@ jobs:
           race_origin="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "$VITE_API_RACE_BASE")"
           grep -F "$race_origin" dist/index.html >/dev/null
 
+      # 生产也发整站主题：清单里的 Pro 从 v5-canary-pro 分支构建并并入
+      # frontend-dist/themes/<id>/。只构建根 canary 会让生产永远缺主题入口。
+      - name: Build theme apps (full branch frontends)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node zvp5/deployment/build-theme-apps.mjs
+          # 清单里每个非默认主题都必须真的产出了 index.html，避免构建器
+          # 静默跳过某个主题后生产仍指向一个 404 目录。
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const root = 'zvp5/zvp5-frontend/dist'
+          const manifest = JSON.parse(fs.readFileSync(path.join(root, 'themes.json'), 'utf8'))
+          for (const theme of manifest.themes) {
+            if (theme.id === manifest.default) continue
+            const entry = path.join(root, theme.base.replace(/^\//, ''), 'index.html')
+            if (!fs.existsSync(entry)) throw new Error(`missing theme entry: ${entry}`)
+          }
+          NODE
+
       - name: Package deployment artifacts
         shell: bash
         run: |

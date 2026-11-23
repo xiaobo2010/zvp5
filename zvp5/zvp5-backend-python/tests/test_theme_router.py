@@ -92,7 +92,7 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     paths = {item["id"]: item["path"] for item in body["data"]["items"]}
     assert paths["canary"] == "/"
     assert paths["canary-pro"] == "/themes/canary-pro/"
-    assert paths["canary-anthropic"] == "/themes/canary-anthropic/"
+    assert "canary-anthropic" not in paths
 
 
 def test_get_me_falls_back_to_default_when_stored_value_is_null(make_client) -> None:
@@ -187,7 +187,6 @@ def test_stats_reports_counts_percent_and_other(
     assert [item["id"] for item in data["items"]] == [
         "canary",
         "canary-pro",
-        "canary-anthropic",
     ]
     by_id = {item["id"]: item for item in data["items"]}
     assert by_id["canary"] == {
