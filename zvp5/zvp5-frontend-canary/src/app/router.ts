@@ -9,6 +9,11 @@ declare module 'vue-router' {
     public?: boolean
     titleKey?: string
     roles?: UserRole[]
+    /**
+     * 后端策略开关（``FeaturePolicy.features``）。角色不匹配时再看这一项，
+     * 让 ``notify.publish`` / ``logs.read`` 这类下放权限不必伪造角色。
+     */
+    feature?: string
   }
 }
 
@@ -90,13 +95,24 @@ const routes: RouteRecordRaw[] = [
         path: 'manage/notifications',
         name: 'manage-notifications',
         component: () => import('@/pages/manage/NotifyPage.vue'),
-        meta: { titleKey: 'manage.notify.title' }
+        // 侧栏按 admin / can('notify.publish') 显示；路由守卫必须同口径，
+        // 否则普通学生直接敲 URL 就能打开发布页（后端会 403，但页面本身
+        // 仍会请求管理接口并暴露表单）。
+        meta: {
+          titleKey: 'manage.notify.title',
+          roles: ['admin'],
+          feature: 'notify.publish'
+        }
       },
       {
         path: 'manage/logs',
         name: 'manage-logs',
         component: () => import('@/pages/manage/LogsPage.vue'),
-        meta: { titleKey: 'manage.logs.title' }
+        meta: {
+          titleKey: 'manage.logs.title',
+          roles: ['admin'],
+          feature: 'logs.read'
+        }
       },
       {
         path: 'server/:section?',
@@ -130,7 +146,7 @@ export const router = createRouter({
   }
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const session = useSessionStore()
   const ui = useUiStore()
 
@@ -146,7 +162,15 @@ router.beforeEach((to) => {
     return { name: 'login', query: { redirect } }
   }
 
-  if (to.meta.roles && !to.meta.roles.some((role) => session.roles.includes(role))) {
+  const roleAllowed =
+    !to.meta.roles || to.meta.roles.some((role) => session.roles.includes(role))
+  if (!roleAllowed) {
+    // 深链接进来时 bootstrap 可能还在拉 feature policy；先补一次再判定，
+    // 否则被管理员下放过 notify.publish / logs.read 的角色会闪回首页。
+    if (typeof to.meta.feature === 'string') {
+      if (!session.policy) await session.loadPolicy()
+      if (session.can(to.meta.feature)) return true
+    }
     ui.notify(i18n.global.t('notFound.desc'), 'danger')
     return { name: 'home' }
   }

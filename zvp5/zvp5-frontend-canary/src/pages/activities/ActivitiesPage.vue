@@ -16,8 +16,13 @@ import ZAlert from '@/shared/ui/ZAlert.vue'
 import ZIcon from '@/shared/ui/ZIcon.vue'
 import AdaptivePagination from '@/shared/ui/pagination/AdaptivePagination.vue'
 import { useAdaptivePagination } from '@/shared/composables/useAdaptivePagination'
+import { useSessionStore } from '@/shared/stores/session'
 
 const { t } = useI18n()
+const session = useSessionStore()
+// 普通用户看不到审核工作台的数据，后端也会把 status 强制成 effective；
+// 界面上没必要再给出 pending/refused 两个永远读不到数据的分支。
+const canReview = computed(() => session.isManager)
 
 const type = ref('all')
 const status = ref('all')
@@ -60,12 +65,19 @@ const typeOptions = computed(() => [
   { value: 'social-practice', label: t('activities.type.social-practice') }
 ])
 
-const statusOptions = computed(() => [
-  { value: 'all', label: t('common.all') },
-  { value: 'effective', label: t('activities.status.effective') },
-  { value: 'pending', label: t('activities.status.pending') },
-  { value: 'refused', label: t('activities.status.refused') }
-])
+const statusOptions = computed(() => {
+  const options = [
+    { value: 'all', label: t('common.all') },
+    { value: 'effective', label: t('activities.status.effective') }
+  ]
+  if (canReview.value) {
+    options.push(
+      { value: 'pending', label: t('activities.status.pending') },
+      { value: 'refused', label: t('activities.status.refused') }
+    )
+  }
+  return options
+})
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' {
   if (status === 'effective') return 'success'
