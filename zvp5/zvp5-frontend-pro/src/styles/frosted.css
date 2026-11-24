@@ -1,6 +1,8 @@
-/* Plain gradient action buttons. No glass, no backdrop blur, no grain and no
-   highlight/sheen overlays: neutral controls use a white-to-slate gradient,
-   primary controls keep the blue semantic, and danger controls keep red. */
+/* Gradient frosted action buttons in four semantic colours.
+   Each variant is a self-contained gradient (grain + radial sheen + colour
+   ramp) with a glass rim and soft shadow. No backdrop-filter: tablet Gecko can
+   drop the whole compositing layer under a transformed parent, so the frosted
+   material has to read without sampling the page behind it. */
 
 .glass-button,
 .liquid-btn,
@@ -22,59 +24,72 @@
 .user-page__back,
 .site-nav__handle,
 .site-nav__drawer-close,
-.site-nav__drawer-link,
-.scope-tab,
-.animated-tabs,
 .appearance__retry,
 .hours-refresh-btn,
 .notice-head,
 .group-member__button,
-.role-card__link {
-  background: linear-gradient(180deg, #ffffff 0%, #eef3f9 100%) !important;
-  border: 1px solid #c9d6e4 !important;
-  box-shadow: 0 1px 2px rgb(20 40 60 / 0.08) !important;
-  color: var(--color-text-primary);
+.role-card__link,
+.state-panel__action,
+.identity-card__action,
+.prompt-detail__retry,
+.prompt-detail__close,
+.prompt-detail__done {
+  background: var(--frosted-neutral-bg) !important;
+  background-size: var(--frosted-size) !important;
+  background-repeat: var(--frosted-repeat) !important;
+  border: 1px solid var(--frosted-neutral-border) !important;
+  box-shadow: var(--frosted-neutral-shadow) !important;
+  color: var(--color-text-primary) !important;
   text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
+/* Blue: the main action of a view. */
 .liquid-btn--primary,
 .form-button--primary,
 .primary-button,
 .primary-action,
 .submit-button {
-  background: linear-gradient(180deg, #2f8ef4 0%, #0071e3 58%, #0064cd 100%) !important;
-  border: 1px solid #0060c4 !important;
-  box-shadow: 0 1px 2px rgb(0 60 130 / 0.22) !important;
+  background: var(--frosted-primary-bg) !important;
+  background-size: var(--frosted-size) !important;
+  background-repeat: var(--frosted-repeat) !important;
+  border: 1px solid var(--frosted-primary-border) !important;
+  box-shadow: var(--frosted-primary-shadow) !important;
   color: #ffffff !important;
-  text-shadow: none;
+  text-shadow: 0 1px 1px rgb(0 42 92 / 0.22);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
+/* Red: destructive confirmation. */
 .liquid-btn--danger,
 .danger-button--solid {
-  background: linear-gradient(180deg, #f4675c 0%, #dc2626 58%, #c81e1e 100%) !important;
-  border: 1px solid #c81e1e !important;
-  box-shadow: 0 1px 2px rgb(140 20 20 / 0.22) !important;
+  background: var(--frosted-danger-bg) !important;
+  background-size: var(--frosted-size) !important;
+  background-repeat: var(--frosted-repeat) !important;
+  border: 1px solid var(--frosted-danger-border) !important;
+  box-shadow: var(--frosted-danger-shadow) !important;
   color: #ffffff !important;
-  text-shadow: none;
+  text-shadow: 0 1px 1px rgb(90 8 8 / 0.24);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
+/* Rose: the softer destructive treatment (delete account, disable, etc.). */
 .danger-button {
-  background: linear-gradient(180deg, #fff7f6 0%, #ffe3df 100%) !important;
-  border: 1px solid #f0b8b1 !important;
-  box-shadow: 0 1px 2px rgb(160 40 40 / 0.08) !important;
+  background: var(--frosted-rose-bg) !important;
+  background-size: var(--frosted-size) !important;
+  background-repeat: var(--frosted-repeat) !important;
+  border: 1px solid var(--frosted-rose-border) !important;
+  box-shadow: var(--frosted-rose-shadow) !important;
   color: #b42318 !important;
   text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
-/* Hover/active only change brightness; no lift or glass sheen. */
+/* Hover keeps the material, only lifting the rim and brightness a little. */
 .glass-button:hover:not(:disabled),
 .liquid-btn:hover:not(:disabled),
 .liquid-btn--secondary:hover:not(:disabled),
@@ -93,30 +108,49 @@
 .register-page__back:hover,
 .server__back:hover,
 .user-page__back:hover,
+.site-nav__handle:hover,
 .site-nav__drawer-close:hover,
-.site-nav__drawer-link:hover,
-.scope-tab:hover,
 .appearance__retry:hover:not(:disabled),
 .hours-refresh-btn:hover:not(:disabled),
 .notice-head:hover,
 .group-member__button:hover,
-.role-card__link:hover {
-  filter: brightness(1.025);
+.role-card__link:hover,
+.state-panel__action:hover,
+.identity-card__action:hover,
+.prompt-detail__retry:hover:not(:disabled),
+.prompt-detail__close:hover:not(:disabled),
+.prompt-detail__done:hover:not(:disabled) {
+  filter: brightness(1.035) saturate(1.04);
+  box-shadow: var(--frosted-shadow-hover) !important;
 }
 
 .liquid-btn--primary:hover:not(:disabled),
 .form-button--primary:hover:not(:disabled),
 .primary-button:hover:not(:disabled),
 .primary-action:hover:not(:disabled),
-.submit-button:hover:not(:disabled),
-.liquid-btn--danger:hover:not(:disabled),
-.danger-button--solid:hover:not(:disabled) {
-  filter: brightness(1.06);
+.submit-button:hover:not(:disabled) {
+  filter: brightness(1.07) saturate(1.05);
+  box-shadow: var(--frosted-primary-shadow-hover) !important;
 }
 
+.liquid-btn--danger:hover:not(:disabled),
+.danger-button--solid:hover:not(:disabled) {
+  filter: brightness(1.06) saturate(1.04);
+  box-shadow: var(--frosted-danger-shadow-hover) !important;
+}
+
+.danger-button:hover:not(:disabled) {
+  filter: brightness(1.025);
+}
+
+/* Press: no transform here; touch feedback already owns the independent
+   `scale` property, and the nav handle owns `translateY(-50%)`. */
 .glass-button:active:not(:disabled),
 .liquid-btn:active:not(:disabled),
+.liquid-btn--primary:active:not(:disabled),
+.liquid-btn--danger:active:not(:disabled),
 .form-button:active:not(:disabled),
+.form-button--primary:active:not(:disabled),
 .ghost-button:active:not(:disabled),
 .glass-action:active:not(:disabled),
 .detail-button:active:not(:disabled),
@@ -125,19 +159,27 @@
 .hours-refresh-btn:active:not(:disabled),
 .notice-head:active:not(:disabled),
 .group-member__button:active:not(:disabled),
-.role-card__link:active:not(:disabled) {
-  filter: brightness(0.96);
+.role-card__link:active:not(:disabled),
+.primary-button:active:not(:disabled),
+.primary-action:active:not(:disabled),
+.submit-button:active:not(:disabled),
+.danger-button:active:not(:disabled),
+.danger-button--solid:active:not(:disabled),
+.prompt-detail__retry:active:not(:disabled),
+.prompt-detail__close:active:not(:disabled),
+.prompt-detail__done:active:not(:disabled) {
+  filter: brightness(0.955) saturate(1.02);
 }
 
-/* Active filter chips keep their brand outline/text. */
+/* Active filter chips keep their brand outline/text on neutral frosted. */
 .ghost-button.is-active,
 .ghost-button--small.is-active {
   border-color: var(--color-brand) !important;
   color: var(--color-brand) !important;
-  box-shadow: 0 0 0 1px rgb(0 113 227 / 0.12) !important;
+  box-shadow: var(--frosted-neutral-shadow), 0 0 0 1px rgb(0 113 227 / 0.14) !important;
 }
 
-/* The active scope tab stays transparent so its sliding indicator remains visible. */
+/* Segmented tabs keep the sliding indicator visible. */
 .scope-tab.is-active,
 .scope-tab.is-active:hover {
   background: transparent !important;
@@ -153,7 +195,7 @@
   border-color: var(--accent-ink) !important;
 }
 
-/* Disabled controls: flat gray gradient, no glass. */
+/* Disabled controls: flat gray, no grain or colour ramp. */
 .glass-button:disabled,
 .liquid-btn:disabled,
 .form-button:disabled,
@@ -163,19 +205,23 @@
 .back-btn:disabled,
 .site-nav__handle:disabled,
 .site-nav__drawer-close:disabled,
-.scope-tab:disabled,
 .primary-button:disabled,
 .primary-action:disabled,
 .submit-button:disabled,
 .danger-button:disabled,
+.danger-button--solid:disabled,
 .appearance__retry:disabled,
-.hours-refresh-btn:disabled {
+.hours-refresh-btn:disabled,
+.prompt-detail__retry:disabled,
+.prompt-detail__done:disabled {
   background: linear-gradient(180deg, #f7f9fb 0%, #e9eef4 100%) !important;
+  background-size: auto !important;
   border-color: #d5dee8 !important;
   color: #8a97a6 !important;
   box-shadow: none !important;
   opacity: 0.75 !important;
   filter: none;
+  text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
@@ -224,7 +270,8 @@
   .primary-button,
   .primary-action,
   .submit-button,
-  .danger-button {
+  .danger-button,
+  .danger-button--solid {
     transition: none;
   }
 }
