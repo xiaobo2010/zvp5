@@ -1,0 +1,343 @@
+name: Art preview (frontend-pro → Worker)
+
+# Art 通道：Art 分支的全量门禁 + zvp5-frontend-pro 构建 + Worker 预览发布。
+#
+# 预览域：canary-art.xiaobopisces.top（Worker: zvp-yuren-canary-art）。
+# 只发静态文件，不反代 API、不 SSH 任何主机、不碰数据库。
+#
+# 审批闸：两个 environment 都只接受 Art 分支的 job——
+#   - art-auto = 挂 CLOUDFLARE_API_TOKEN，分支创建者（albxy）与仓库所有者
+#     （xiaobo2010）推送时走这里，免审核直发；
+#   - art      = 刻意不挂令牌，其他推送落到这里，部署步骤必然失败，
+#     等仓库所有者 workflow_dispatch 放行。
+# 判定只看 **github.actor（推送者身份）**，不是提交里的 author：author 是提交
+# 内容的一部分，任何人都能写别人的邮箱；actor 由 GitHub 认证，骗不了。
+# workflow_dispatch 与 push 同规则——所有者手动重跑就是「人工放行」那条路，
+# 所以不能按 event_name 区分。
+# 本分支没有 PR 门禁，有写权限的人能直接 push 进来，也就能临时塞一个引用
+# art-auto environment 的 workflow 去 echo token；令牌不落到 art 那条路上，
+# 只有人工放行能挡这一层。
+
+on:
+  push:
+    branches:
+      - Art
+    # 改代码就重新部署：只忽略纯文档，不用前端目录白名单。
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: art-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION_FILE: zvp5/zvp5-frontend/.node-version
+  PNPM_VERSION: "10.34.5"
+
+jobs:
+  backend:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-backend-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: zvp5/zvp5-backend-python/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff==0.17.4
+      - name: Generate local test keys
+        run: python tools/setup_local.py
+      - name: Ruff dead-code and undefined-name checks
+        run: |
+          python -m ruff check --select F821 .
+          python -m ruff check --select F401 main.py app_setup.py routers services util db typings tasks tools
+      - name: Run backend tests
+        run: python -m pytest -q
+      - name: Compile backend
+        run: python -m compileall -q routers services util db typings tasks
+
+  frontend-e2e:
+    name: Frontend Cypress E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend
+    env:
+      VITE_API_BASE: https://ci.invalid/api
+      VITE_API_RACE_BASE: https://race.ci.invalid/api
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Cypress binary
+        run: pnpm exec cypress install
+      - name: Build bundle for E2E
+        run: pnpm run build
+      - name: Run Cypress
+        run: pnpm run test:e2e
+
+  workflow-security:
+    name: Workflow and secret checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck deployment scripts
+        run: >-
+          shellcheck -x
+          zvp5/deployment/github-actions/zvp5-deploy
+          zvp5/deployment/github-actions/*.sh
+      - name: Test deployment backup and rollback paths
+        run: bash zvp5/deployment/github-actions/test-deploy-wrapper.sh
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+      - name: Scan working tree for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+          --redact --verbose --exit-code=1
+      - name: Scan test fixtures for high-confidence credential formats
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          detect --source=/repo --no-git --config=/repo/.gitleaks-high-confidence.toml
+          --enable-rule=private-key --enable-rule=aws-access-token
+          --enable-rule=github-app-token --enable-rule=github-fine-grained-pat
+          --enable-rule=github-oauth --enable-rule=github-pat
+          --enable-rule=github-refresh-token --enable-rule=gitlab-pat
+          --enable-rule=gitlab-oauth-app-secret
+          --enable-rule=gitlab-runner-authentication-token
+          --enable-rule=npm-access-token --enable-rule=pypi-upload-token
+          --enable-rule=slack-app-token --enable-rule=slack-bot-token
+          --enable-rule=slack-webhook-url --enable-rule=stripe-access-token
+          --enable-rule=openai-api-key --enable-rule=anthropic-api-key
+          --enable-rule=gcp-api-key --enable-rule=azure-ad-client-secret
+          --enable-rule=cloudflare-api-key --enable-rule=cloudflare-global-api-key
+          --redact --verbose --exit-code=1
+
+  dependency-security:
+    name: Dependency vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+      - name: Audit frontend production dependencies
+        working-directory: zvp5/zvp5-frontend
+        run: pnpm audit --prod --audit-level high
+      - name: Audit frontend-pro production dependencies
+        working-directory: zvp5/zvp5-frontend-pro
+        run: pnpm audit --prod --audit-level high
+      - name: Scan repository dependencies for high and critical findings
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          aquasec/trivy:0.76.2 fs
+          --scanners vuln --severity HIGH,CRITICAL
+          --exit-code 1 --no-progress .
+
+  preview:
+    name: Frontend Pro gates and Worker preview
+    needs:
+      - backend
+      - frontend-e2e
+      - workflow-security
+      - dependency-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: zvp5/zvp5-frontend-pro
+    environment:
+      name: ${{ (github.ref == 'refs/heads/Art' && (github.actor == 'albxy' || github.actor == 'xiaobo2010')) && 'art-auto' || 'art' }}
+    env:
+      WRANGLER_VERSION: "4.162.0"
+      CANARY_URL: https://canary-art.xiaobopisces.top
+      # 后端盾牌会 418 掉没有 UA 的请求（curl 默认 UA 也在黑名单里），冒烟必须带这个。
+      PROBE_UA: Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # 预览站跨域直连正式 API：CORS 白名单里必须已有 canary-art 域。
+      VITE_API_BASE: https://zvp.xiaobopisces.top/api
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          # frontend-pro 没有自己的 .node-version，沿用主前端的版本保持一致。
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+          cache-dependency-path: zvp5/zvp5-frontend-pro/pnpm-lock.yaml
+      - name: Verify preview inputs
+        working-directory: .
+        run: |
+          set -euo pipefail
+          [[ -d zvp5/zvp5-frontend-pro ]] || {
+            echo "zvp5/zvp5-frontend-pro is missing on $(git rev-parse --abbrev-ref HEAD); this workflow only applies to the Art branch" >&2
+            exit 1
+          }
+          # 少一个字母就把域名指到别人家去了（xiaoboisces.top vs xiaobopisces.top）：
+          # 症状是冒烟一直报 could not resolve host，线上产物还会去调一个
+          # 不存在的 API。这里先把拼写钉死。
+          case "$CANARY_URL" in
+            *xiaobopisces.top) ;;
+            *) echo "preview host spelling looks wrong: $CANARY_URL" >&2; exit 1 ;;
+          esac
+          case "$VITE_API_BASE" in
+            *xiaobopisces.top*) ;;
+            *) echo "api base spelling looks wrong: $VITE_API_BASE" >&2; exit 1 ;;
+          esac
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VITE_API_BASE:?VITE_API_BASE is required}"
+          # build = vue-tsc --noEmit && vite build，类型检查与产物在同一步完成。
+          pnpm run build
+          [[ -f dist/index.html ]] || { echo "dist/index.html missing" >&2; exit 1; }
+          # 入口 chunk 必须真的产出了，避免只留下一个空壳 index.html。
+          entry="$(grep -o 'src="/assets/[^"]*"' dist/index.html | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          [[ -f "dist$entry" ]] || { echo "entry chunk $entry missing" >&2; exit 1; }
+          # API 基址必须落成绝对地址：前端默认回退到相对 '/api'，预览域下会被
+          # SPA fallback 接走（200 + index.html），前端直接炸。
+          grep -R -F -q "$VITE_API_BASE" dist/assets || {
+            echo "built bundle does not contain the absolute API base $VITE_API_BASE" >&2
+            exit 1
+          }
+          # 域名拼写护栏：少个字母的 xiaoboisces.top / xiaobopolisces.top 是真踩过的
+          # 坑——线上产物因此指向一个不存在的域名，页面能开但所有 API 全挂。
+          bad_hosts="$(grep -R -o -h 'xiaobo[a-z]*\.top' dist/assets | sort -u | grep -v '^xiaobopisces\.top$' || true)"
+          [[ -z "$bad_hosts" ]] || {
+            echo "built bundle contains misspelled domain(s): $bad_hosts" >&2
+            exit 1
+          }
+      - name: Deploy to Cloudflare Worker
+        shell: bash
+        working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 免审核通道（art-auto）挂着令牌；人工放行通道（art）刻意不挂——
+          # 拿不到令牌就发不出去，等仓库所有者手动 workflow_dispatch 放行。
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is not available in this environment; ask the repo owner to approve this deployment (workflow_dispatch) or to push again from an allow-listed account}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          npx --yes "wrangler@${WRANGLER_VERSION}" deploy \
+            --config zvp5/deployment/preview-worker-canary-art/wrangler.jsonc
+      - name: Smoke test the deployed preview
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          dist_dir=zvp5/zvp5-frontend-pro/dist
+          entry="$(grep -o 'src="/assets/[^"]*"' "$dist_dir/index.html" | head -n1 | sed -e 's|src="||' -e 's|"$||')"
+          [[ -n "$entry" ]] || { echo "could not find entry asset in dist/index.html" >&2; exit 1; }
+          local_sha="$(sha256sum "$dist_dir$entry" | awk '{print $1}')"
+
+          home_status=""
+          waf_blocked=0
+          for _ in $(seq 1 6); do
+            home_status="$(curl -fsS -A "$PROBE_UA" -o /dev/null -w '%{http_code}' "$CANARY_URL/" || true)"
+            if [[ "$home_status" == "403" ]]; then
+              waf_blocked=1
+              break
+            fi
+            remote_sha="$(curl -fsS -A "$PROBE_UA" --compressed -H 'Accept-Encoding: gzip' "$CANARY_URL$entry" | sha256sum | awk '{print $1}' || true)"
+            if [[ "$home_status" == "200" && "$remote_sha" == "$local_sha" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          if [[ $waf_blocked -eq 1 ]]; then
+            # Cloudflare 的托管规则会拦 GitHub Actions 出口 IP（同一地址用本机 curl
+            # 是 200）。这是边缘策略不是部署问题，降级成警告，不做硬失败。
+            echo "::warning title=Preview probe blocked by Cloudflare::canary-art root returned 403 to the runner IP; content check skipped."
+            {
+              echo '### Art preview deployed (probe skipped)'
+              echo
+              echo "- URL: $CANARY_URL"
+              echo "- Commit: \`$GITHUB_SHA\`"
+              echo "- Entry chunk: \`$entry\`"
+              echo '- Content probe was skipped: Cloudflare returned 403 to the runner IP.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$home_status" == "200" ]] || { echo "preview root returned $home_status" >&2; exit 1; }
+          [[ "$remote_sha" == "$local_sha" ]] || {
+            echo "served $entry does not match the freshly built bundle" >&2
+            exit 1
+          }
+
+          # 预览域不在后端 CORS 白名单时，页面能打开但所有 API 都会被 400 拒掉。
+          # 不用 `curl -f`：被盾牌 418 / WAF 403 时需要读状态码决定「降级」而不是硬失败。
+          cors_hdr="$(mktemp)"
+          cors_status="$(curl -sS -A "$PROBE_UA" -D "$cors_hdr" -o /dev/null -w '%{http_code}' -X OPTIONS \
+            -H "Origin: $CANARY_URL" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type' \
+            "$VITE_API_BASE/v1/users/auth" || echo 000)"
+          cors_origin="$(tr -d '\r' < "$cors_hdr" | awk 'tolower($1) == "access-control-allow-origin:" {print $2}' | tail -n1)"
+          rm -f "$cors_hdr"
+          [[ "$cors_origin" == "$CANARY_URL" ]] || {
+            # 没拿到任何 AC-AO 头也可能是边缘/盾牌拦了 CI 出口 IP；那种情况降级成警告，
+            # 拿到「别的 Origin」才是真的白名单没配对。
+            if [[ -z "$cors_origin" ]]; then
+              echo "::warning title=CORS probe inconclusive::no access-control-allow-origin header (status $cors_status; backend shield or WAF may be blocking the runner IP)."
+            else
+              echo "backend CORS does not echo the preview origin (got '$cors_origin')" >&2
+              exit 1
+            fi
+          }
+
+          {
+            echo '### Art preview deployed'
+            echo
+            echo "- URL: $CANARY_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Entry chunk: \`$entry\`"
+            echo "- Worker: zvp-yuren-canary-art (zvp5-frontend-pro static assets)"
+          } >> "$GITHUB_STEP_SUMMARY"

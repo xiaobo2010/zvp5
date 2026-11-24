@@ -8,6 +8,7 @@
 | 分支 | wrapper | 预览域 | Worker |
 | --- | --- | --- | --- |
 | `canary-anthropic` | `.github/workflows/canary-anthropic.yml` | `canary-claude.xiaobopisces.top` | `zvp-yuren-canary-claude` |
+| `Art` | `.github/workflows/art-preview.yml` | `canary-art.xiaobopisces.top` | `zvp-yuren-canary-art` |
 | `v5-canary` / `v5-canary-pro` / `v5-canary2` | 老通道，暂未迁移 | `canary` / `canary-pro` / `canary2` | 各自独立 |
 
 ## 1. 新分支上放一个 wrapper
