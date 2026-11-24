@@ -77,8 +77,9 @@ const gyroSupported = ref(false)
 const gyroState = ref<'unsupported' | 'prompt' | 'active' | 'denied'>('unsupported')
 const gyroError = ref('')
 let gyroListening = false
-let gyroBaselineBeta: number | null = null
-let gyroBaselineGamma: number | null = null
+let gyroBaselinePitch: number | null = null
+let gyroBaselineRoll: number | null = null
+let screenOrientationAngle = 0
 
 const VOLUNTEER_PAGE_SIZE = 8
 const volunteerItems = ref<StageActivity[]>([])
@@ -551,45 +552,135 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+function normalizeAngleDiff(a: number, b: number): number {
+  let diff = a - b
+  while (diff > 180) diff -= 360
+  while (diff < -180) diff += 360
+  return diff
+}
+
+function computeScreenOrientedAngles(
+  alpha: number,
+  beta: number,
+  gamma: number,
+  screenAngle: number
+): { pitch: number; roll: number } {
+  // Build device→world rotation matrix: R = Rz(α) · Rx(β) · Ry(γ)
+  const a = (alpha * Math.PI) / 180
+  const b = (beta * Math.PI) / 180
+  const g = (gamma * Math.PI) / 180
+
+  const ca = Math.cos(a), sa = Math.sin(a)
+  const cb = Math.cos(b), sb = Math.sin(b)
+  const cg = Math.cos(g), sg = Math.sin(g)
+
+  const r11 = ca * cg - sa * sb * sg
+  const r12 = -sa * cb
+  const r13 = ca * sg + sa * sb * cg
+  const r21 = sa * cg + ca * sb * sg
+  const r22 = ca * cb
+  const r23 = sa * sg - ca * sb * cg
+  const r31 = -cb * sg
+  const r32 = sb
+  const r33 = cb * cg
+
+  // Screen axes in the device frame. `screen.orientation.angle` is the
+  // clockwise rotation of the document inside the device, so the content's
+  // right/up axes are rotated by -angle in device coordinates:
+  //   sr_dev = (c, -s, 0), su_dev = (s, c, 0), normal = device z (0, 0, 1)
+  const theta = (screenAngle * Math.PI) / 180
+  const c = Math.cos(theta), s = Math.sin(theta)
+
+  const srWorldZ = r31 * c + r32 * -s
+  const suWorldZ = r31 * s + r32 * c
+
+  // Pitch: elevation of the screen normal above the horizon. Device roll
+  // rotates around the normal, so it cannot leak into this value.
+  const pitch = Math.asin(clampNumber(r33, -1, 1))
+
+  // Roll: signed in-plane rotation of world-up around the viewing axis.
+  // atan2 is scale invariant, so pitch does not leak into this value either.
+  // Positive roll = the content's right edge points up (device rolled CCW).
+  const roll = Math.atan2(srWorldZ, suWorldZ)
+
+  return {
+    pitch: (pitch * 180) / Math.PI,
+    roll: (roll * 180) / Math.PI
+  }
+}
+
 function onDeviceOrientation(event: DeviceOrientationEvent) {
   if (!gyroSupported.value) return
-  if (event.gamma === null && event.beta === null) return
+  if (event.alpha === null || event.beta === null || event.gamma === null) return
   gyroState.value = 'active'
 
-  // Set baseline on first read
-  if (gyroBaselineBeta === null && event.beta !== null) {
-    gyroBaselineBeta = event.beta
-  }
-  if (gyroBaselineGamma === null && event.gamma !== null) {
-    gyroBaselineGamma = event.gamma
-  }
+  const angles = computeScreenOrientedAngles(
+    event.alpha,
+    event.beta,
+    event.gamma,
+    screenOrientationAngle
+  )
 
-  // Calculate deltas from baseline (pitch and roll changes)
-  const betaDelta = gyroBaselineBeta !== null && event.beta !== null
-    ? event.beta - gyroBaselineBeta
-    : 0
-  const gammaDelta = gyroBaselineGamma !== null && event.gamma !== null
-    ? event.gamma - gyroBaselineGamma
-    : 0
+  // Set baseline on first read or recalibration
+  if (gyroBaselinePitch === null) gyroBaselinePitch = angles.pitch
+  if (gyroBaselineRoll === null) gyroBaselineRoll = angles.roll
 
-  // Clamp deltas: beta (pitch) ±25°, gamma (roll) ±35°
-  const clampedBeta = clampNumber(betaDelta, -25, 25)
-  const clampedGamma = clampNumber(gammaDelta, -35, 35)
+  // Compute deltas (normalized for ±180 wrap)
+  const pitchDelta = normalizeAngleDiff(angles.pitch, gyroBaselinePitch)
+  const rollDelta = normalizeAngleDiff(angles.roll, gyroBaselineRoll)
+
+  // Keep the movement subtle: the screen is only a window onto the scene.
+  const clampedPitch = clampNumber(pitchDelta * 0.55, -9, 9)
+  const clampedRoll = clampNumber(rollDelta * 0.65, -9, 9)
 
   const root = stageRoot.value
   if (!root) return
 
-  // Beta (pitch) → rotateX: tablet forward → card bottom away from viewer
-  root.style.setProperty('--gyro-x', `${(clampedBeta * 1.2).toFixed(2)}deg`)
-
-  // Gamma (roll) → rotateZ anti-roll: tablet left → card rotates right (use negative)
-  root.style.setProperty('--gyro-z', `${(-clampedGamma * 1).toFixed(2)}deg`)
+  // The content counter-rotates against the device so the cards read as
+  // world-upright: a forward pitch (top edge away) pulls the card bottom
+  // inward, and a device roll is cancelled by an equal on-screen roll.
+  root.style.setProperty('--gyro-x', `${(-clampedPitch).toFixed(2)}deg`)
+  root.style.setProperty('--gyro-z', `${clampedRoll.toFixed(2)}deg`)
 }
 
 function startGyroListener() {
   if (gyroListening) return
   gyroListening = true
+  
+  // Update screen orientation angle
+  updateScreenOrientation()
+  
   window.addEventListener('deviceorientation', onDeviceOrientation)
+  
+  // Track orientation changes (modern API and fallback)
+  if (screen.orientation) {
+    screen.orientation.addEventListener('change', onOrientationChange)
+  } else {
+    window.addEventListener('orientationchange', onOrientationChange)
+  }
+}
+
+function updateScreenOrientation() {
+  if (screen.orientation && screen.orientation.angle !== undefined) {
+    screenOrientationAngle = screen.orientation.angle
+  } else if (window.orientation !== undefined) {
+    screenOrientationAngle = window.orientation
+  } else {
+    screenOrientationAngle = 0
+  }
+}
+
+function onOrientationChange() {
+  updateScreenOrientation()
+  // Reset baseline to recalibrate and clear current angles
+  gyroBaselinePitch = null
+  gyroBaselineRoll = null
+  
+  const root = stageRoot.value
+  if (root) {
+    root.style.setProperty('--gyro-x', '0deg')
+    root.style.setProperty('--gyro-z', '0deg')
+  }
 }
 
 async function enableGyro() {
@@ -631,6 +722,36 @@ function setupGyro() {
   }
   startGyroListener()
   gyroState.value = 'active'
+}
+
+function resetViewport() {
+  const root = stageRoot.value
+  if (!root) return
+
+  // Reset gyro baseline (recapture current orientation as neutral)
+  gyroBaselinePitch = null
+  gyroBaselineRoll = null
+
+  // Instantly reset all CSS variables (no transition animation)
+  root.style.setProperty('--gyro-x', '0deg')
+  root.style.setProperty('--gyro-z', '0deg')
+  root.style.setProperty('--pointer-x', '0deg')
+  root.style.setProperty('--pointer-y', '0deg')
+
+  // Reset pointer tracking
+  targetX = 0
+  targetY = 0
+  currentX = 0
+  currentY = 0
+
+  // Reset zoom
+  sceneScale.value = 1
+
+  // Show feedback
+  actionMessage.value = '视角已复位'
+  setTimeout(() => {
+    actionMessage.value = ''
+  }, 2200)
 }
 
 function isSideZone(x: number): boolean {
@@ -1562,6 +1683,13 @@ function extraTone(item: StageExtraItem) {
 
     <div v-if="gyroSupported" class="gyro-hud">
       <button
+        type="button"
+        class="gyro-reset"
+        @click="resetViewport"
+        aria-label="复位视角"
+        title="复位视角"
+      >复位</button>
+      <button
         v-if="gyroState === 'prompt' || gyroState === 'denied'"
         type="button"
         class="gyro-toggle"
@@ -1804,9 +1932,9 @@ function extraTone(item: StageExtraItem) {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: rgb(169 211 255 / 0.75);
-  background: rgb(14 22 38 / 0.55);
-  border: 1px solid rgb(111 215 196 / 0.12);
+  color: rgb(196 226 255 / 0.86);
+  background: transparent;
+  border: 1px solid rgb(172 210 255 / 0.22);
   border-radius: 2px;
   cursor: pointer;
   transition: all 150ms ease-out;
@@ -1818,16 +1946,22 @@ function extraTone(item: StageExtraItem) {
   opacity: 0.4;
 }
 
-.dock-btn:not(:disabled):hover {
-  background: rgb(14 22 38 / 0.75);
-  border-color: rgb(111 215 196 / 0.25);
-  color: #c4e2ff;
+.dock-btn:not(:disabled):not(.is-active):hover {
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
+  color: #eef6ff;
 }
 
+.dock-btn:not(:disabled):active,
 .dock-btn.is-active {
-  background: rgb(14 22 38 / 0.85);
-  border-color: rgb(111 215 196 / 0.4);
-  color: #eef6ff;
+  background: #6fd7c4;
+  border-color: #6fd7c4;
+  color: #06121f;
+}
+
+.dock-btn:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 .dock-icon {
@@ -1878,7 +2012,7 @@ function extraTone(item: StageExtraItem) {
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  transform: scale(var(--scene-scale, 1));
+  transform: scale(var(--scene-scale, 1)) rotateX(var(--gyro-x, 0deg)) rotateZ(var(--gyro-z, 0deg));
   transition: transform 180ms ease-out;
 }
 
@@ -1979,8 +2113,7 @@ function extraTone(item: StageExtraItem) {
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
-    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)))
-    rotateZ(var(--gyro-z, 0deg));
+    rotateX(var(--pointer-x, 0deg));
   transition: transform 100ms ease-out, box-shadow 160ms ease;
   box-shadow:
     0 18px 48px rgb(0 0 0 / 0.38),
@@ -2157,8 +2290,7 @@ function extraTone(item: StageExtraItem) {
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
-    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)))
-    rotateZ(var(--gyro-z, 0deg));
+    rotateX(var(--pointer-x, 0deg));
   transition: transform 100ms ease-out;
   touch-action: none;
 }
@@ -2507,36 +2639,49 @@ function extraTone(item: StageExtraItem) {
 .zoom-value {
   height: 28px;
   padding: 0;
-  color: #c7e4ff;
-  background: rgb(14 22 38 / 0.5);
-  border: 1px solid rgb(169 211 255 / 0.1);
+  color: rgb(196 226 255 / 0.86);
+  background: transparent;
+  border: 1px solid rgb(172 210 255 / 0.22);
   border-radius: 2px;
   cursor: pointer;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
   transition: all 140ms ease-out;
 }
 
 .zoom-btn {
   width: 28px;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
 }
 
 .zoom-value {
   min-width: 48px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
 }
 
 .zoom-btn:hover:not(:disabled),
 .zoom-value:hover {
-  background: rgb(14 22 38 / 0.7);
-  border-color: rgb(169 211 255 / 0.2);
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
   color: #eef6ff;
 }
 
+.zoom-btn:active:not(:disabled),
+.zoom-value:active {
+  background: #6fd7c4;
+  color: #06121f;
+}
+
 .zoom-btn:disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
+}
+
+.zoom-btn:focus-visible,
+.zoom-value:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 /* Depth Rail */
@@ -2773,25 +2918,37 @@ function extraTone(item: StageExtraItem) {
   min-width: 30px;
   height: 28px;
   padding: 0 9px;
-  border: 1px solid rgb(111 215 196 / 0.18);
-  border-radius: 2px;
-  background: rgb(14 22 38 / 0.8);
-  color: rgb(169 211 255 / 0.72);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  border: var(--astra-btn-border);
+  border-radius: var(--astra-btn-radius);
+  background: var(--astra-btn-bg);
+  color: var(--astra-btn-color);
+  font-family: var(--astra-btn-font);
+  font-size: var(--astra-btn-size);
+  letter-spacing: var(--astra-btn-spacing);
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.pager-btn:hover:not(:disabled),
+.pager-btn:hover:not(:disabled):not(.is-active) {
+  background: var(--astra-btn-hover-bg);
+  border-color: var(--astra-btn-hover-border-color);
+  color: var(--astra-btn-hover-color);
+}
+
 .pager-btn.is-active {
-  border-color: rgb(111 215 196 / 0.6);
-  background: rgb(20 42 48 / 0.9);
-  color: #eef6ff;
+  background: var(--astra-btn-active-bg);
+  border-color: var(--astra-btn-active-border);
+  color: var(--astra-btn-active-color);
 }
 
 .pager-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  opacity: var(--astra-btn-disabled-opacity);
+}
+
+.pager-btn:focus-visible {
+  outline: var(--astra-btn-focus-outline);
+  outline-offset: 1px;
 }
 
 .pager-count {
@@ -2913,25 +3070,47 @@ function extraTone(item: StageExtraItem) {
 }
 
 .gyro-toggle,
-.gyro-chip {
+.gyro-chip,
+.gyro-reset {
   min-height: 26px;
   padding: 4px 9px;
-  border: 1px solid rgb(111 215 196 / 0.28);
+  border: 1px solid rgb(172 210 255 / 0.22);
   border-radius: 2px;
   background: rgb(8 15 28 / 0.92);
-  color: rgb(169 211 255 / 0.76);
+  color: rgb(196 226 255 / 0.86);
   font-family: var(--font-mono);
   font-size: 9px;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 
-.gyro-toggle {
+.gyro-toggle,
+.gyro-reset {
   cursor: pointer;
+  transition: background 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.gyro-toggle:hover:not(:disabled),
+.gyro-reset:hover {
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
+  color: #eef6ff;
+}
+
+.gyro-toggle:active:not(:disabled),
+.gyro-reset:active {
+  background: #6fd7c4;
+  color: #06121f;
+}
+
+.gyro-toggle:focus-visible,
+.gyro-reset:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 .gyro-toggle:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .gyro-chip {
@@ -2960,12 +3139,15 @@ function extraTone(item: StageExtraItem) {
 
 .stage-dialog {
   width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
   padding: 0;
   border: 1px solid rgb(111 215 196 / 0.32);
   border-radius: 2px;
   background: #0b1424;
   color: #eef6ff;
   box-shadow: 0 28px 80px rgb(0 0 0 / 0.6);
+  overflow: auto;
 }
 
 .stage-dialog::backdrop {
@@ -3041,32 +3223,72 @@ function extraTone(item: StageExtraItem) {
 }
 
 .stage-dialog__btn {
-  min-height: 34px;
+  min-height: 32px;
   padding: 7px 12px;
-  border: 1px solid rgb(169 211 255 / 0.2);
+  border: 1px solid rgb(172 210 255 / 0.22);
   border-radius: 2px;
-  background: rgb(14 22 38 / 0.9);
-  color: #c4e2ff;
+  background: transparent;
+  color: rgb(196 226 255 / 0.86);
   font-family: var(--font-mono);
   font-size: 10px;
+  letter-spacing: 0.06em;
   cursor: pointer;
+  transition: background 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.stage-dialog__btn:hover:not(:disabled) {
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
+  color: #eef6ff;
+}
+
+.stage-dialog__btn:active:not(:disabled) {
+  background: #6fd7c4;
+  color: #06121f;
+}
+
+.stage-dialog__btn:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 .stage-dialog__btn--primary {
-  border-color: rgb(111 215 196 / 0.58);
-  background: rgb(14 34 44 / 0.95);
+  border-color: rgb(111 215 196 / 0.52);
+  background: rgb(10 34 38 / 0.5);
   color: #dffaf4;
+}
+
+.stage-dialog__btn--primary:hover:not(:disabled) {
+  border-color: rgb(111 215 196 / 0.78);
+  background: rgb(14 46 50 / 0.7);
+  color: #ffffff;
+}
+
+.stage-dialog__btn--primary:active:not(:disabled) {
+  background: #6fd7c4;
+  color: #06121f;
 }
 
 .stage-dialog__btn--danger {
   border-color: rgb(255 161 173 / 0.46);
-  background: rgb(42 20 28 / 0.95);
+  background: rgb(42 20 28 / 0.5);
   color: #ffd3d9;
+}
+
+.stage-dialog__btn--danger:hover:not(:disabled) {
+  border-color: rgb(255 161 173 / 0.68);
+  background: rgb(52 24 32 / 0.75);
+  color: #ffffff;
+}
+
+.stage-dialog__btn--danger:active:not(:disabled) {
+  background: rgb(255 100 120 / 0.9);
+  color: #ffffff;
 }
 
 .stage-dialog__btn:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .sr-only {
@@ -3326,25 +3548,47 @@ function extraTone(item: StageExtraItem) {
 }
 
 .gyro-toggle,
-.gyro-chip {
+.gyro-chip,
+.gyro-reset {
   min-height: 26px;
   padding: 4px 9px;
-  border: 1px solid rgb(111 215 196 / 0.28);
+  border: 1px solid rgb(172 210 255 / 0.22);
   border-radius: 2px;
   background: rgb(8 15 28 / 0.92);
-  color: rgb(169 211 255 / 0.76);
+  color: rgb(196 226 255 / 0.86);
   font-family: var(--font-mono);
   font-size: 9px;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 
-.gyro-toggle {
+.gyro-toggle,
+.gyro-reset {
   cursor: pointer;
+  transition: background 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+}
+
+.gyro-toggle:hover:not(:disabled),
+.gyro-reset:hover {
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
+  color: #eef6ff;
+}
+
+.gyro-toggle:active:not(:disabled),
+.gyro-reset:active {
+  background: #6fd7c4;
+  color: #06121f;
+}
+
+.gyro-toggle:focus-visible,
+.gyro-reset:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 .gyro-toggle:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .gyro-chip {
