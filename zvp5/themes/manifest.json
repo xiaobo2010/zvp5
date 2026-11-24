@@ -44,8 +44,7 @@
       "status": "experimental",
       "base": "/themes/astra-alpha/",
       "source": {
-        "kind": "git",
-        "ref": "v5-canary-pro",
+        "kind": "local",
         "path": "zvp5/zvp5-frontend-3d"
       },
       "build": {

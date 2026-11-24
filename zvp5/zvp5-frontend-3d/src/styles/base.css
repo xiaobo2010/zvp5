@@ -1,0 +1,116 @@
+/* ZVMS 3D concept — dark base.
+ *
+ * The concept is dark-only by design. Components own their visual language;
+ * this file only provides the reset, shared typography and accessibility
+ * primitives so the 3D stage can stay self-contained.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --font-system: 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
+
+  --color-ink: #eaf0ff;
+  --color-ink-soft: #a9b6d0;
+  --color-ink-muted: #75839f;
+  --color-accent: #6db4ff;
+  --color-accent-strong: #3d8dff;
+  --color-surface: rgb(16 22 36 / 0.72);
+  --color-line: rgb(142 178 255 / 0.18);
+  --color-line-strong: rgb(142 178 255 / 0.32);
+
+  --tone-blue: #6db4ff;
+  --tone-teal: #4fd6c4;
+  --tone-violet: #a98bff;
+  --tone-amber: #ffc46b;
+  --tone-rose: #ff7d92;
+  --tone-muted: #8a97b3;
+
+  --radius-lg: 26px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+
+  font-family: var(--font-system);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  background: #05070d;
+  color: var(--color-ink);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: rgb(109 180 255 / 0.32);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
