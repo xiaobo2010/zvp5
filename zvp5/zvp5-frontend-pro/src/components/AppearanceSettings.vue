@@ -19,6 +19,16 @@ import {
   type SiteTheme,
 } from '@/composables/siteTheme'
 
+// Frontend release channel labels for the two site-theme options.
+const FRONTEND_TAGS: Record<string, string> = {
+  canary: 'release',
+  'canary-pro': 'rc',
+}
+
+function frontendTag(id: string): string {
+  return FRONTEND_TAGS[id] ?? ''
+}
+
 const catalog = ref<SiteTheme[]>([])
 const catalogState = ref<'loading' | 'ready' | 'unavailable'>('loading')
 const retrying = ref(false)
@@ -160,6 +170,9 @@ onUnmounted(() => {
           >
             <span class="appearance__theme-heading">
               <strong>{{ theme.label }}</strong>
+              <span v-if="frontendTag(theme.id)" class="appearance__badge appearance__badge--tag">
+                {{ frontendTag(theme.id) }}
+              </span>
               <span v-if="theme.id === activeTheme" class="appearance__badge">当前主题</span>
               <span v-if="theme.id === accountTheme" class="appearance__badge appearance__badge--muted">账号默认</span>
               <span v-else-if="theme.id === deviceTheme" class="appearance__badge appearance__badge--muted">此浏览器已保存</span>
@@ -333,6 +346,18 @@ onUnmounted(() => {
 
 .appearance__badge--muted {
   color: var(--color-text-secondary);
+}
+
+.appearance__badge--tag {
+  padding-inline: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-ink, #175588) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-ink, #175588) 8%, transparent);
+  color: var(--accent-ink, #175588);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  text-transform: lowercase;
 }
 
 .appearance__theme[aria-current='true'],

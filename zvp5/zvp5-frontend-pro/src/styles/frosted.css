@@ -1,11 +1,12 @@
-/* Gradient frosted glass for the time surfaces and every liquid-glass button.
-   The material is fully self-contained: milk gradient + fine grain + rim light
-   + inner shadow, with no backdrop-filter. That makes it identical on desktop,
-   tablets and engines that would otherwise composite a filtered control as an
-   empty layer. Large structural panels keep their liquid glass. */
+/* Plain gradient action buttons. No glass, no backdrop blur, no grain and no
+   highlight/sheen overlays: neutral controls use a white-to-slate gradient,
+   primary controls keep the blue semantic, and danger controls keep red. */
 
 .glass-button,
+.liquid-btn,
 .liquid-btn--secondary,
+.liquid-btn--neutral,
+.form-button,
 .form-button--secondary,
 .ghost-button,
 .glass-action,
@@ -23,24 +24,17 @@
 .site-nav__drawer-close,
 .site-nav__drawer-link,
 .scope-tab,
-.animated-tabs {
-  background-color: transparent !important;
-  background-image: var(--frosted-bg) !important;
-  background-size: var(--frosted-size) !important;
-  background-repeat: var(--frosted-repeat) !important;
-  border-color: var(--frosted-border) !important;
-  box-shadow: var(--frosted-shadow) !important;
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
-
-.liquid-btn--neutral {
-  background-color: transparent !important;
-  background-image: var(--frosted-neutral-bg) !important;
-  background-size: var(--frosted-size) !important;
-  background-repeat: var(--frosted-repeat) !important;
-  border-color: var(--frosted-neutral-border) !important;
-  box-shadow: var(--frosted-neutral-shadow) !important;
+.animated-tabs,
+.appearance__retry,
+.hours-refresh-btn,
+.notice-head,
+.group-member__button,
+.role-card__link {
+  background: linear-gradient(180deg, #ffffff 0%, #eef3f9 100%) !important;
+  border: 1px solid #c9d6e4 !important;
+  box-shadow: 0 1px 2px rgb(20 40 60 / 0.08) !important;
+  color: var(--color-text-primary);
+  text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
@@ -50,42 +44,42 @@
 .primary-button,
 .primary-action,
 .submit-button {
-  background-color: transparent !important;
-  background-image: var(--frosted-primary-bg) !important;
-  background-size: var(--frosted-size) !important;
-  background-repeat: var(--frosted-repeat) !important;
-  border-color: var(--frosted-primary-border) !important;
-  box-shadow: var(--frosted-primary-shadow) !important;
+  background: linear-gradient(180deg, #2f8ef4 0%, #0071e3 58%, #0064cd 100%) !important;
+  border: 1px solid #0060c4 !important;
+  box-shadow: 0 1px 2px rgb(0 60 130 / 0.22) !important;
+  color: #ffffff !important;
+  text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
 .liquid-btn--danger,
 .danger-button--solid {
-  background-color: transparent !important;
-  background-image: var(--frosted-danger-bg) !important;
-  background-size: var(--frosted-size) !important;
-  background-repeat: var(--frosted-repeat) !important;
-  border-color: var(--frosted-danger-border) !important;
-  box-shadow: var(--frosted-danger-shadow) !important;
+  background: linear-gradient(180deg, #f4675c 0%, #dc2626 58%, #c81e1e 100%) !important;
+  border: 1px solid #c81e1e !important;
+  box-shadow: 0 1px 2px rgb(140 20 20 / 0.22) !important;
+  color: #ffffff !important;
+  text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
 .danger-button {
-  background-color: transparent !important;
-  background-image: var(--frosted-rose-bg) !important;
-  background-size: var(--frosted-size) !important;
-  background-repeat: var(--frosted-repeat) !important;
-  border-color: var(--frosted-rose-border) !important;
-  box-shadow: var(--frosted-rose-shadow) !important;
+  background: linear-gradient(180deg, #fff7f6 0%, #ffe3df 100%) !important;
+  border: 1px solid #f0b8b1 !important;
+  box-shadow: 0 1px 2px rgb(160 40 40 / 0.08) !important;
+  color: #b42318 !important;
+  text-shadow: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
-/* Hover keeps the frost but lifts it a little further. */
+/* Hover/active only change brightness; no lift or glass sheen. */
 .glass-button:hover:not(:disabled),
+.liquid-btn:hover:not(:disabled),
 .liquid-btn--secondary:hover:not(:disabled),
+.liquid-btn--neutral:hover:not(:disabled),
+.form-button:hover:not(:disabled),
 .form-button--secondary:hover:not(:disabled),
 .ghost-button:hover:not(:disabled),
 .glass-action:hover:not(:disabled),
@@ -99,59 +93,67 @@
 .register-page__back:hover,
 .server__back:hover,
 .user-page__back:hover,
-.site-nav__handle:hover,
 .site-nav__drawer-close:hover,
 .site-nav__drawer-link:hover,
-.scope-tab:hover {
-  box-shadow: var(--frosted-shadow-hover) !important;
-}
-
-.liquid-btn--neutral:hover:not(:disabled) {
-  box-shadow: var(--frosted-neutral-shadow) !important;
+.scope-tab:hover,
+.appearance__retry:hover:not(:disabled),
+.hours-refresh-btn:hover:not(:disabled),
+.notice-head:hover,
+.group-member__button:hover,
+.role-card__link:hover {
+  filter: brightness(1.025);
 }
 
 .liquid-btn--primary:hover:not(:disabled),
 .form-button--primary:hover:not(:disabled),
 .primary-button:hover:not(:disabled),
 .primary-action:hover:not(:disabled),
-.submit-button:hover:not(:disabled) {
-  box-shadow: var(--frosted-primary-shadow-hover) !important;
-}
-
+.submit-button:hover:not(:disabled),
 .liquid-btn--danger:hover:not(:disabled),
 .danger-button--solid:hover:not(:disabled) {
-  box-shadow: var(--frosted-danger-shadow-hover) !important;
+  filter: brightness(1.06);
 }
 
-.danger-button:hover:not(:disabled) {
-  box-shadow: var(--frosted-rose-shadow) !important;
+.glass-button:active:not(:disabled),
+.liquid-btn:active:not(:disabled),
+.form-button:active:not(:disabled),
+.ghost-button:active:not(:disabled),
+.glass-action:active:not(:disabled),
+.detail-button:active:not(:disabled),
+.back-btn:active:not(:disabled),
+.appearance__retry:active:not(:disabled),
+.hours-refresh-btn:active:not(:disabled),
+.notice-head:active:not(:disabled),
+.group-member__button:active:not(:disabled),
+.role-card__link:active:not(:disabled) {
+  filter: brightness(0.96);
 }
 
-/* Active filter chips keep the frost but regain their brand outline/text. */
+/* Active filter chips keep their brand outline/text. */
 .ghost-button.is-active,
 .ghost-button--small.is-active {
   border-color: var(--color-brand) !important;
   color: var(--color-brand) !important;
-  box-shadow: var(--frosted-shadow-hover), 0 0 0 1px rgb(0 113 227 / 0.12) !important;
+  box-shadow: 0 0 0 1px rgb(0 113 227 / 0.12) !important;
 }
 
-/* The active scope tab is intentionally transparent so the sliding indicator
-   underneath remains visible. */
+/* The active scope tab stays transparent so its sliding indicator remains visible. */
 .scope-tab.is-active,
 .scope-tab.is-active:hover {
-  background-color: transparent !important;
-  background-image: none !important;
+  background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
+  filter: none;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
-/* Keep the selected drawer item's accent outline above the frosted base. */
 .site-nav__drawer-link.is-selected,
 .site-nav__drawer-link:active {
   border-color: var(--accent-ink) !important;
 }
 
-/* Disabled controls fall back to a neutral frost with no active glow. */
+/* Disabled controls: flat gray gradient, no glass. */
 .glass-button:disabled,
 .liquid-btn:disabled,
 .form-button:disabled,
@@ -165,28 +167,64 @@
 .primary-button:disabled,
 .primary-action:disabled,
 .submit-button:disabled,
-.danger-button:disabled {
-  background-color: transparent !important;
-  background-image: var(--frosted-neutral-bg) !important;
-  border-color: var(--frosted-neutral-border) !important;
-  color: var(--color-text-tertiary) !important;
+.danger-button:disabled,
+.appearance__retry:disabled,
+.hours-refresh-btn:disabled {
+  background: linear-gradient(180deg, #f7f9fb 0%, #e9eef4 100%) !important;
+  border-color: #d5dee8 !important;
+  color: #8a97a6 !important;
   box-shadow: none !important;
-  opacity: 0.6 !important;
+  opacity: 0.75 !important;
+  filter: none;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
-/* Feedback bubbles keep their semantic tint, but use the same frost. */
+/* Drop the old glass highlight/sheen pseudo-elements on action controls. */
+.liquid-btn::before,
+.liquid-btn::after,
+.form-button::before,
+.form-button::after,
+.submit-button::before,
+.submit-button::after,
+.back-btn::before,
+.back-btn::after,
+.glass-button::before,
+.glass-button::after,
+.primary-button::before,
+.primary-button::after,
+.primary-action::before,
+.primary-action::after,
+.ghost-button::before,
+.ghost-button::after,
+.detail-button::before,
+.detail-button::after,
+.glass-action::before,
+.glass-action::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* Feedback bubbles: flat semantic tint, no blur or grain. */
 .glass-feedback__body {
-  background-color: transparent !important;
-  background-image:
-    var(--frosted-grain),
-    radial-gradient(120% 160% at 18% 0%, rgb(255 255 255 / 0.9), transparent 62%),
-    linear-gradient(153deg, rgb(255 255 255 / 0.62), var(--feedback-tint, #d9eafd)) !important;
-  background-size: 80px 80px, auto, auto !important;
-  background-repeat: repeat, no-repeat, no-repeat !important;
-  border-color: var(--frosted-border) !important;
-  box-shadow: var(--frosted-shadow) !important;
+  background: var(--feedback-tint, #d9eafd) !important;
+  border: 1px solid color-mix(in srgb, var(--feedback-ink, #175588) 18%, white) !important;
+  box-shadow: none !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-button,
+  .liquid-btn,
+  .form-button,
+  .ghost-button,
+  .glass-action,
+  .detail-button,
+  .primary-button,
+  .primary-action,
+  .submit-button,
+  .danger-button {
+    transition: none;
+  }
 }
