@@ -36,16 +36,21 @@ const sceneScale = ref(1)
 // Drag state
 const draggingCard = ref<string | null>(null)
 const cardOffsets = ref<Record<string, { x: number; y: number }>>({})
+const cardStack = ref<Record<string, number>>({})
+let cardStackSeq = 0
 let dragStartX = 0
 let dragStartY = 0
 let dragStartOffsetX = 0
 let dragStartOffsetY = 0
 
-// Vertical swipe state
+// Side navigation drag/swipe state
+const SIDE_ZONE_RATIO = 0.28
+let navDragging = false
+let navStartX = 0
+let navStartY = 0
 let touchStartY = 0
 let touchStartX = 0
-let lastWheelTime = 0
-const WHEEL_COOLDOWN = 400
+let touchIsSide = false
 
 function clampSceneScale(value: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100))
@@ -60,42 +65,18 @@ function resetZoom() {
 }
 
 function onWheelZoom(event: WheelEvent) {
-  // Ctrl/Cmd + wheel for zoom
-  if (event.ctrlKey || event.metaKey) {
-    if (Math.abs(event.deltaY) < 1) return
-    event.preventDefault()
-    zoomBy(event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
-    return
-  }
+  if (Math.abs(event.deltaY) < 1) return
 
-  // Don't navigate inside scrollable content or HUD controls.
+  // Lists keep their native wheel scrolling. Everywhere else the wheel is
+  // reserved for zooming the scene; it never switches modules.
   const target = event.target as HTMLElement
-  if (
-    target.closest('.extra-list') ||
-    target.closest('.instrument-dock') ||
-    target.closest('.stage-nav') ||
-    target.closest('.zoom-hud') ||
-    (isMobile.value && target.closest('.cluster'))
-  ) {
+  const scrollable = target.closest<HTMLElement>('.extra-list, .cluster')
+  if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
     return
   }
 
-  // Don't navigate while dragging
-  if (draggingCard.value) return
-
-  // Plain wheel for navigation with cooldown
-  const now = Date.now()
-  if (now - lastWheelTime < WHEEL_COOLDOWN) return
-
-  if (Math.abs(event.deltaY) > 10) {
-    event.preventDefault()
-    lastWheelTime = now
-    if (event.deltaY > 0) {
-      go(1) // wheel down = next module
-    } else {
-      go(-1) // wheel up = previous module
-    }
-  }
+  event.preventDefault()
+  zoomBy(event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
 }
 
 const modules = computed(() => props.data.modules)
@@ -260,9 +241,10 @@ function updatePointerFrame() {
     currentY = targetY
   }
 
-  // Increased from ±3.2° to ±9°
+  // Increased from ±3.2° to ±9°. Horizontal rotation is intentionally
+  // mirrored: moving to the left edge should turn the scene to the right.
   root.style.setProperty('--pointer-x', `${(currentY * 9).toFixed(2)}deg`)
-  root.style.setProperty('--pointer-y', `${(currentX * 9).toFixed(2)}deg`)
+  root.style.setProperty('--pointer-y', `${(-currentX * 9).toFixed(2)}deg`)
 
   rafId = settled ? undefined : requestAnimationFrame(updatePointerFrame)
 }
@@ -275,6 +257,58 @@ function onResize() {
   viewportWidth.value = window.innerWidth
 }
 
+function isSideZone(x: number): boolean {
+  const edge = Math.max(96, window.innerWidth * SIDE_ZONE_RATIO)
+  return x <= edge || x >= window.innerWidth - edge
+}
+
+function isInteractiveTarget(target: HTMLElement): boolean {
+  return Boolean(
+    target.closest(
+      'button, a, input, textarea, select, .card, .hours-item, .activity-card-wrapper, .extra-list, .cluster, .instrument-dock, .stage-nav, .zoom-hud, .drag-hint'
+    )
+  )
+}
+
+// Mouse/pen horizontal drag on the left or right side. Cards keep their own
+// drag gesture; the centre of the screen stays free for interacting with cards.
+function onStagePointerDown(event: PointerEvent) {
+  if (event.pointerType === 'touch' || event.button !== 0) return
+  if (!isSideZone(event.clientX)) return
+  if (isInteractiveTarget(event.target as HTMLElement)) return
+
+  navDragging = true
+  navStartX = event.clientX
+  navStartY = event.clientY
+  event.preventDefault()
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'ew-resize'
+  window.addEventListener('pointermove', onStagePointerMove)
+  window.addEventListener('pointerup', onStagePointerEnd)
+  window.addEventListener('pointercancel', onStagePointerEnd)
+}
+
+function onStagePointerMove(event: PointerEvent) {
+  if (!navDragging) return
+  if (Math.abs(event.clientX - navStartX) > 4) event.preventDefault()
+}
+
+function onStagePointerEnd(event: PointerEvent) {
+  if (!navDragging) return
+  navDragging = false
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  window.removeEventListener('pointermove', onStagePointerMove)
+  window.removeEventListener('pointerup', onStagePointerEnd)
+  window.removeEventListener('pointercancel', onStagePointerEnd)
+
+  const dx = event.clientX - navStartX
+  const dy = event.clientY - navStartY
+  if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+    go(dx < 0 ? 1 : -1)
+  }
+}
+
 // Dragging logic (desktop only)
 function onCardPointerDown(event: PointerEvent, cardKey: string) {
   if (isMobile.value) return
@@ -284,6 +318,7 @@ function onCardPointerDown(event: PointerEvent, cardKey: string) {
 
   event.preventDefault()
   draggingCard.value = cardKey
+  cardStack.value[cardKey] = ++cardStackSeq
   dragStartX = event.clientX
   dragStartY = event.clientY
   const current = cardOffsets.value[cardKey] || { x: 0, y: 0 }
@@ -302,14 +337,14 @@ function onDragMove(event: PointerEvent) {
   const dx = event.clientX - dragStartX
   const dy = event.clientY - dragStartY
 
-  // Clamp to viewport so card doesn't get lost
-  const vw = window.innerWidth
-  const vh = window.innerHeight
-  const maxOffset = Math.min(vw, vh) * 0.4
+  // Keep a generous viewport bound instead of a 40%-of-screen cage. The old
+  // clamp made cards stop at an invisible line near the centre of the stage.
+  const maxX = Math.max(320, window.innerWidth * 0.8)
+  const maxY = Math.max(220, window.innerHeight * 0.55)
 
   cardOffsets.value[draggingCard.value] = {
-    x: Math.max(-maxOffset, Math.min(maxOffset, dragStartOffsetX + dx)),
-    y: Math.max(-maxOffset, Math.min(maxOffset, dragStartOffsetY + dy))
+    x: Math.max(-maxX, Math.min(maxX, dragStartOffsetX + dx)),
+    y: Math.max(-maxY, Math.min(maxY, dragStartOffsetY + dy))
   }
 }
 
@@ -332,45 +367,35 @@ function getCardStyle(cardKey: string, baseCenter: number) {
     '--drag-y': `${offset.y}px`,
     '--card-tilt': `${actualTilt.toFixed(1)}deg`,
     cursor: isMobile.value ? 'default' : (draggingCard.value === cardKey ? 'grabbing' : 'grab'),
-    zIndex: draggingCard.value === cardKey ? '1000' : undefined
+    zIndex: draggingCard.value === cardKey ? 1000 : cardStack.value[cardKey]
   }
 }
 
-// Vertical swipe navigation
+// Side swipe navigation (touch). Vertical gestures inside lists stay native.
 function onTouchStart(event: TouchEvent) {
   if (draggingCard.value || event.touches.length !== 1) return
   const touch = event.touches[0]
+  const target = event.target as HTMLElement
+  touchIsSide =
+    isSideZone(touch.clientX) &&
+    !target.closest('button, a, input, textarea, select, .instrument-dock, .stage-nav, .zoom-hud')
   touchStartY = touch.clientY
   touchStartX = touch.clientX
 }
 
 function onTouchEnd(event: TouchEvent) {
-  if (draggingCard.value) return
+  if (!touchIsSide || draggingCard.value) {
+    touchIsSide = false
+    return
+  }
+  touchIsSide = false
   const touch = event.changedTouches[0]
   const deltaY = touch.clientY - touchStartY
   const deltaX = touch.clientX - touchStartX
 
-  // Let nested scroll areas consume a vertical gesture until they hit an edge.
-  // Once at the edge, the same swipe navigates to the previous/next module.
-  const target = event.target as HTMLElement
-  if (target.closest('.instrument-dock') || target.closest('.stage-nav') || target.closest('.zoom-hud')) {
-    return
-  }
-  const scrollable = target.closest<HTMLElement>('.extra-list, .cluster')
-  if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
-    const atTop = scrollable.scrollTop <= 1
-    const atBottom =
-      scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1
-    if ((deltaY < 0 && !atBottom) || (deltaY > 0 && !atTop)) return
-  }
-
-  // Vertical swipe threshold: ~56px, more vertical than horizontal
-  if (Math.abs(deltaY) > 56 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5) {
-    if (deltaY < 0) {
-      go(1) // swipe up = next
-    } else {
-      go(-1) // swipe down = previous
-    }
+  // Horizontal swipe threshold: ~56px, more horizontal than vertical.
+  if (Math.abs(deltaX) > 56 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+    go(deltaX < 0 ? 1 : -1) // swipe left = next, swipe right = previous
   }
 }
 
@@ -400,6 +425,14 @@ onBeforeUnmount(() => {
   if (transitionTimer) clearTimeout(transitionTimer)
   if (serverTimeTimer) clearInterval(serverTimeTimer)
   if (rafId !== undefined) cancelAnimationFrame(rafId)
+  if (navDragging) {
+    navDragging = false
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    window.removeEventListener('pointermove', onStagePointerMove)
+    window.removeEventListener('pointerup', onStagePointerEnd)
+    window.removeEventListener('pointercancel', onStagePointerEnd)
+  }
   onDragEnd()
 })
 
@@ -456,7 +489,9 @@ function activityScatterStyle(activity: StageActivity, index: number): Record<st
     '--card-rotate': `${rotation.toFixed(2)}deg`,
     '--card-scale': `${(1 + zDepth / 1000).toFixed(3)}`,
     cursor: isMobile.value ? 'default' : draggingCard.value === cardKey ? 'grabbing' : 'grab',
-    zIndex: draggingCard.value === cardKey ? '1000' : String(1 + index)
+    zIndex: String(
+      draggingCard.value === cardKey ? 1000 : (cardStack.value[cardKey] ?? 1 + index)
+    )
   }
 }
 
@@ -588,7 +623,7 @@ function extraTone(item: StageExtraItem) {
     </nav>
 
     <!-- 3D scene -->
-    <div class="stage-scene" @wheel="onWheelZoom">
+    <div class="stage-scene" @wheel="onWheelZoom" @pointerdown="onStagePointerDown">
       <div class="scene-zoom" :style="{ '--scene-scale': sceneScale }">
         <div class="stage-track">
         <div
@@ -918,7 +953,7 @@ function extraTone(item: StageExtraItem) {
           <span class="counter-sep">/</span>
           <span class="counter-total">{{ String(total).padStart(2, '0') }}</span>
         </div>
-        <div class="rail-hint">上滑 / 下滑切换</div>
+        <div class="rail-hint">两侧滑动 · 滚轮缩放</div>
       </div>
 
       <div
