@@ -79,6 +79,8 @@ const gyroError = ref('')
 let gyroListening = false
 let gyroBaselinePitch: number | null = null
 let gyroBaselineRoll: number | null = null
+let gyroBaselineYaw: number | null = null
+let gyroYawSmooth = 0
 let screenOrientationAngle = 0
 
 const VOLUNTEER_PAGE_SIZE = 8
@@ -205,7 +207,8 @@ function getHourDelta(hours: number): string {
 
 const DESKTOP_TILT_MAX = 30
 const MOBILE_TILT_MAX = 30
-const POINTER_TILT_MAX = 5
+const POINTER_YAW_MAX = 35
+const POINTER_PITCH_MAX = 5
 const CLUSTER_WIDTH = 900
 const ACTIVITY_WIDTH = 1040
 
@@ -532,10 +535,11 @@ function updatePointerFrame() {
   }
 
   // Pointer rotation follows the horizontal axis: moving left leans cards
-  // left, moving right leans them right. Position tilt (30°) + pointer (5°)
-  // stays at the requested 35° total ceiling.
-  root.style.setProperty('--pointer-x', `${(currentY * POINTER_TILT_MAX).toFixed(2)}deg`)
-  root.style.setProperty('--pointer-y', `${(currentX * POINTER_TILT_MAX).toFixed(2)}deg`)
+  // left, moving right leans them right. The horizontal range is the full
+  // 35° the cards are allowed to turn; the per-card base lean is clamped
+  // against the same ceiling in CSS so no card ever exceeds it.
+  root.style.setProperty('--pointer-x', `${(currentY * POINTER_PITCH_MAX).toFixed(2)}deg`)
+  root.style.setProperty('--pointer-y', `${(currentX * POINTER_YAW_MAX).toFixed(2)}deg`)
 
   rafId = settled ? undefined : requestAnimationFrame(updatePointerFrame)
 }
@@ -564,7 +568,7 @@ function computeScreenOrientedAngles(
   beta: number,
   gamma: number,
   screenAngle: number
-): { pitch: number; roll: number } {
+): { pitch: number; roll: number; yaw: number } {
   // Build device→world rotation matrix: R = Rz(α) · Rx(β) · Ry(γ)
   const a = (alpha * Math.PI) / 180
   const b = (beta * Math.PI) / 180
@@ -605,7 +609,12 @@ function computeScreenOrientedAngles(
 
   return {
     pitch: (pitch * 180) / Math.PI,
-    roll: (roll * 180) / Math.PI
+    roll: (roll * 180) / Math.PI,
+    // Yaw: the tablet heading about the world vertical. `alpha` is a
+    // compass-style heading and (unlike the screen normal) stays defined
+    // while the tablet is held at an angle, so turning the whole tablet
+    // in/out around its midline is visible on the side cards.
+    yaw: alpha
   }
 }
 
@@ -624,14 +633,19 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   // Set baseline on first read or recalibration
   if (gyroBaselinePitch === null) gyroBaselinePitch = angles.pitch
   if (gyroBaselineRoll === null) gyroBaselineRoll = angles.roll
+  if (gyroBaselineYaw === null) gyroBaselineYaw = angles.yaw
 
   // Compute deltas (normalized for ±180 wrap)
   const pitchDelta = normalizeAngleDiff(angles.pitch, gyroBaselinePitch)
   const rollDelta = normalizeAngleDiff(angles.roll, gyroBaselineRoll)
+  const yawDelta = normalizeAngleDiff(angles.yaw, gyroBaselineYaw)
 
   // Keep the movement subtle: the screen is only a window onto the scene.
   const clampedPitch = clampNumber(pitchDelta * 0.55, -9, 9)
   const clampedRoll = clampNumber(rollDelta * 0.65, -9, 9)
+  // Yaw is low-passed: compass headings are noisier than the gravity vector.
+  const targetYaw = clampNumber(yawDelta * 0.7, -12, 12)
+  gyroYawSmooth += (targetYaw - gyroYawSmooth) * 0.25
 
   const root = stageRoot.value
   if (!root) return
@@ -641,6 +655,7 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   // inward, and a device roll is cancelled by an equal on-screen roll.
   root.style.setProperty('--gyro-x', `${(-clampedPitch).toFixed(2)}deg`)
   root.style.setProperty('--gyro-z', `${clampedRoll.toFixed(2)}deg`)
+  root.style.setProperty('--gyro-y', `${(-gyroYawSmooth).toFixed(2)}deg`)
 }
 
 function startGyroListener() {
@@ -675,11 +690,14 @@ function onOrientationChange() {
   // Reset baseline to recalibrate and clear current angles
   gyroBaselinePitch = null
   gyroBaselineRoll = null
-  
+  gyroBaselineYaw = null
+  gyroYawSmooth = 0
+
   const root = stageRoot.value
   if (root) {
     root.style.setProperty('--gyro-x', '0deg')
     root.style.setProperty('--gyro-z', '0deg')
+    root.style.setProperty('--gyro-y', '0deg')
   }
 }
 
@@ -731,10 +749,13 @@ function resetViewport() {
   // Reset gyro baseline (recapture current orientation as neutral)
   gyroBaselinePitch = null
   gyroBaselineRoll = null
+  gyroBaselineYaw = null
+  gyroYawSmooth = 0
 
   // Instantly reset all CSS variables (no transition animation)
   root.style.setProperty('--gyro-x', '0deg')
   root.style.setProperty('--gyro-z', '0deg')
+  root.style.setProperty('--gyro-y', '0deg')
   root.style.setProperty('--pointer-x', '0deg')
   root.style.setProperty('--pointer-y', '0deg')
 
@@ -1145,7 +1166,11 @@ function extraTone(item: StageExtraItem) {
 </script>
 
 <template>
-  <div ref="stageRoot" class="stage" :class="{ 'is-reduced': reduced }">
+  <div
+    ref="stageRoot"
+    class="stage"
+    :class="{ 'is-reduced': reduced, 'is-card-dragging': Boolean(draggingCard) }"
+  >
     <!-- Background environment -->
     <div class="stage-backdrop">
       <div class="nebula nebula-1"></div>
@@ -1422,7 +1447,7 @@ function extraTone(item: StageExtraItem) {
         </div>
 
         <!-- Volunteer list: 8 scattered cards per page -->
-        <div v-else-if="view === 'volunteers'" class="stage-track page-track">
+        <div v-else-if="view === 'volunteers'" class="stage-track page-track page-track--volunteers">
           <div class="page-heading">
             <span class="page-kicker">02 / 记录</span>
             <h2 class="page-title">我的义工列表</h2>
@@ -1775,6 +1800,7 @@ function extraTone(item: StageExtraItem) {
   --transition-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --pointer-x: 0deg;
   --pointer-y: 0deg;
+  --gyro-y: 0deg;
 }
 
 .is-transitioning .stage-module {
@@ -2012,8 +2038,15 @@ function extraTone(item: StageExtraItem) {
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  transform: scale(var(--scene-scale, 1)) rotateX(var(--gyro-x, 0deg)) rotateZ(var(--gyro-z, 0deg));
+  transform: scale(var(--scene-scale, 1)) rotateX(var(--gyro-x, 0deg))
+    rotateZ(var(--gyro-z, 0deg)) rotateY(var(--gyro-y, 0deg));
   transition: transform 180ms ease-out;
+}
+
+/* A dragged card must stay above the fixed dock/HUD instead of sliding under
+   them and disappearing at the page edge. */
+.stage.is-card-dragging .stage-scene {
+  z-index: 140;
 }
 
 .stage-track {
@@ -2112,7 +2145,7 @@ function extraTone(item: StageExtraItem) {
   border-radius: 2px;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateY(clamp(-35deg, calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)), 35deg))
     rotateX(var(--pointer-x, 0deg));
   transition: transform 100ms ease-out, box-shadow 160ms ease;
   box-shadow:
@@ -2289,7 +2322,7 @@ function extraTone(item: StageExtraItem) {
   box-shadow: none;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateY(clamp(-35deg, calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)), 35deg))
     rotateX(var(--pointer-x, 0deg));
   transition: transform 100ms ease-out;
   touch-action: none;
@@ -2803,6 +2836,16 @@ function extraTone(item: StageExtraItem) {
   padding: 170px 0 60px;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* Desktop volunteers: the scattered cards are draggable. The scroll container
+   used to clip them at the left/right edge (and behind the dock), so a card
+   disappeared after a short drag. The 8-card board fits a desktop viewport;
+   keep mobile scrolling untouched. */
+@media (min-width: 901px) {
+  .page-track--volunteers {
+    overflow: visible;
+  }
 }
 
 .page-heading {
