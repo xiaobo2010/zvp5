@@ -288,39 +288,51 @@ onMounted(load)
 }
 
 .home__button {
-  padding: 10px 18px;
-  border-radius: 3px;
-  border: 1px solid rgb(169 211 255 / 0.2);
-  background: rgb(12 20 34 / 0.78);
+  min-height: 32px;
+  padding: 8px 16px;
+  border: 1px solid rgb(172 210 255 / 0.22);
+  border-radius: 2px;
+  background: transparent;
   color: rgb(196 226 255 / 0.86);
   font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.05em;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   cursor: pointer;
-  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out),
-    color 160ms var(--ease-out);
+  transition: background 140ms var(--ease-out), border-color 140ms var(--ease-out),
+    color 140ms var(--ease-out);
 }
 
 .home__button:hover {
-  border-color: rgb(111 215 196 / 0.42);
-  background: rgb(14 32 40 / 0.9);
+  background: rgb(111 215 196 / 0.10);
+  border-color: rgb(111 215 196 / 0.32);
   color: #eef6ff;
 }
 
 .home__button:active {
-  background: rgb(18 42 50 / 0.95);
+  background: #6fd7c4;
+  color: #06121f;
+}
+
+.home__button:focus-visible {
+  outline: 2px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
 }
 
 .home__button--primary {
   border-color: rgb(111 215 196 / 0.52);
-  background: rgb(10 34 38 / 0.92);
+  background: rgb(10 34 38 / 0.5);
   color: #dffaf4;
 }
 
 .home__button--primary:hover {
   border-color: rgb(111 215 196 / 0.78);
-  background: rgb(14 46 50 / 0.95);
+  background: rgb(14 46 50 / 0.7);
   color: #ffffff;
+}
+
+.home__button--primary:active {
+  background: #6fd7c4;
+  color: #06121f;
 }
 
 .home__orbit {
