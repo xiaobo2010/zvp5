@@ -991,10 +991,9 @@ onUnmounted(() => {
 .hours-feedback { margin-bottom: var(--space-4); }
 
 /* Apple-style "now" panel */
-/* Cross-platform liquid glass: the panel reads as glass from its own layered
-   gradients, rim light and inner shadow. It deliberately does not depend on
-   `backdrop-filter`; Gecko on tablets can allocate an empty backdrop layer and
-   leave the clock sitting on a transparent rectangle. */
+/* Cross-platform gradient frosted glass: the panel reads as a gradient frost
+   from its own layered gradients, grain, rim light and inner shadow. It does
+   not depend on `backdrop-filter`, so tablets and desktops render the same. */
 .greeting__panel {
   position: relative;
   isolation: isolate;
@@ -1003,23 +1002,11 @@ onUnmounted(() => {
   gap: var(--space-3);
   padding: 10px 18px 10px 10px;
   border-radius: var(--radius-pill);
-  background: rgba(247, 251, 255, 0.82);
-  background:
-    radial-gradient(120% 180% at 8% 18%, rgba(255, 255, 255, 0.94), transparent 55%),
-    linear-gradient(
-      145deg,
-      rgba(255, 255, 255, 0.68),
-      rgba(232, 244, 255, 0.38) 58%,
-      rgba(247, 242, 255, 0.5)
-    ),
-    var(--glass-floating-bg, #f5f9ffd9);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    inset 0 -1px 0 rgba(74, 109, 143, 0.08),
-    inset 1px 0 0 rgba(255, 255, 255, 0.6),
-    0 4px 12px rgba(47, 78, 103, 0.08),
-    0 20px 48px rgba(51, 79, 108, 0.12);
+  background: var(--frosted-bg);
+  background-size: var(--frosted-size);
+  background-repeat: var(--frosted-repeat);
+  border: 1px solid var(--frosted-border);
+  box-shadow: var(--frosted-shadow), 0 20px 48px rgba(51, 79, 108, 0.12);
   overflow: hidden;
 }
 
@@ -1029,8 +1016,9 @@ onUnmounted(() => {
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(circle at 14% 30%, rgba(0, 122, 255, 0.16), transparent 34%),
-    radial-gradient(circle at 90% 62%, rgba(255, 149, 0, 0.13), transparent 38%);
+    radial-gradient(80% 120% at 12% 20%, rgba(0, 122, 255, 0.16), transparent 58%),
+    radial-gradient(80% 130% at 92% 76%, rgba(255, 149, 0, 0.12), transparent 60%),
+    linear-gradient(115deg, transparent 28%, rgba(175, 82, 222, 0.1) 62%, transparent 84%);
   pointer-events: none;
 }
 
@@ -1063,26 +1051,11 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(246, 251, 255, 0.9);
-  background:
-    radial-gradient(
-      circle at 32% 24%,
-      rgba(255, 255, 255, 0.98) 0%,
-      rgba(255, 255, 255, 0.55) 26%,
-      transparent 56%
-    ),
-    linear-gradient(
-      145deg,
-      rgba(255, 255, 255, 0.82),
-      rgba(211, 235, 255, 0.46) 58%,
-      rgba(244, 238, 255, 0.56)
-    ),
-    var(--glass-floating-bg, #f5f9ffd9);
-  border: 1px solid rgba(255, 255, 255, 0.94);
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.98),
-    inset 0 -3px 8px rgba(54, 101, 145, 0.12),
-    0 6px 18px rgba(0, 122, 255, 0.16);
+  background: var(--frosted-orb-bg);
+  background-size: var(--frosted-orb-size);
+  background-repeat: var(--frosted-orb-repeat);
+  border: 1px solid var(--frosted-border);
+  box-shadow: var(--frosted-shadow), 0 6px 18px rgba(0, 122, 255, 0.12);
   overflow: hidden;
 }
 

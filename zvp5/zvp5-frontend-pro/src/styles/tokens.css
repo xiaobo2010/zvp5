@@ -84,21 +84,68 @@
      readable without relying on the page behind it. */
   --glass-tablet-bg: linear-gradient(147deg, #fffdf9f7, #edf5fdf4 57%, #f8f5fff7);
   --glass-tablet-floating-bg: linear-gradient(145deg, #fffdf9fb, #f3f8fef9 60%, #f8f5fffb);
-  /* Static frosted material for small controls and feedback bubbles. It is
-     deliberately self-contained: no backdrop-filter, so tablet compositors
-     cannot blank the control, while the milky highlight, rim and inner shadow
-     still read as frosted glass. */
   --frosted-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='80' height='80' filter='url(%23n)' opacity='.06'/%3E%3C/svg%3E");
+  /* Gradient frosted glass: one self-contained material for the time surface
+     and every liquid-glass control. The sky -> periwinkle -> warm stops keep
+     it visibly gradient, the grain and top highlight sell the frost, and no
+     backdrop-filter is involved, so it renders the same everywhere. */
   --frosted-bg: var(--frosted-grain),
-    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.93), transparent 60%),
-    linear-gradient(145deg, rgb(255 255 255 / 0.63), rgb(234 246 255 / 0.45) 56%, rgb(250 245 255 / 0.58));
+    radial-gradient(140% 190% at 14% 0%, rgb(255 255 255 / 0.95), transparent 58%),
+    linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.84) 0%,
+      rgb(204 232 255 / 0.62) 30%,
+      rgb(224 222 255 / 0.54) 60%,
+      rgb(255 240 228 / 0.6) 86%,
+      rgb(255 255 255 / 0.72) 100%
+    );
+  --frosted-primary-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.48), transparent 58%),
+    linear-gradient(135deg, #59b3ff 0%, #0071e3 52%, #3052c9 100%);
+  --frosted-danger-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.42), transparent 58%),
+    linear-gradient(135deg, #ff7a6e 0%, #ef4444 52%, #c81e1e 100%);
+  --frosted-rose-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 14% 0%, rgb(255 255 255 / 0.9), transparent 60%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.88), rgb(255 226 222 / 0.62) 58%, rgb(255 244 242 / 0.72));
+  --frosted-neutral-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 14% 0%, rgb(255 255 255 / 0.9), transparent 60%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.82), rgb(226 232 240 / 0.58) 58%, rgb(244 246 250 / 0.7));
+  /* Round time orbs read better with a radial white core plus a cool lower
+     rim, so the frost stays a gradient instead of washing out in a circle. */
+  --frosted-orb-bg: var(--frosted-grain),
+    radial-gradient(circle at 32% 24%, rgb(255 255 255 / 0.98) 0%, rgb(255 255 255 / 0.5) 22%, transparent 56%),
+    radial-gradient(circle at 74% 84%, rgb(196 226 255 / 0.6), transparent 58%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.8), rgb(224 222 255 / 0.52) 60%, rgb(255 240 228 / 0.6));
   --frosted-size: 80px 80px, auto, auto;
   --frosted-repeat: repeat, no-repeat, no-repeat;
+  --frosted-orb-size: 80px 80px, auto, auto, auto;
+  --frosted-orb-repeat: repeat, no-repeat, no-repeat, no-repeat;
   --frosted-border: rgb(255 255 255 / 0.92);
+  --frosted-primary-border: rgb(255 255 255 / 0.58);
+  --frosted-danger-border: rgb(255 255 255 / 0.5);
+  --frosted-rose-border: rgb(255 255 255 / 0.9);
+  --frosted-neutral-border: rgb(255 255 255 / 0.88);
   --frosted-rim: inset 0 1px 0 rgb(255 255 255 / 0.98), inset 0 -1px 0 rgb(74 109 143 / 0.12),
     inset 1px 0 0 rgb(255 255 255 / 0.58);
+  --frosted-primary-rim: inset 0 1px 0 rgb(255 255 255 / 0.46), inset 0 -1px 0 rgb(0 0 0 / 0.12);
+  --frosted-danger-rim: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -1px 0 rgb(0 0 0 / 0.14);
   --frosted-shadow: var(--frosted-rim), 0 4px 12px rgb(47 78 103 / 0.08),
     0 16px 36px rgb(51 79 108 / 0.14);
+  --frosted-shadow-hover: var(--frosted-rim), 0 6px 16px rgb(47 78 103 / 0.1),
+    0 22px 44px rgb(51 79 108 / 0.16);
+  --frosted-primary-shadow: var(--frosted-primary-rim), 0 4px 14px rgb(0 113 227 / 0.26),
+    0 14px 30px rgb(0 80 180 / 0.18);
+  --frosted-primary-shadow-hover: var(--frosted-primary-rim), 0 6px 18px rgb(0 113 227 / 0.32),
+    0 20px 40px rgb(0 80 180 / 0.22);
+  --frosted-danger-shadow: var(--frosted-danger-rim), 0 4px 14px rgb(200 30 30 / 0.24),
+    0 14px 30px rgb(160 20 20 / 0.16);
+  --frosted-danger-shadow-hover: var(--frosted-danger-rim), 0 6px 18px rgb(200 30 30 / 0.3),
+    0 20px 40px rgb(160 20 20 / 0.2);
+  --frosted-rose-shadow: var(--frosted-rim), 0 4px 12px rgb(190 40 40 / 0.1),
+    0 14px 30px rgb(190 40 40 / 0.1);
+  --frosted-neutral-shadow: var(--frosted-rim), 0 4px 12px rgb(60 72 88 / 0.08),
+    0 14px 30px rgb(60 72 88 / 0.1);
   --glass-highlight: linear-gradient(
     162deg,
     #fffefbe6,
