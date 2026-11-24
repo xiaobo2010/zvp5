@@ -33,6 +33,20 @@ const ZOOM_MAX = 1.35
 const ZOOM_STEP = 0.06
 const sceneScale = ref(1)
 
+// Drag state
+const draggingCard = ref<string | null>(null)
+const cardOffsets = ref<Record<string, { x: number; y: number }>>({})
+let dragStartX = 0
+let dragStartY = 0
+let dragStartOffsetX = 0
+let dragStartOffsetY = 0
+
+// Vertical swipe state
+let touchStartY = 0
+let touchStartX = 0
+let lastWheelTime = 0
+const WHEEL_COOLDOWN = 400
+
 function clampSceneScale(value: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100))
 }
@@ -46,8 +60,42 @@ function resetZoom() {
 }
 
 function onWheelZoom(event: WheelEvent) {
-  if (Math.abs(event.deltaY) < 1) return
-  zoomBy(event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
+  // Ctrl/Cmd + wheel for zoom
+  if (event.ctrlKey || event.metaKey) {
+    if (Math.abs(event.deltaY) < 1) return
+    event.preventDefault()
+    zoomBy(event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
+    return
+  }
+
+  // Don't navigate inside scrollable content or HUD controls.
+  const target = event.target as HTMLElement
+  if (
+    target.closest('.extra-list') ||
+    target.closest('.instrument-dock') ||
+    target.closest('.stage-nav') ||
+    target.closest('.zoom-hud') ||
+    (isMobile.value && target.closest('.cluster'))
+  ) {
+    return
+  }
+
+  // Don't navigate while dragging
+  if (draggingCard.value) return
+
+  // Plain wheel for navigation with cooldown
+  const now = Date.now()
+  if (now - lastWheelTime < WHEEL_COOLDOWN) return
+
+  if (Math.abs(event.deltaY) > 10) {
+    event.preventDefault()
+    lastWheelTime = now
+    if (event.deltaY > 0) {
+      go(1) // wheel down = next module
+    } else {
+      go(-1) // wheel up = previous module
+    }
+  }
 }
 
 const modules = computed(() => props.data.modules)
@@ -103,11 +151,17 @@ function getHourDelta(hours: number): string {
   return `${prefix} ${Math.abs(delta).toFixed(1)} h`
 }
 
-function tilt(position: 'left' | 'center' | 'right'): number {
+const DESKTOP_TILT_MAX = 18
+const MOBILE_TILT_MAX = 10
+const CLUSTER_WIDTH = 900
+const ACTIVITY_WIDTH = 1040
+
+function tiltFromCenter(centerPercent: number): number {
   if (reduced.value) return 0
-  if (position === 'center') return 0
-  if (isMobile.value) return position === 'left' ? 6 : -6
-  return position === 'left' ? 13 : -13
+  const maxTilt = isMobile.value ? MOBILE_TILT_MAX : DESKTOP_TILT_MAX
+  // 25%/75% are the extreme side-card centers; centered cards stay flat.
+  const normalized = (centerPercent - 50) / 25
+  return Math.max(-maxTilt, Math.min(maxTilt, normalized * maxTilt))
 }
 
 function depthStyle(index: number) {
@@ -153,8 +207,6 @@ function goTo(index: number) {
     warp.value = false
     reverse.value = false
     stageRoot.value?.classList.remove('is-transitioning')
-    // The incoming module's scroll container can be shifted by the Z transition;
-    // put it back at the top once the scene has settled.
     requestAnimationFrame(resetActiveScroll)
   }, TRANSITION_DUR)
 }
@@ -168,10 +220,10 @@ function onKeydown(event: KeyboardEvent) {
   if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
     return
   }
-  if (event.key === 'ArrowRight') {
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
     event.preventDefault()
     go(1)
-  } else if (event.key === 'ArrowLeft') {
+  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
     event.preventDefault()
     go(-1)
   }
@@ -208,9 +260,9 @@ function updatePointerFrame() {
     currentY = targetY
   }
 
-  // Mouse X drives rotateY, mouse Y drives rotateX.
-  root.style.setProperty('--pointer-x', `${(currentY * 3.2).toFixed(2)}deg`)
-  root.style.setProperty('--pointer-y', `${(currentX * 3.2).toFixed(2)}deg`)
+  // Increased from ±3.2° to ±9°
+  root.style.setProperty('--pointer-x', `${(currentY * 9).toFixed(2)}deg`)
+  root.style.setProperty('--pointer-y', `${(currentX * 9).toFixed(2)}deg`)
 
   rafId = settled ? undefined : requestAnimationFrame(updatePointerFrame)
 }
@@ -223,6 +275,105 @@ function onResize() {
   viewportWidth.value = window.innerWidth
 }
 
+// Dragging logic (desktop only)
+function onCardPointerDown(event: PointerEvent, cardKey: string) {
+  if (isMobile.value) return
+  const target = event.target as HTMLElement
+  // Don't start drag from scrollable .extra-list content
+  if (target.closest('.extra-list')) return
+
+  event.preventDefault()
+  draggingCard.value = cardKey
+  dragStartX = event.clientX
+  dragStartY = event.clientY
+  const current = cardOffsets.value[cardKey] || { x: 0, y: 0 }
+  dragStartOffsetX = current.x
+  dragStartOffsetY = current.y
+
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'grabbing'
+
+  window.addEventListener('pointermove', onDragMove)
+  window.addEventListener('pointerup', onDragEnd)
+}
+
+function onDragMove(event: PointerEvent) {
+  if (!draggingCard.value) return
+  const dx = event.clientX - dragStartX
+  const dy = event.clientY - dragStartY
+
+  // Clamp to viewport so card doesn't get lost
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const maxOffset = Math.min(vw, vh) * 0.4
+
+  cardOffsets.value[draggingCard.value] = {
+    x: Math.max(-maxOffset, Math.min(maxOffset, dragStartOffsetX + dx)),
+    y: Math.max(-maxOffset, Math.min(maxOffset, dragStartOffsetY + dy))
+  }
+}
+
+function onDragEnd() {
+  if (!draggingCard.value) return
+  draggingCard.value = null
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  window.removeEventListener('pointermove', onDragMove)
+  window.removeEventListener('pointerup', onDragEnd)
+}
+
+function getCardStyle(cardKey: string, baseCenter: number) {
+  const offset = cardOffsets.value[cardKey] || { x: 0, y: 0 }
+  const actualCenter = baseCenter + (offset.x / CLUSTER_WIDTH) * 100
+  const actualTilt = tiltFromCenter(actualCenter)
+
+  return {
+    '--drag-x': `${offset.x}px`,
+    '--drag-y': `${offset.y}px`,
+    '--card-tilt': `${actualTilt.toFixed(1)}deg`,
+    cursor: isMobile.value ? 'default' : (draggingCard.value === cardKey ? 'grabbing' : 'grab'),
+    zIndex: draggingCard.value === cardKey ? '1000' : undefined
+  }
+}
+
+// Vertical swipe navigation
+function onTouchStart(event: TouchEvent) {
+  if (draggingCard.value || event.touches.length !== 1) return
+  const touch = event.touches[0]
+  touchStartY = touch.clientY
+  touchStartX = touch.clientX
+}
+
+function onTouchEnd(event: TouchEvent) {
+  if (draggingCard.value) return
+  const touch = event.changedTouches[0]
+  const deltaY = touch.clientY - touchStartY
+  const deltaX = touch.clientX - touchStartX
+
+  // Let nested scroll areas consume a vertical gesture until they hit an edge.
+  // Once at the edge, the same swipe navigates to the previous/next module.
+  const target = event.target as HTMLElement
+  if (target.closest('.instrument-dock') || target.closest('.stage-nav') || target.closest('.zoom-hud')) {
+    return
+  }
+  const scrollable = target.closest<HTMLElement>('.extra-list, .cluster')
+  if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
+    const atTop = scrollable.scrollTop <= 1
+    const atBottom =
+      scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1
+    if ((deltaY < 0 && !atBottom) || (deltaY > 0 && !atTop)) return
+  }
+
+  // Vertical swipe threshold: ~56px, more vertical than horizontal
+  if (Math.abs(deltaY) > 56 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5) {
+    if (deltaY < 0) {
+      go(1) // swipe up = next
+    } else {
+      go(-1) // swipe down = previous
+    }
+  }
+}
+
 onMounted(() => {
   media = window.matchMedia('(prefers-reduced-motion: reduce)')
   syncMotion(media)
@@ -230,8 +381,9 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('resize', onResize)
+  window.addEventListener('touchstart', onTouchStart, { passive: true })
+  window.addEventListener('touchend', onTouchEnd, { passive: true })
 
-  // Server time ticker with 1s interval
   serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
   serverTimeTimer = setInterval(() => {
     serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
@@ -243,9 +395,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('touchstart', onTouchStart)
+  window.removeEventListener('touchend', onTouchEnd)
   if (transitionTimer) clearTimeout(transitionTimer)
   if (serverTimeTimer) clearInterval(serverTimeTimer)
   if (rafId !== undefined) cancelAnimationFrame(rafId)
+  onDragEnd()
 })
 
 // Seeded PRNG: stable per activity id, but irregular to the eye.
@@ -260,9 +415,6 @@ function seededRandom(seed: number): () => number {
 function activityScatterStyle(activity: StageActivity, index: number): Record<string, string> {
   if (isMobile.value) return {}
 
-  // Hand-placed irregular anchors (percent of the 1040x500 field), then seeded
-  // jitter. This is intentionally not a grid: the three top cards and three
-  // lower cards sit at different heights and depths.
   const slots = [
     [4, 10],
     [28, 4],
@@ -290,10 +442,8 @@ function activityScatterStyle(activity: StageActivity, index: number): Record<st
   const height = 124 + Math.round(rng() * 14)
   const rotation = (rng() - 0.5) * 5
   const zDepth = -30 - Math.round(rng() * 120)
-
-  // Tilt follows the actual x position, not the index.
-  const center = left + width / 2
-  const tilt = Math.max(-13, Math.min(13, ((center - 50) / 50) * 12))
+  const cardKey = `activity-${activity.id}`
+  const offset = cardOffsets.value[cardKey] || { x: 0, y: 0 }
 
   return {
     position: 'absolute',
@@ -301,10 +451,52 @@ function activityScatterStyle(activity: StageActivity, index: number): Record<st
     top: `${top.toFixed(2)}%`,
     width: `${width.toFixed(2)}%`,
     height: `${height}px`,
-    transform: `rotate(${rotation.toFixed(2)}deg)`,
-    '--card-z': `${zDepth}px`,
-    '--card-tilt': `${tilt.toFixed(1)}deg`,
-    zIndex: String(1 + index)
+    '--drag-x': `${offset.x}px`,
+    '--drag-y': `${offset.y}px`,
+    '--card-rotate': `${rotation.toFixed(2)}deg`,
+    '--card-scale': `${(1 + zDepth / 1000).toFixed(3)}`,
+    cursor: isMobile.value ? 'default' : draggingCard.value === cardKey ? 'grabbing' : 'grab',
+    zIndex: draggingCard.value === cardKey ? '1000' : String(1 + index)
+  }
+}
+
+function getActivityCardStyle(activity: StageActivity, index: number) {
+  const cardKey = `activity-${activity.id}`
+  const offset = cardOffsets.value[cardKey] || { x: 0, y: 0 }
+
+  // Base tilt from seeded position
+  const slots = [
+    [4, 10],
+    [28, 4],
+    [55, 14],
+    [12, 62],
+    [46, 46],
+    [73, 66]
+  ]
+  const visibleCount = Math.max(1, recent.value.length)
+  const slotIndex =
+    visibleCount > 1
+      ? Math.round((index * (slots.length - 1)) / (visibleCount - 1))
+      : 0
+  const [baseX] = slots[slotIndex]
+
+  let seed = 0
+  for (let i = 0; i < activity.id.length; i++) {
+    seed = (seed * 31 + activity.id.charCodeAt(i)) | 0
+  }
+  const rng = seededRandom(seed)
+  const left = Math.min(74, Math.max(2, baseX + (rng() - 0.5) * 3.2))
+  const width = 22 + rng() * 2
+
+  // Compute tilt from the card's actual center, including its drag offset.
+  const actualCenter = left + width / 2 + (offset.x / ACTIVITY_WIDTH) * 100
+  const actualTilt = tiltFromCenter(actualCenter)
+
+  return {
+    '--drag-x': '0px',
+    '--drag-y': '0px',
+    '--card-z': '0px',
+    '--card-tilt': `${actualTilt.toFixed(1)}deg`
   }
 }
 
@@ -344,8 +536,59 @@ function extraTone(item: StageExtraItem) {
     <StarfieldCanvas :warp="warp" :reduced="reduced" :reverse="reverse" />
     <div class="stage-shade" aria-hidden="true"></div>
 
+    <!-- Left instrument dock -->
+    <nav class="instrument-dock" aria-label="主导航">
+      <div class="dock-head" aria-hidden="true">
+        <span class="dock-head-label">NAV</span>
+        <span class="dock-head-line"></span>
+        <span class="dock-head-code">03</span>
+      </div>
+      <button
+        type="button"
+        class="dock-btn is-active"
+        @click="goTo(0)"
+        aria-label="首页"
+        aria-current="page"
+      >
+        <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 10L10 3L17 10M5 8V17H8V13H12V17H15V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="dock-label">首页</span>
+        <span class="dock-led"></span>
+      </button>
+
+      <button
+        type="button"
+        class="dock-btn"
+        disabled
+        aria-label="义工列表（待开放）"
+        aria-disabled="true"
+      >
+        <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 6H17M3 10H17M3 14H17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="dock-label">义工列表</span>
+        <span class="dock-status">待接入</span>
+      </button>
+
+      <button
+        type="button"
+        class="dock-btn"
+        disabled
+        aria-label="个人中心（待开放）"
+        aria-disabled="true"
+      >
+        <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M4 17C4 14 6.5 12 10 12C13.5 12 16 14 16 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="dock-label">个人中心</span>
+        <span class="dock-status">待开放</span>
+      </button>
+    </nav>
+
     <!-- 3D scene -->
-    <div class="stage-scene" @wheel.prevent="onWheelZoom">
+    <div class="stage-scene" @wheel="onWheelZoom">
       <div class="scene-zoom" :style="{ '--scene-scale': sceneScale }">
         <div class="stage-track">
         <div
@@ -362,7 +605,9 @@ function extraTone(item: StageExtraItem) {
               <!-- Left: Greeting + Name + Info + Server Time -->
               <div
                 class="card card--identity-left"
-                :style="{ '--card-tilt': `${tilt('left')}deg` }"
+                :data-card-key="`identity-left`"
+                :style="getCardStyle('identity-left', 24.1)"
+                @pointerdown="onCardPointerDown($event, 'identity-left')"
               >
                 <div class="card-thickness" aria-hidden="true">
                   <span class="card-thickness__top"></span>
@@ -415,7 +660,9 @@ function extraTone(item: StageExtraItem) {
               <!-- Right: Total Hours + Pending Badge -->
               <div
                 class="card card--identity-right"
-                :style="{ '--card-tilt': `${tilt('right')}deg` }"
+                :data-card-key="`identity-right`"
+                :style="getCardStyle('identity-right', 75.9)"
+                @pointerdown="onCardPointerDown($event, 'identity-right')"
               >
                 <div class="card-thickness" aria-hidden="true">
                   <span class="card-thickness__top"></span>
@@ -459,7 +706,9 @@ function extraTone(item: StageExtraItem) {
                 v-for="(point, idx) in data.hours.points"
                 :key="point.key"
                 class="hours-item"
-                :style="{ '--card-tilt': `${tilt(idx === 0 ? 'left' : idx === 2 ? 'right' : 'center')}deg` }"
+                :data-card-key="`hours-${idx}`"
+                :style="getCardStyle(`hours-${idx}`, [15.6, 50, 84.4][idx] ?? 50)"
+                @pointerdown="onCardPointerDown($event, `hours-${idx}`)"
               >
                 <div class="bar-head">
                   <span class="bar-label">{{ point.label }}</span>
@@ -492,11 +741,13 @@ function extraTone(item: StageExtraItem) {
                 v-for="(activity, idx) in recent"
                 :key="activity.id"
                 class="activity-card-wrapper"
+                :data-card-key="`activity-${activity.id}`"
                 :style="activityScatterStyle(activity, idx)"
+                @pointerdown="onCardPointerDown($event, `activity-${activity.id}`)"
               >
                 <div
                   class="card card--activity"
-                  :style="{ '--tone-rgb': activityTone(activity) }"
+                  :style="{ '--tone-rgb': activityTone(activity), ...getActivityCardStyle(activity, idx) }"
                 >
                   <div class="card-thickness" aria-hidden="true">
                     <span class="card-thickness__top"></span>
@@ -541,7 +792,9 @@ function extraTone(item: StageExtraItem) {
               <!-- Left: Agent items -->
               <div
                 class="card card--extra-left"
-                :style="{ '--card-tilt': `${tilt('left')}deg` }"
+                :data-card-key="`extra-left`"
+                :style="getCardStyle('extra-left', 24.1)"
+                @pointerdown="onCardPointerDown($event, 'extra-left')"
               >
                 <div class="card-thickness" aria-hidden="true">
                   <span class="card-thickness__top"></span>
@@ -589,7 +842,9 @@ function extraTone(item: StageExtraItem) {
               <!-- Right: Non-agent items (by role) -->
               <div
                 class="card card--extra-right"
-                :style="{ '--card-tilt': `${tilt('right')}deg` }"
+                :data-card-key="`extra-right`"
+                :style="getCardStyle('extra-right', 75.9)"
+                @pointerdown="onCardPointerDown($event, 'extra-right')"
               >
                 <div class="card-thickness" aria-hidden="true">
                   <span class="card-thickness__top"></span>
@@ -640,27 +895,8 @@ function extraTone(item: StageExtraItem) {
       </div>
     </div>
 
-    <!-- Navigation -->
+    <!-- Navigation: depth rail only -->
     <div class="stage-nav">
-      <button
-        type="button"
-        class="nav-btn nav-btn--prev"
-        :disabled="transitioning || active === 0"
-        @click="go(-1)"
-        aria-label="上一个模块"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16">
-          <path
-            d="M10 3L5 8l5 5"
-            stroke="currentColor"
-            fill="none"
-            stroke-width="1.5"
-            stroke-linecap="round"
-          />
-        </svg>
-        <span>上一个</span>
-      </button>
-
       <div class="depth-rail">
         <div class="rail-track">
           <div class="rail-progress" :style="{ width: `${(active / (total - 1)) * 100}%` }"></div>
@@ -682,26 +918,8 @@ function extraTone(item: StageExtraItem) {
           <span class="counter-sep">/</span>
           <span class="counter-total">{{ String(total).padStart(2, '0') }}</span>
         </div>
+        <div class="rail-hint">上滑 / 下滑切换</div>
       </div>
-
-      <button
-        type="button"
-        class="nav-btn nav-btn--next"
-        :disabled="transitioning || active === total - 1"
-        @click="go(1)"
-        aria-label="下一个模块"
-      >
-        <span>下一个</span>
-        <svg width="16" height="16" viewBox="0 0 16 16">
-          <path
-            d="M6 3l5 5-5 5"
-            stroke="currentColor"
-            fill="none"
-            stroke-width="1.5"
-            stroke-linecap="round"
-          />
-        </svg>
-      </button>
 
       <div
         class="nav-announcement sr-only"
@@ -736,6 +954,9 @@ function extraTone(item: StageExtraItem) {
         aria-label="放大场景"
       >+</button>
     </div>
+
+    <!-- Drag hint -->
+    <div class="drag-hint" v-if="!isMobile">卡片可拖动</div>
   </div>
 </template>
 
@@ -828,6 +1049,145 @@ function extraTone(item: StageExtraItem) {
   transform-origin: bottom;
 }
 
+/* Instrument Dock */
+.instrument-dock {
+  position: fixed;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 10px;
+  background: linear-gradient(160deg, rgb(10 17 31 / 0.95), rgb(6 11 22 / 0.97));
+  border: 1px solid rgb(111 215 196 / 0.3);
+  clip-path: polygon(0 8px, 8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  box-shadow:
+    0 0 20px rgb(111 215 196 / 0.1),
+    inset 0 1px 0 rgb(111 215 196 / 0.08);
+}
+
+.instrument-dock::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgb(111 215 196 / 0.015) 2px,
+    rgb(111 215 196 / 0.015) 4px
+  );
+  pointer-events: none;
+}
+
+.instrument-dock::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: repeating-linear-gradient(
+    0deg,
+    rgb(111 215 196 / 0.4) 0 1px,
+    transparent 1px 8px
+  );
+  pointer-events: none;
+}
+
+.dock-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 6px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: rgb(111 215 196 / 0.55);
+  text-transform: uppercase;
+}
+
+.dock-head-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(111 215 196 / 0.34), transparent);
+}
+
+.dock-head-code {
+  color: rgb(169 211 255 / 0.45);
+}
+
+.dock-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  min-width: 140px;
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgb(169 211 255 / 0.75);
+  background: rgb(14 22 38 / 0.4);
+  border: 1px solid rgb(111 215 196 / 0.15);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 200ms ease-out;
+  text-align: left;
+}
+
+.dock-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dock-btn:not(:disabled):hover {
+  background: rgb(14 22 38 / 0.7);
+  border-color: rgb(111 215 196 / 0.35);
+  color: #c4e2ff;
+  box-shadow: 0 0 16px rgb(111 215 196 / 0.15);
+}
+
+.dock-btn.is-active {
+  background: rgb(14 22 38 / 0.8);
+  border-color: rgb(111 215 196 / 0.6);
+  color: #eef6ff;
+  box-shadow:
+    0 0 20px rgb(111 215 196 / 0.25),
+    inset 0 0 12px rgb(111 215 196 / 0.08);
+}
+
+.dock-icon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.dock-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.dock-led {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #6fd7c4;
+  box-shadow: 0 0 8px rgb(111 215 196 / 0.8);
+}
+
+.dock-status {
+  font-size: 9px;
+  color: rgb(169 211 255 / 0.4);
+  letter-spacing: 0.06em;
+}
+
 /* 3D Scene */
 .stage-scene {
   position: relative;
@@ -836,6 +1196,7 @@ function extraTone(item: StageExtraItem) {
   height: 100%;
   min-height: 100vh;
   padding: 72px 0 104px;
+  padding-left: 190px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -875,6 +1236,10 @@ function extraTone(item: StageExtraItem) {
     visibility var(--transition-dur);
 }
 
+.stage-module[aria-hidden='true'] {
+  pointer-events: none;
+}
+
 /* Cluster Container (multi-card layout per module) */
 .cluster {
   position: relative;
@@ -908,9 +1273,14 @@ function extraTone(item: StageExtraItem) {
   overflow: visible;
 }
 
+
 .activity-card-wrapper {
   position: absolute;
   transform-style: preserve-3d;
+  transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
+    rotate(var(--card-rotate, 0deg)) scale(var(--card-scale, 1));
+  transition: transform 100ms ease-out;
+  background: rgb(0 0 0 / 0.001);
 }
 
 .activity-card-wrapper .card {
@@ -918,6 +1288,8 @@ function extraTone(item: StageExtraItem) {
   height: 100%;
   flex: none;
   min-height: 0;
+  /* Keep the card hit-testable; pointerdown bubbles to the draggable wrapper. */
+  pointer-events: auto;
 }
 
 .cluster--extra {
@@ -940,10 +1312,12 @@ function extraTone(item: StageExtraItem) {
   border-radius: 2px;
   --card-depth: 8px;
   transform-style: preserve-3d;
-  transform: perspective(1000px) translateZ(var(--card-z, 0px))
+  transform: perspective(1000px)
+    translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
+    translateZ(var(--card-z, 0px))
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
     rotateX(var(--pointer-x, 0deg));
-  transition: none;
+  transition: transform 100ms ease-out;
   box-shadow:
     4px 4px 0 -1px rgb(8 15 28 / 0.98),
     5px 5px 0 -1px rgb(52 96 150 / 0.32),
@@ -952,7 +1326,9 @@ function extraTone(item: StageExtraItem) {
 }
 
 .card:hover {
-  transform: perspective(1000px) translateZ(calc(var(--card-z, 0px) + 6px))
+  transform: perspective(1000px)
+    translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
+    translateZ(calc(var(--card-z, 0px) + 6px))
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
     rotateX(var(--pointer-x, 0deg));
 }
@@ -1231,8 +1607,10 @@ function extraTone(item: StageExtraItem) {
   box-shadow: none;
   transform-style: preserve-3d;
   transform: perspective(1000px)
+    translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
     rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
     rotateX(var(--pointer-x, 0deg));
+  transition: transform 100ms ease-out;
 }
 
 .bar-head {
@@ -1521,12 +1899,6 @@ function extraTone(item: StageExtraItem) {
   border-bottom: 1px solid rgb(169 211 255 / 0.08);
 }
 
-.extra-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
 .extra-item {
   display: flex;
   gap: 12px;
@@ -1612,39 +1984,6 @@ function extraTone(item: StageExtraItem) {
   align-items: center;
   gap: 28px;
   z-index: 100;
-}
-
-.nav-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 20px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: #c7e4ff;
-  background: rgb(10 17 31 / 0.92);
-  border: 1px solid rgb(169 211 255 / 0.22);
-  border-radius: 1px;
-  cursor: pointer;
-  transition: all 200ms ease-out;
-}
-
-.nav-btn:hover:not(:disabled) {
-  background: rgb(16 24 42 / 0.8);
-  border-color: rgb(169 211 255 / 0.3);
-  color: #eef6ff;
-  box-shadow: 0 0 20px rgb(169 211 255 / 0.1);
-}
-
-.nav-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.nav-btn svg {
-  width: 14px;
-  height: 14px;
 }
 
 /* Scene zoom HUD */
@@ -1788,6 +2127,29 @@ function extraTone(item: StageExtraItem) {
   opacity: 0.4;
 }
 
+.rail-hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgb(169 211 255 / 0.4);
+  margin-top: 4px;
+}
+
+.drag-hint {
+  position: fixed;
+  right: 26px;
+  bottom: 68px;
+  z-index: 120;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgb(169 211 255 / 0.5);
+  background: rgb(10 17 31 / 0.85);
+  border: 1px solid rgb(169 211 255 / 0.15);
+  border-radius: 1px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1804,6 +2166,42 @@ function extraTone(item: StageExtraItem) {
 @media (max-width: 720px) {
   .stage-scene {
     padding: 64px 0 92px;
+    padding-left: 60px;
+  }
+
+  .instrument-dock {
+    left: 8px;
+    padding: 8px 6px;
+    gap: 6px;
+  }
+
+  .dock-head {
+    display: none;
+  }
+
+  .instrument-dock::after {
+    display: none;
+  }
+
+  .dock-btn {
+    min-width: 0;
+    padding: 10px;
+    gap: 0;
+  }
+
+  .dock-label,
+  .dock-status {
+    display: none;
+  }
+
+  .dock-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .dock-led {
+    top: 6px;
+    right: 6px;
   }
 
   .cluster {
@@ -1917,16 +2315,6 @@ function extraTone(item: StageExtraItem) {
     gap: 16px;
   }
 
-  .nav-btn {
-    padding: 10px 16px;
-    font-size: 11px;
-    gap: 8px;
-  }
-
-  .nav-btn span {
-    display: none;
-  }
-
   .depth-rail {
     padding: 12px 16px;
   }
@@ -1935,9 +2323,13 @@ function extraTone(item: StageExtraItem) {
     width: 120px;
   }
 
+  .rail-hint {
+    font-size: 8px;
+  }
+
   .zoom-hud {
     right: 14px;
-    bottom: 92px;
+    bottom: 118px;
   }
 
   .zoom-btn {
@@ -1950,14 +2342,22 @@ function extraTone(item: StageExtraItem) {
     height: 26px;
     font-size: 10px;
   }
+
+  .drag-hint {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .card,
   .card:hover,
-  .hours-item,
+  .hours-item {
+    transform: perspective(1000px)
+      translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0) !important;
+  }
+
   .activity-card-wrapper {
-    transform: none !important;
+    transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0) !important;
   }
 
   .stage-track {
