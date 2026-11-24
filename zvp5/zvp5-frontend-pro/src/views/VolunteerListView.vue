@@ -78,6 +78,76 @@ let pagerStartX = 0
 let pagerMoved = false
 let pagerSuppressClick = false
 
+// The scope selector uses one measured indicator, exactly like the site drawer:
+// it lives in the tab-strip's content coordinates and animates transform/width
+// only, so retargeting while it is still travelling is handled by CSS.
+const scopeTabsRef = ref<HTMLElement | null>(null)
+const scopeIndicatorState = ref({ left: 0, width: 0, ready: false })
+const scopeCanSlide = ref(false)
+const scopeTabEls = new Map<ActivityScope, HTMLElement>()
+let scopeObserver: ResizeObserver | null = null
+let scopeMeasureFrame = 0
+let scopeSlideFrame = 0
+
+function setScopeTabRef(tab: ActivityScope, el: unknown) {
+  if (el instanceof HTMLElement) scopeTabEls.set(tab, el)
+  else scopeTabEls.delete(tab)
+}
+
+function enableScopeSlide() {
+  if (scopeSlideFrame) window.cancelAnimationFrame(scopeSlideFrame)
+  scopeSlideFrame = window.requestAnimationFrame(() => {
+    scopeSlideFrame = 0
+    scopeCanSlide.value = true
+  })
+}
+
+function measureScopeIndicator(snap = false) {
+  const host = scopeTabsRef.value
+  const active = scopeTabEls.get(activeTab.value)
+  if (!host || !active) {
+    if (scopeIndicatorState.value.ready) {
+      scopeIndicatorState.value = { ...scopeIndicatorState.value, ready: false }
+    }
+    return
+  }
+
+  const hostRect = host.getBoundingClientRect()
+  const activeRect = active.getBoundingClientRect()
+  const instant = snap || !scopeIndicatorState.value.ready
+  if (instant) scopeCanSlide.value = false
+  scopeIndicatorState.value = {
+    left: activeRect.left - hostRect.left + host.scrollLeft,
+    width: activeRect.width,
+    ready: true
+  }
+  if (instant) enableScopeSlide()
+}
+
+function scheduleScopeMeasure(snap = false) {
+  if (scopeMeasureFrame) return
+  scopeMeasureFrame = window.requestAnimationFrame(() => {
+    scopeMeasureFrame = 0
+    measureScopeIndicator(snap)
+  })
+}
+
+function handleScopeResize() {
+  scheduleScopeMeasure(false)
+}
+
+function ensureScopeObserver() {
+  const host = scopeTabsRef.value
+  if (!host || typeof ResizeObserver === 'undefined') {
+    scopeObserver?.disconnect()
+    scopeObserver = null
+    return
+  }
+  if (scopeObserver) return
+  scopeObserver = new ResizeObserver(() => scheduleScopeMeasure(false))
+  scopeObserver.observe(host)
+}
+
 function setPagerPageRef(page: number, el: unknown) {
   if (el instanceof HTMLElement) {
     pagerPages.set(page, el)
@@ -194,6 +264,9 @@ function handlePagerClick(page: number) {
 }
 
 watch(activePage, () => void syncPager())
+watch(activeTab, () => {
+  void nextTick(() => measureScopeIndicator())
+})
 watch(expandedActivityId, () => resetAuditState())
 watch(totalPages, () => void syncPager(false))
 watch(
@@ -441,8 +514,18 @@ function handleAuditEscape(event: KeyboardEvent, id: string) {
 onMounted(() => {
   void bootstrap()
   window.addEventListener('resize', measurePager)
-  if (document.fonts?.ready) void document.fonts.ready.then(() => syncPager(false))
+  window.addEventListener('resize', handleScopeResize)
+  if (document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      syncPager(false)
+      measureScopeIndicator(false)
+    })
+  }
   void syncPager(false)
+  void nextTick(() => {
+    ensureScopeObserver()
+    measureScopeIndicator(true)
+  })
 })
 
 onBeforeUnmount(() => {
@@ -450,7 +533,13 @@ onBeforeUnmount(() => {
   pagerObserver = null
   pagerObserverHost = null
   pagerPages.clear()
+  scopeObserver?.disconnect()
+  scopeObserver = null
+  scopeTabEls.clear()
+  if (scopeMeasureFrame) window.cancelAnimationFrame(scopeMeasureFrame)
+  if (scopeSlideFrame) window.cancelAnimationFrame(scopeSlideFrame)
   window.removeEventListener('resize', measurePager)
+  window.removeEventListener('resize', handleScopeResize)
 })
 </script>
 
@@ -483,12 +572,14 @@ onBeforeUnmount(() => {
 
     <nav
       v-if="canBrowseScopes"
+      ref="scopeTabsRef"
       class="scope-tabs glass-card surface-enter"
       :style="{ '--i': 1 }"
       role="tablist"
       aria-label="活动范围"
     >
       <button
+        :ref="(el) => setScopeTabRef('mine', el)"
         class="scope-tab"
         :class="{ 'is-active': activeTab === 'mine' }"
         role="tab"
@@ -498,6 +589,7 @@ onBeforeUnmount(() => {
         我的活动
       </button>
       <button
+        :ref="(el) => setScopeTabRef('class', el)"
         class="scope-tab"
         :class="{ 'is-active': activeTab === 'class' }"
         role="tab"
@@ -507,6 +599,7 @@ onBeforeUnmount(() => {
         班级活动
       </button>
       <button
+        :ref="(el) => setScopeTabRef('campus', el)"
         class="scope-tab"
         :class="{ 'is-active': activeTab === 'campus' }"
         role="tab"
@@ -515,7 +608,15 @@ onBeforeUnmount(() => {
       >
         校园活动
       </button>
-      <span class="scope-indicator" aria-hidden="true" />
+      <span
+        class="scope-indicator"
+        :class="{ 'is-ready': scopeIndicatorState.ready, 'can-slide': scopeCanSlide }"
+        aria-hidden="true"
+        :style="{
+          transform: `translate3d(${scopeIndicatorState.left}px, 0, 0)`,
+          width: `${scopeIndicatorState.width}px`
+        }"
+      />
     </nav>
 
     <div class="search-bar glass-card surface-enter" :style="{ '--i': 2 }">
@@ -923,25 +1024,38 @@ onBeforeUnmount(() => {
   z-index: 0;
 }
 
+/* Same measured spring target as the site drawer: one indicator that slides
+   between the scope tabs and can be retargeted mid-flight. */
 .scope-indicator {
   position: absolute;
-  left: 6px;
+  left: 0;
   top: 6px;
+  width: 0;
   height: calc(100% - 12px);
-  width: calc(33.333% - 8px);
-  background: linear-gradient(135deg, rgba(0, 113, 227, 0.15) 0%, rgba(0, 113, 227, 0.08) 100%);
   border-radius: var(--radius-pill);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 8px rgba(14, 165, 233, 0.25);
+  background:
+    radial-gradient(ellipse at 18% 0%, #ffffffd9, transparent 62%),
+    var(--nav-highlight);
+  border: 1px solid color-mix(in srgb, var(--accent-ink) 30%, transparent);
+  box-shadow:
+    0 6px 16px color-mix(in srgb, var(--accent-ink) 16%, transparent),
+    0 1px 3px #1230521f,
+    inset 0 1px 0 #ffffffe6;
+  opacity: 0;
   pointer-events: none;
-  transition: transform 420ms cubic-bezier(0.34, 1.12, 0.64, 1);
+  transform: translate3d(0, 0, 0);
+  transition: opacity 180ms var(--ease-smooth);
 }
 
-.scope-tab:nth-child(2).is-active ~ .scope-indicator {
-  transform: translateX(calc(100% + 4px));
+.scope-indicator.is-ready {
+  opacity: 1;
 }
 
-.scope-tab:nth-child(3).is-active ~ .scope-indicator {
-  transform: translateX(calc(200% + 8px));
+.scope-indicator.can-slide {
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    width 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    opacity 180ms var(--ease-smooth);
 }
 
 .search-bar {
@@ -1167,9 +1281,10 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: none;
   transition:
-    transform 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
-    width 470ms cubic-bezier(0.16, 1.72, 0.3, 1),
+    transform 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    width 420ms cubic-bezier(0.34, 1.28, 0.64, 1),
     opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, width;
   z-index: 0;
 }
 
@@ -1217,6 +1332,11 @@ onBeforeUnmount(() => {
   border-color: transparent;
   color: var(--color-brand);
   font-weight: 700;
+}
+
+.pagination-page:active {
+  transform: scale(0.94);
+  transition-duration: 120ms;
 }
 
 .pagination-page:focus-visible {
