@@ -1,0 +1,110 @@
+/* Aggressive overrides for injected theme selector */
+
+/* Overlay */
+html body .zvms-theme-overlay {
+  background: rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Dialog container */
+html body .zvms-theme-dialog {
+  border: 1px solid rgb(169 211 255 / 0.2) !important;
+  border-radius: 2px !important;
+  background: rgb(14 22 38 / 0.95) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  padding: 16px !important;
+}
+
+/* Dialog title/label */
+html body .zvms-theme-dialog h2,
+html body .zvms-theme-dialog h3,
+html body .zvms-theme-dialog label {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  letter-spacing: 0.08em !important;
+  color: rgb(169 211 255 / 0.9) !important;
+  font-weight: 500 !important;
+}
+
+/* Option buttons */
+html body .zvms-theme-dialog__option {
+  padding: 8px 12px !important;
+  margin: 4px 0 !important;
+  border: 1px solid rgb(111 215 196 / 0.25) !important;
+  border-radius: 2px !important;
+  background: rgb(8 15 28 / 0.8) !important;
+  color: rgb(169 211 255 / 0.72) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 10px !important;
+  letter-spacing: 0.04em !important;
+  cursor: pointer !important;
+  transition: border-color 160ms ease, background 160ms ease !important;
+  box-shadow: none !important;
+}
+
+html body .zvms-theme-dialog__option:hover {
+  border-color: rgb(111 215 196 / 0.6) !important;
+  background: rgb(20 42 48 / 0.9) !important;
+  color: #eef6ff !important;
+  box-shadow: none !important;
+}
+
+html body .zvms-theme-dialog__option:active {
+  border-color: rgb(111 215 196 / 0.8) !important;
+  background: rgb(32 60 72 / 0.95) !important;
+}
+
+html body .zvms-theme-dialog__option:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+}
+
+/* Primary/selected option */
+html body .zvms-theme-dialog__option.selected,
+html body .zvms-theme-dialog__option[aria-pressed="true"] {
+  border-color: rgb(169 211 255 / 0.6) !important;
+  background: rgb(20 32 54 / 0.95) !important;
+  color: #c4e2ff !important;
+}
+
+/* Dismiss/close button */
+html body .zvms-theme-dialog__dismiss {
+  padding: 6px 10px !important;
+  margin-top: 12px !important;
+  border: 1px solid rgb(111 215 196 / 0.28) !important;
+  border-radius: 2px !important;
+  background: rgb(8 15 28 / 0.8) !important;
+  color: rgb(169 211 255 / 0.72) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 9px !important;
+  letter-spacing: 0.04em !important;
+  cursor: pointer !important;
+  transition: border-color 160ms ease, background 160ms ease !important;
+  box-shadow: none !important;
+}
+
+html body .zvms-theme-dialog__dismiss:hover {
+  border-color: rgb(111 215 196 / 0.6) !important;
+  background: rgb(20 42 48 / 0.9) !important;
+  color: #eef6ff !important;
+  box-shadow: none !important;
+}
+
+html body .zvms-theme-dialog__dismiss:active {
+  border-color: rgb(111 215 196 / 0.8) !important;
+  background: rgb(32 60 72 / 0.95) !important;
+}
+
+/* Remove any inner shadows, glows, or translucency effects */
+html body .zvms-theme-dialog,
+html body .zvms-theme-dialog__option,
+html body .zvms-theme-dialog__dismiss {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Focus states for accessibility */
+html body .zvms-theme-dialog__option:focus-visible,
+html body .zvms-theme-dialog__dismiss:focus-visible {
+  outline: 2px solid rgb(169 211 255 / 0.6) !important;
+  outline-offset: 1px !important;
+}
