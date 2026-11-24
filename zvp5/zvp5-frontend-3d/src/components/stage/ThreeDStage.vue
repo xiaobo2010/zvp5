@@ -77,6 +77,8 @@ const gyroSupported = ref(false)
 const gyroState = ref<'unsupported' | 'prompt' | 'active' | 'denied'>('unsupported')
 const gyroError = ref('')
 let gyroListening = false
+let gyroBaselineBeta: number | null = null
+let gyroBaselineGamma: number | null = null
 
 const VOLUNTEER_PAGE_SIZE = 8
 const volunteerItems = ref<StageActivity[]>([])
@@ -210,10 +212,10 @@ function tiltFromCenter(centerPercent: number): number {
   if (reduced.value) return 0
   const maxTilt = isMobile.value ? MOBILE_TILT_MAX : DESKTOP_TILT_MAX
   // 25%/75% are the extreme side-card centers; centered cards stay flat.
-  // Keep the +/− direction aligned with the requested rotation axis: left
-  // cards lean left, right cards lean right, with a 35° maximum.
+  // At rest the left card leans toward the centre and the right card mirrors
+  // it. Pointer movement then rotates both cards left/right together.
   const normalized = (centerPercent - 50) / 25
-  return Math.max(-maxTilt, Math.min(maxTilt, normalized * maxTilt))
+  return Math.max(-maxTilt, Math.min(maxTilt, -normalized * maxTilt))
 }
 
 function depthStyle(index: number) {
@@ -553,12 +555,35 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   if (!gyroSupported.value) return
   if (event.gamma === null && event.beta === null) return
   gyroState.value = 'active'
-  const gamma = clampNumber(event.gamma ?? 0, -30, 30)
-  const beta = clampNumber((event.beta ?? 0) - 45, -30, 30)
+
+  // Set baseline on first read
+  if (gyroBaselineBeta === null && event.beta !== null) {
+    gyroBaselineBeta = event.beta
+  }
+  if (gyroBaselineGamma === null && event.gamma !== null) {
+    gyroBaselineGamma = event.gamma
+  }
+
+  // Calculate deltas from baseline (pitch and roll changes)
+  const betaDelta = gyroBaselineBeta !== null && event.beta !== null
+    ? event.beta - gyroBaselineBeta
+    : 0
+  const gammaDelta = gyroBaselineGamma !== null && event.gamma !== null
+    ? event.gamma - gyroBaselineGamma
+    : 0
+
+  // Clamp deltas: beta (pitch) ±25°, gamma (roll) ±35°
+  const clampedBeta = clampNumber(betaDelta, -25, 25)
+  const clampedGamma = clampNumber(gammaDelta, -35, 35)
+
   const root = stageRoot.value
   if (!root) return
-  root.style.setProperty('--gyro-y', `${(gamma * 0.18).toFixed(2)}deg`)
-  root.style.setProperty('--gyro-x', `${(beta * 0.12).toFixed(2)}deg`)
+
+  // Beta (pitch) → rotateX: tablet forward → card bottom away from viewer
+  root.style.setProperty('--gyro-x', `${(clampedBeta * 1.2).toFixed(2)}deg`)
+
+  // Gamma (roll) → rotateZ anti-roll: tablet left → card rotates right (use negative)
+  root.style.setProperty('--gyro-z', `${(-clampedGamma * 1).toFixed(2)}deg`)
 }
 
 function startGyroListener() {
@@ -1780,11 +1805,11 @@ function extraTone(item: StageExtraItem) {
   font-size: 11px;
   letter-spacing: 0.08em;
   color: rgb(169 211 255 / 0.75);
-  background: rgb(14 22 38 / 0.4);
-  border: 1px solid rgb(111 215 196 / 0.15);
+  background: rgb(14 22 38 / 0.55);
+  border: 1px solid rgb(111 215 196 / 0.12);
   border-radius: 2px;
   cursor: pointer;
-  transition: all 200ms ease-out;
+  transition: all 150ms ease-out;
   text-align: left;
 }
 
@@ -1794,19 +1819,15 @@ function extraTone(item: StageExtraItem) {
 }
 
 .dock-btn:not(:disabled):hover {
-  background: rgb(14 22 38 / 0.7);
-  border-color: rgb(111 215 196 / 0.35);
+  background: rgb(14 22 38 / 0.75);
+  border-color: rgb(111 215 196 / 0.25);
   color: #c4e2ff;
-  box-shadow: 0 0 16px rgb(111 215 196 / 0.15);
 }
 
 .dock-btn.is-active {
-  background: rgb(14 22 38 / 0.8);
-  border-color: rgb(111 215 196 / 0.6);
+  background: rgb(14 22 38 / 0.85);
+  border-color: rgb(111 215 196 / 0.4);
   color: #eef6ff;
-  box-shadow:
-    0 0 20px rgb(111 215 196 / 0.25),
-    inset 0 0 12px rgb(111 215 196 / 0.08);
 }
 
 .dock-icon {
@@ -1957,8 +1978,9 @@ function extraTone(item: StageExtraItem) {
   border-radius: 2px;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg) + var(--gyro-y, 0deg)))
-    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)));
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)))
+    rotateZ(var(--gyro-z, 0deg));
   transition: transform 100ms ease-out, box-shadow 160ms ease;
   box-shadow:
     0 18px 48px rgb(0 0 0 / 0.38),
@@ -2134,8 +2156,9 @@ function extraTone(item: StageExtraItem) {
   box-shadow: none;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg) + var(--gyro-y, 0deg)))
-    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)));
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
+    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)))
+    rotateZ(var(--gyro-z, 0deg));
   transition: transform 100ms ease-out;
   touch-action: none;
 }
@@ -2485,11 +2508,11 @@ function extraTone(item: StageExtraItem) {
   height: 28px;
   padding: 0;
   color: #c7e4ff;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 1px;
+  background: rgb(14 22 38 / 0.5);
+  border: 1px solid rgb(169 211 255 / 0.1);
+  border-radius: 2px;
   cursor: pointer;
-  transition: all 160ms ease-out;
+  transition: all 140ms ease-out;
 }
 
 .zoom-btn {
@@ -2506,7 +2529,7 @@ function extraTone(item: StageExtraItem) {
 
 .zoom-btn:hover:not(:disabled),
 .zoom-value:hover {
-  background: rgb(169 211 255 / 0.08);
+  background: rgb(14 22 38 / 0.7);
   border-color: rgb(169 211 255 / 0.2);
   color: #eef6ff;
 }
@@ -2579,7 +2602,6 @@ function extraTone(item: StageExtraItem) {
 .rail-tick.is-active {
   background: #a9d3ff;
   border-color: #a9d3ff;
-  box-shadow: 0 0 8px rgb(169 211 255 / 0.5);
 }
 
 .rail-tick:hover:not(.is-active) {
@@ -3031,15 +3053,15 @@ function extraTone(item: StageExtraItem) {
 }
 
 .stage-dialog__btn--primary {
-  border-color: rgb(61 141 255 / 0.6);
-  background: #1d5fbf;
-  color: #fff;
+  border-color: rgb(111 215 196 / 0.58);
+  background: rgb(14 34 44 / 0.95);
+  color: #dffaf4;
 }
 
 .stage-dialog__btn--danger {
-  border-color: rgb(255 161 173 / 0.5);
-  background: #8f2633;
-  color: #fff;
+  border-color: rgb(255 161 173 / 0.46);
+  background: rgb(42 20 28 / 0.95);
+  color: #ffd3d9;
 }
 
 .stage-dialog__btn:disabled {

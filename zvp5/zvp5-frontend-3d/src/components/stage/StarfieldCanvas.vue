@@ -48,7 +48,7 @@ function init() {
   // Replacing the transform on every resize keeps the canvas from scaling twice.
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   
-  const count = w < 720 ? 105 : 180
+  const count = w < 720 ? 62 : 108
   stars = Array.from({ length: count }, () => ({
     x: Math.random() * w - w / 2,
     y: Math.random() * h - h / 2,
@@ -183,9 +183,9 @@ function loop(now: number) {
     running = false
     return
   }
-  // The starfield is ambient: 30fps keeps it smooth enough and leaves the main
-  // thread for the 3D card transition. Warp streaks use the same cadence.
-  if (now - lastRender >= 32) {
+  // Deliberately cinematic rather than 60fps: 24fps leaves the main thread
+  // for the 3D card transition. Warp streaks use the same cadence.
+  if (now - lastRender >= 1000 / 24) {
     render()
     lastRender = now
   }
