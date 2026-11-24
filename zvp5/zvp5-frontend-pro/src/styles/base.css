@@ -73,6 +73,18 @@ button {
   cursor: pointer;
 }
 
+/* Interactive controls never use backdrop-filter. Gecko on tablets can create
+   an empty compositing layer for a button whose backdrop is sampled from a
+   transformed parent; the control keeps its layout but loses its tint and
+   press feedback. The gradient/rim/shadow below the control is enough to read
+   as glass, so the filter is pure downside here. Large panels keep theirs. */
+button,
+a[href],
+[role='button'] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 /* 触屏去掉 300ms 双击缩放等待，按压反馈才跟手。 */
 button,
 a {
