@@ -565,53 +565,51 @@ function computeScreenOrientedAngles(
   gamma: number,
   screenAngle: number
 ): { pitch: number; roll: number } {
-  // Build rotation matrix: Rz(α) · Rx(β) · Ry(γ)
+  // Build device→world rotation matrix: R = Rz(α) · Rx(β) · Ry(γ)
   const a = (alpha * Math.PI) / 180
   const b = (beta * Math.PI) / 180
   const g = (gamma * Math.PI) / 180
 
-  const cosa = Math.cos(a), sina = Math.sin(a)
-  const cosb = Math.cos(b), sinb = Math.sin(b)
-  const cosg = Math.cos(g), sing = Math.sin(g)
+  const ca = Math.cos(a), sa = Math.sin(a)
+  const cb = Math.cos(b), sb = Math.sin(b)
+  const cg = Math.cos(g), sg = Math.sin(g)
 
-  // R = Rz * Rx * Ry
-  const r11 = cosa * cosg - sina * sinb * sing
-  const r12 = -cosa * sing - sina * sinb * cosg
-  const r13 = -sina * cosb
-  const r21 = sina * cosg + cosa * sinb * sing
-  const r22 = -sina * sing + cosa * sinb * cosg
-  const r23 = cosa * cosb
-  const r31 = cosb * sing
-  const r32 = cosb * cosg
-  const r33 = sinb
+  const r11 = ca * cg - sa * sb * sg
+  const r12 = -sa * cb
+  const r13 = ca * sg + sa * sb * cg
+  const r21 = sa * cg + ca * sb * sg
+  const r22 = ca * cb
+  const r23 = sa * sg - ca * sb * cg
+  const r31 = -cb * sg
+  const r32 = sb
+  const r33 = cb * cg
 
-  // Screen coordinate axes in device frame
-  const angleRad = (screenAngle * Math.PI) / 180
-  const cosTheta = Math.cos(angleRad)
-  const sinTheta = Math.sin(angleRad)
-
-  // screenRight_device = (cosθ, -sinθ, 0), screenUp_device = (sinθ, cosθ, 0)
-  const srx = cosTheta, sry = -sinTheta, srz = 0
-  const sux = sinTheta, suy = cosTheta, suz = 0
-
+  // Screen axes in device frame (accounting for screen rotation)
+  // screenAngle=0 (portrait):   visualRight=device_x, visualUp=device_y
+  // screenAngle=90 (landscape): visualRight=device_y, visualUp=-device_x
+  const theta = (screenAngle * Math.PI) / 180
+  const c = Math.cos(theta), s = Math.sin(theta)
+  
+  // Rotation by screenAngle around device-z:
+  // visualRight = [c, s, 0] in device frame
+  // visualUp = [-s, c, 0] in device frame
+  
   // Transform to world coordinates
-  const srWorldX = r11 * srx + r12 * sry + r13 * srz
-  const srWorldY = r21 * srx + r22 * sry + r23 * srz
-  const srWorldZ = r31 * srx + r32 * sry + r33 * srz
+  const vrWorldX = r11 * c + r12 * s
+  const vrWorldY = r21 * c + r22 * s
+  const vrWorldZ = r31 * c + r32 * s
+  
+  const vuWorldX = r11 * (-s) + r12 * c
+  const vuWorldY = r21 * (-s) + r22 * c
+  const vuWorldZ = r31 * (-s) + r32 * c
 
-  const suWorldX = r11 * sux + r12 * suy + r13 * suz
-  const suWorldY = r21 * sux + r22 * suy + r23 * suz
-  const suWorldZ = r31 * sux + r32 * suy + r33 * suz
-
-  // Screen normal (0,0,1)
-  const snWorldZ = r13 * 0 + r23 * 0 + r33 * 1
-
-  // Pitch: forward/backward tilt of screen
-  const pitch = Math.asin(Math.max(-1, Math.min(1, snWorldZ)))
-
-  // Roll: device rotation around screen normal
-  // worldUp = (0, 0, 1), measure angle from screenUp to worldUp projected onto screen plane
-  const roll = Math.atan2(srWorldZ, suWorldZ)
+  // Pitch: elevation of visualUp from horizontal plane
+  // Positive = top of screen tilts away from user
+  const pitch = Math.atan2(vuWorldZ, Math.sqrt(vuWorldX * vuWorldX + vuWorldY * vuWorldY))
+  
+  // Roll: lateral tilt of visualRight from horizontal
+  // Positive = right side of screen tilts up
+  const roll = Math.atan2(vrWorldZ, Math.sqrt(vrWorldX * vrWorldX + vrWorldY * vrWorldY))
 
   return {
     pitch: (pitch * 180) / Math.PI,
@@ -648,12 +646,10 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   const root = stageRoot.value
   if (!root) return
 
-  // Scene-level rotation: forward tilt → cards lean back (rotateX positive)
+  // Apply to scene-zoom: pitch → rotateX, negative roll → rotateZ
+  // Negative roll makes the entire content counter-rotate to keep cards visually upright
   root.style.setProperty('--gyro-x', `${clampedPitch.toFixed(2)}deg`)
-  root.style.setProperty('--gyro-z', `${clampedRoll.toFixed(2)}deg`)
-
-  // Counter-roll for cards to stay visually upright
-  root.style.setProperty('--gyro-counter-z', `${(-clampedRoll).toFixed(2)}deg`)
+  root.style.setProperty('--gyro-z', `${(-clampedRoll).toFixed(2)}deg`)
 }
 
 function startGyroListener() {
@@ -685,9 +681,15 @@ function updateScreenOrientation() {
 
 function onOrientationChange() {
   updateScreenOrientation()
-  // Reset baseline to recalibrate
+  // Reset baseline to recalibrate and clear current angles
   gyroBaselinePitch = null
   gyroBaselineRoll = null
+  
+  const root = stageRoot.value
+  if (root) {
+    root.style.setProperty('--gyro-x', '0deg')
+    root.style.setProperty('--gyro-z', '0deg')
+  }
 }
 
 async function enableGyro() {
@@ -739,18 +741,11 @@ function resetViewport() {
   gyroBaselinePitch = null
   gyroBaselineRoll = null
 
-  // Animate reset to zero
-  root.style.transition = 'none'
-  requestAnimationFrame(() => {
-    root.style.setProperty('--gyro-x', '0deg')
-    root.style.setProperty('--gyro-z', '0deg')
-    root.style.setProperty('--gyro-counter-z', '0deg')
-    root.style.setProperty('--pointer-x', '0deg')
-    root.style.setProperty('--pointer-y', '0deg')
-    requestAnimationFrame(() => {
-      root.style.transition = ''
-    })
-  })
+  // Instantly reset all CSS variables (no transition animation)
+  root.style.setProperty('--gyro-x', '0deg')
+  root.style.setProperty('--gyro-z', '0deg')
+  root.style.setProperty('--pointer-x', '0deg')
+  root.style.setProperty('--pointer-y', '0deg')
 
   // Reset pointer tracking
   targetX = 0
@@ -2096,8 +2091,7 @@ function extraTone(item: StageExtraItem) {
   position: absolute;
   transform-style: preserve-3d;
   transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotate(var(--card-rotate, 0deg)) scale(var(--card-scale, 1))
-    rotateZ(var(--gyro-counter-z, 0deg));
+    rotate(var(--card-rotate, 0deg)) scale(var(--card-scale, 1));
   transition: transform 100ms ease-out;
   background: rgb(0 0 0 / 0.001);
 }
