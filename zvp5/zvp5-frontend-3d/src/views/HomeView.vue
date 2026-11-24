@@ -288,27 +288,39 @@ onMounted(load)
 }
 
 .home__button {
-  padding: 11px 20px;
-  border-radius: 999px;
-  border: 1px solid rgb(142 178 255 / 0.24);
-  background: rgb(14 20 34 / 0.7);
-  color: var(--color-ink-soft);
-  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 3px;
+  border: 1px solid rgb(169 211 255 / 0.2);
+  background: rgb(12 20 34 / 0.78);
+  color: rgb(196 226 255 / 0.86);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
   cursor: pointer;
-  transition: border-color 200ms var(--ease-out), color 200ms var(--ease-out),
-    transform 200ms var(--ease-out);
+  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out),
+    color 160ms var(--ease-out);
 }
 
 .home__button:hover {
-  border-color: var(--color-line-strong);
-  color: var(--color-ink);
-  transform: translateY(-1px);
+  border-color: rgb(111 215 196 / 0.42);
+  background: rgb(14 32 40 / 0.9);
+  color: #eef6ff;
+}
+
+.home__button:active {
+  background: rgb(18 42 50 / 0.95);
 }
 
 .home__button--primary {
-  border-color: transparent;
-  background: linear-gradient(140deg, #3d8dff, #7b5cff);
-  color: #fff;
+  border-color: rgb(111 215 196 / 0.52);
+  background: rgb(10 34 38 / 0.92);
+  color: #dffaf4;
+}
+
+.home__button--primary:hover {
+  border-color: rgb(111 215 196 / 0.78);
+  background: rgb(14 46 50 / 0.95);
+  color: #ffffff;
 }
 
 .home__orbit {
