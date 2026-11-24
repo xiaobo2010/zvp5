@@ -84,60 +84,68 @@
      readable without relying on the page behind it. */
   --glass-tablet-bg: linear-gradient(147deg, #fffdf9f7, #edf5fdf4 57%, #f8f5fff7);
   --glass-tablet-floating-bg: linear-gradient(145deg, #fffdf9fb, #f3f8fef9 60%, #f8f5fffb);
-
-  /* Simple translucent glass buttons with backdrop blur. */
-  --glass-btn-bg: rgb(255 255 255 / 0.35);
-  --glass-btn-border: rgb(255 255 255 / 0.52);
-  --glass-btn-blur: blur(18px) saturate(165%);
-  --glass-btn-shadow: inset 0 1px 0 rgb(255 255 255 / 0.62),
-    0 4px 12px rgb(0 0 0 / 0.08),
-    0 2px 4px rgb(0 0 0 / 0.04);
-  --glass-btn-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.68),
-    0 6px 16px rgb(0 0 0 / 0.1),
-    0 3px 6px rgb(0 0 0 / 0.05);
-
-  /* Primary buttons: sky-blue tinted translucent glass */
-  --glass-btn-primary-bg: rgb(0 105 220 / 0.86);
-  --glass-btn-primary-border: rgb(0 90 200 / 0.6);
-  --glass-btn-primary-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5),
-    0 4px 14px rgb(0 113 227 / 0.24),
-    0 2px 6px rgb(0 80 180 / 0.14);
-  --glass-btn-primary-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.58),
-    0 6px 18px rgb(0 113 227 / 0.3),
-    0 3px 8px rgb(0 80 180 / 0.18);
-
-  /* Danger solid: red-tinted translucent glass */
-  --glass-btn-danger-bg: rgb(215 35 35 / 0.8);
-  --glass-btn-danger-border: rgb(190 20 20 / 0.64);
-  --glass-btn-danger-shadow: inset 0 1px 0 rgb(255 255 255 / 0.46),
-    0 4px 14px rgb(200 30 30 / 0.22),
-    0 2px 6px rgb(160 20 20 / 0.14);
-  --glass-btn-danger-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.52),
-    0 6px 18px rgb(200 30 30 / 0.28),
-    0 3px 8px rgb(160 20 20 / 0.18);
-
-  /* Danger soft (rose): pink-tinted translucent glass */
-  --glass-btn-rose-bg: rgb(255 182 193 / 0.38);
-  --glass-btn-rose-border: rgb(255 160 180 / 0.5);
-  --glass-btn-rose-shadow: inset 0 1px 0 rgb(255 255 255 / 0.64),
-    0 4px 12px rgb(190 40 40 / 0.1),
-    0 2px 4px rgb(190 40 40 / 0.08);
-
-  /* Neutral (disabled): legible gray translucent glass */
-  --glass-btn-neutral-bg: rgb(220 220 220 / 0.42);
-  --glass-btn-neutral-border: rgb(200 200 200 / 0.48);
-  --glass-btn-neutral-shadow: inset 0 1px 0 rgb(255 255 255 / 0.58),
-    0 2px 8px rgb(60 72 88 / 0.06);
-
-  /* Clock face glass */
-  --clock-glass-bg: rgb(255 255 255 / 0.42);
-  --clock-glass-border: rgb(255 255 255 / 0.68);
-  --clock-glass-blur: blur(20px) saturate(170%);
-  --clock-glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72),
-    inset 0 -1px 0 rgb(0 0 0 / 0.04),
-    0 6px 18px rgb(0 122 255 / 0.14),
-    0 2px 6px rgb(0 0 0 / 0.08);
-
+  --frosted-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='80' height='80' filter='url(%23n)' opacity='.06'/%3E%3C/svg%3E");
+  /* Gradient frosted glass: one self-contained material for the time surface
+     and every liquid-glass control. The sky -> periwinkle -> warm stops keep
+     it visibly gradient, the grain and top highlight sell the frost, and no
+     backdrop-filter is involved, so it renders the same everywhere. */
+  --frosted-bg: var(--frosted-grain),
+    radial-gradient(140% 190% at 14% 0%, rgb(255 255 255 / 0.95), transparent 58%),
+    linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.84) 0%,
+      rgb(204 232 255 / 0.62) 30%,
+      rgb(224 222 255 / 0.54) 60%,
+      rgb(255 240 228 / 0.6) 86%,
+      rgb(255 255 255 / 0.72) 100%
+    );
+  --frosted-primary-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.48), transparent 58%),
+    linear-gradient(135deg, #59b3ff 0%, #0071e3 52%, #3052c9 100%);
+  --frosted-danger-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 16% 0%, rgb(255 255 255 / 0.42), transparent 58%),
+    linear-gradient(135deg, #ff7a6e 0%, #ef4444 52%, #c81e1e 100%);
+  --frosted-rose-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 14% 0%, rgb(255 255 255 / 0.9), transparent 60%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.88), rgb(255 226 222 / 0.62) 58%, rgb(255 244 242 / 0.72));
+  --frosted-neutral-bg: var(--frosted-grain),
+    radial-gradient(130% 180% at 14% 0%, rgb(255 255 255 / 0.9), transparent 60%),
+    linear-gradient(135deg, rgb(255 255 255 / 0.82), rgb(226 232 240 / 0.58) 58%, rgb(244 246 250 / 0.7));
+  /* Round time orbs read better with a radial white core plus a cool lower
+     rim, so the frost stays a gradient instead of washing out in a circle. */
+  --frosted-orb-bg: var(--frosted-grain),
+    radial-gradient(circle at 32% 24%, rgb(255 255 255 / 0.98) 0%, rgb(255 255 255 / 0.5) 22%, transparent 56%),
+    radial-gradient(circle at 74% 84%, rgb(196 226 255 / 0.6), transparent 58%),
+    linear-gradient(145deg, rgb(255 255 255 / 0.8), rgb(224 222 255 / 0.52) 60%, rgb(255 240 228 / 0.6));
+  --frosted-size: 80px 80px, auto, auto;
+  --frosted-repeat: repeat, no-repeat, no-repeat;
+  --frosted-orb-size: 80px 80px, auto, auto, auto;
+  --frosted-orb-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  --frosted-border: rgb(255 255 255 / 0.92);
+  --frosted-primary-border: rgb(255 255 255 / 0.58);
+  --frosted-danger-border: rgb(255 255 255 / 0.5);
+  --frosted-rose-border: rgb(255 255 255 / 0.9);
+  --frosted-neutral-border: rgb(255 255 255 / 0.88);
+  --frosted-rim: inset 0 1px 0 rgb(255 255 255 / 0.98), inset 0 -1px 0 rgb(74 109 143 / 0.12),
+    inset 1px 0 0 rgb(255 255 255 / 0.58);
+  --frosted-primary-rim: inset 0 1px 0 rgb(255 255 255 / 0.46), inset 0 -1px 0 rgb(0 0 0 / 0.12);
+  --frosted-danger-rim: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -1px 0 rgb(0 0 0 / 0.14);
+  --frosted-shadow: var(--frosted-rim), 0 4px 12px rgb(47 78 103 / 0.08),
+    0 16px 36px rgb(51 79 108 / 0.14);
+  --frosted-shadow-hover: var(--frosted-rim), 0 6px 16px rgb(47 78 103 / 0.1),
+    0 22px 44px rgb(51 79 108 / 0.16);
+  --frosted-primary-shadow: var(--frosted-primary-rim), 0 4px 14px rgb(0 113 227 / 0.26),
+    0 14px 30px rgb(0 80 180 / 0.18);
+  --frosted-primary-shadow-hover: var(--frosted-primary-rim), 0 6px 18px rgb(0 113 227 / 0.32),
+    0 20px 40px rgb(0 80 180 / 0.22);
+  --frosted-danger-shadow: var(--frosted-danger-rim), 0 4px 14px rgb(200 30 30 / 0.24),
+    0 14px 30px rgb(160 20 20 / 0.16);
+  --frosted-danger-shadow-hover: var(--frosted-danger-rim), 0 6px 18px rgb(200 30 30 / 0.3),
+    0 20px 40px rgb(160 20 20 / 0.2);
+  --frosted-rose-shadow: var(--frosted-rim), 0 4px 12px rgb(190 40 40 / 0.1),
+    0 14px 30px rgb(190 40 40 / 0.1);
+  --frosted-neutral-shadow: var(--frosted-rim), 0 4px 12px rgb(60 72 88 / 0.08),
+    0 14px 30px rgb(60 72 88 / 0.1);
   --glass-highlight: linear-gradient(
     162deg,
     #fffefbe6,
@@ -335,14 +343,6 @@
     --glass-floating-bg: var(--glass-tablet-floating-bg);
     --glass-blur: none;
     --glass-mobile-blur: none;
-    --glass-btn-blur: none;
-    --clock-glass-blur: none;
-    /* Fallback to more opaque backgrounds when backdrop-filter unavailable */
-    --glass-btn-bg: rgb(255 255 255 / 0.88);
-    --glass-btn-primary-bg: rgb(0 105 220 / 0.94);
-    --glass-btn-danger-bg: rgb(215 35 35 / 0.94);
-    --glass-btn-rose-bg: rgb(255 182 193 / 0.86);
-    --clock-glass-bg: rgb(255 255 255 / 0.9);
   }
 }
 
@@ -357,13 +357,6 @@
     --glass-blur: none;
     --glass-mobile-blur: none;
     --glass-sheen: none;
-    --glass-btn-blur: none;
-    --clock-glass-blur: none;
-    --glass-btn-bg: rgb(255 255 255 / 0.9);
-    --glass-btn-primary-bg: rgb(0 105 220 / 0.95);
-    --glass-btn-danger-bg: rgb(215 35 35 / 0.95);
-    --glass-btn-rose-bg: rgb(255 182 193 / 0.88);
-    --clock-glass-bg: rgb(255 255 255 / 0.92);
   }
 }
 
@@ -377,12 +370,5 @@
     --glass-mobile-blur: none;
     --glass-border: #8c9fb2;
     --glass-sheen: none;
-    --glass-btn-blur: none;
-    --clock-glass-blur: none;
-    --glass-btn-bg: rgb(255 255 255 / 0.95);
-    --glass-btn-primary-bg: rgb(0 105 220 / 0.96);
-    --glass-btn-danger-bg: rgb(215 35 35 / 0.96);
-    --glass-btn-rose-bg: rgb(255 160 180 / 0.92);
-    --clock-glass-bg: rgb(255 255 255 / 0.96);
   }
 }
