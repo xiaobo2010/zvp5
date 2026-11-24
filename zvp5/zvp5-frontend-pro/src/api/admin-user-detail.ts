@@ -201,6 +201,21 @@ export function setUserBanned(
 }
 
 /**
+ * `DELETE /v1/users/{oid}` (admin only).
+ *
+ * This is a hard delete: the backend archives the user's rows into `user_trash`
+ * (30-day retention) and removes them in one transaction. It requires the
+ * password-verification token minted by `verifyAdminPassword` (403 without it)
+ * and rejects deleting the operator's own account (403).
+ */
+export function deleteAdminUser(oid: string, verificationToken: string): Promise<void> {
+  return apiVoid(`/v1/users/${encodeURIComponent(oid)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ verification_token: verificationToken })
+  })
+}
+
+/**
  * `POST /v1/users/{oid}/temp-password` with a password-verification token.
  *
  * The token must be minted by the operator (`verifyPassword(own id, password)`);

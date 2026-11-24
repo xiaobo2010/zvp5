@@ -4,16 +4,21 @@ import { useRouter } from 'vue-router'
 import AnimatedTabs from '@/components/AnimatedTabs.vue'
 import type { AnimatedTabItem } from '@/components/AnimatedTabs.vue'
 import AiChatPanel from '@/components/AiChatPanel.vue'
+import AiPromptDetailDialog from '@/components/AiPromptDetailDialog.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 import { ApiError, readableError } from '@/api/http'
 import { currentRoles } from '@/api/permissions'
 import {
+  AI_PROMPT_DAYS_DEFAULT,
+  AI_PROMPT_DAYS_OPTIONS,
+  AI_PROMPT_PAGE_SIZE,
   fetchAiHealth,
   fetchAiKeys,
   fetchAiLogStats,
   fetchAiLogs,
   fetchAiModels,
   fetchAiOcrEngines,
+  fetchAiPrompts,
   fetchAiQuotaUsers,
   fetchAiScheduledTasks,
   type AiHealthData,
@@ -23,6 +28,7 @@ import {
   type AiLogStats,
   type AiModelRow,
   type AiOcrEngine,
+  type AiPromptRecord,
   type AiQuotaUserRow,
   type AiScheduledTask
 } from '@/api/admin-ai'
@@ -36,6 +42,7 @@ const allTabs: AnimatedTabItem[] = [
   { value: 'models', label: '模型', hint: '渠道目录与覆盖行' },
   { value: 'quota', label: '额度', hint: '用户 AF 额度分布' },
   { value: 'logs', label: '日志', hint: '调用流水（只读）' },
+  { value: 'prompts', label: '审阅', hint: '留存提示词（打开即留痕）' },
   { value: 'scheduled', label: '定时任务', hint: '任务排程与审核状态' },
   { value: 'ocr', label: 'OCR 引擎', hint: '引擎注册表（只读）' },
   { value: 'monitor', label: '监控', hint: '近 7 天调用聚合' }
@@ -443,6 +450,123 @@ function logModelText(log: AiLogRecord): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Prompt audit (read-only, admin)                                             */
+/* -------------------------------------------------------------------------- */
+
+const prompts = ref<AiPromptRecord[]>([])
+const promptsTotal = ref(0)
+const promptsPage = ref(1)
+const promptsDays = ref<number>(AI_PROMPT_DAYS_DEFAULT)
+const promptUserFilter = ref('')
+const promptFilterName = ref('')
+const promptsLoading = ref(false)
+const promptsError = ref('')
+const promptsLoaded = ref(false)
+let promptsSeq = 0
+
+const promptsPages = computed(() => totalPages(promptsTotal.value, AI_PROMPT_PAGE_SIZE))
+
+const promptDialogOpen = ref(false)
+const activePrompt = ref<AiPromptRecord | null>(null)
+
+async function loadPrompts() {
+  const seq = ++promptsSeq
+  promptsLoading.value = true
+  promptsError.value = ''
+  try {
+    const data = await fetchAiPrompts(
+      promptsPage.value,
+      AI_PROMPT_PAGE_SIZE,
+      promptsDays.value,
+      promptUserFilter.value
+    )
+    if (seq !== promptsSeq) return
+    prompts.value = data.rows
+    promptsTotal.value = data.total
+    promptsLoaded.value = true
+  } catch (reason) {
+    if (seq !== promptsSeq) return
+    if (!promptsLoaded.value) {
+      prompts.value = []
+      promptsTotal.value = 0
+    }
+    promptsError.value = tabError(reason, '提示词记录读取失败。')
+  } finally {
+    if (seq === promptsSeq) promptsLoading.value = false
+  }
+}
+
+/** From a call-log row: open the audit list narrowed to that user. */
+function openPromptsFor(log: AiLogRecord) {
+  if (!log.userOid) return
+  promptUserFilter.value = log.userOid
+  promptFilterName.value = log.userName || shortOid(log.userOid)
+  promptsPage.value = 1
+  promptsLoaded.value = false
+  if (activeTab.value === 'prompts') {
+    void loadPrompts()
+  } else {
+    activeTab.value = 'prompts'
+  }
+}
+
+function clearPromptUser() {
+  if (!promptUserFilter.value) return
+  promptUserFilter.value = ''
+  promptFilterName.value = ''
+  promptsPage.value = 1
+  promptsLoaded.value = false
+  void loadPrompts()
+}
+
+function changePromptsDays(days: number) {
+  if (promptsDays.value === days || promptsLoading.value) return
+  promptsDays.value = days
+  promptsPage.value = 1
+  promptsLoaded.value = false
+  void loadPrompts()
+}
+
+function promptsPrev() {
+  if (promptsPage.value <= 1 || promptsLoading.value) return
+  promptsPage.value -= 1
+  promptsLoaded.value = false
+  void loadPrompts()
+}
+
+function promptsNext() {
+  if (promptsPage.value >= promptsPages.value || promptsLoading.value) return
+  promptsPage.value += 1
+  promptsLoaded.value = false
+  void loadPrompts()
+}
+
+function promptUserText(prompt: AiPromptRecord): string {
+  if (prompt.userName) return prompt.userName
+  if (prompt.userOid) return shortOid(prompt.userOid)
+  return '未知用户'
+}
+
+function promptCharsText(prompt: AiPromptRecord): string {
+  if (prompt.promptChars > 0) return `${formatNumber(prompt.promptChars)} 字`
+  return '无正文'
+}
+
+function promptPurposeText(prompt: AiPromptRecord): string {
+  return prompt.purpose ? purposeText(prompt.purpose) : '场景未标注'
+}
+
+function openPrompt(prompt: AiPromptRecord) {
+  if (!prompt.oid) return
+  activePrompt.value = prompt
+  promptDialogOpen.value = true
+}
+
+function closePrompt() {
+  promptDialogOpen.value = false
+}
+
+/* -------------------------------------------------------------------------- */
 /* Scheduled tasks (read-only)                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -680,6 +804,10 @@ function ensureTab(tab: string) {
     if (!logsLoaded.value && !logsLoading.value && !logsError.value) void loadLogs()
     return
   }
+  if (tab === 'prompts') {
+    if (!promptsLoaded.value && !promptsLoading.value && !promptsError.value) void loadPrompts()
+    return
+  }
   if (tab === 'scheduled') {
     if (!scheduledLoaded.value && !scheduledLoading.value && !scheduledError.value) {
       void loadScheduled()
@@ -702,6 +830,7 @@ const panelBusy = computed(() => {
   if (activeTab.value === 'models') return modelsLoading.value
   if (activeTab.value === 'quota') return quotaLoading.value
   if (activeTab.value === 'logs') return logsLoading.value
+  if (activeTab.value === 'prompts') return promptsLoading.value
   if (activeTab.value === 'scheduled') return scheduledLoading.value
   if (activeTab.value === 'ocr') return ocrLoading.value
   if (activeTab.value === 'monitor') return statsLoading.value
@@ -1308,7 +1437,17 @@ watch(activeTab, ensureTab, { immediate: true })
                   </BubbleFeedback>
                   <p v-if="!logs.length" class="empty-inline">当前页没有调用记录。</p>
                   <ul v-else class="row-list" :class="{ 'is-loading': logsLoading }">
-                    <li v-for="log in logs" :key="log.oid" class="row">
+                    <li
+                      v-for="log in logs"
+                      :key="log.oid"
+                      class="row row--clickable"
+                      role="button"
+                      tabindex="0"
+                      :aria-label="`审阅 ${logUserText(log)} 的提示词`"
+                      @click="openPromptsFor(log)"
+                      @keydown.enter.prevent="openPromptsFor(log)"
+                      @keydown.space.prevent="openPromptsFor(log)"
+                    >
                       <div class="row__main">
                         <span class="row__title">
                           <span class="badge" :class="logStatusClass(log.status)">
@@ -1328,7 +1467,10 @@ watch(activeTab, ensureTab, { immediate: true })
                           <template v-else-if="log.httpStatus"> · HTTP {{ log.httpStatus }}</template>
                         </span>
                       </div>
-                      <span class="row__id">{{ shortOid(log.oid) }}</span>
+                      <div class="row__side">
+                        <span class="prompt-link">审阅提示词</span>
+                        <span class="row__id">{{ shortOid(log.oid) }}</span>
+                      </div>
                     </li>
                   </ul>
                   <div class="pager" :key="logsPage">
@@ -1354,6 +1496,138 @@ watch(activeTab, ensureTab, { immediate: true })
                       </button>
                     </div>
                   </div>
+                </template>
+              </section>
+            </template>
+
+            <!-- 提示词审阅 -->
+            <template v-else-if="activeTab === 'prompts'">
+              <section class="panel">
+                <div class="panel__header">
+                  <div>
+                    <h2 class="panel__title">提示词审阅</h2>
+                    <p class="panel__subtitle">
+                      受控留存的用户提示词 · 列表仅含元数据 · 打开单条会写入访问审计
+                    </p>
+                  </div>
+                  <div class="panel__actions">
+                    <div class="day-switch" role="group" aria-label="审阅窗口">
+                      <button
+                        v-for="days in AI_PROMPT_DAYS_OPTIONS"
+                        :key="days"
+                        type="button"
+                        class="ghost-button ghost-button--small"
+                        :class="{ 'is-active': promptsDays === days }"
+                        :aria-pressed="promptsDays === days"
+                        :disabled="promptsLoading"
+                        @click="changePromptsDays(days)"
+                      >
+                        {{ days }} 天
+                      </button>
+                    </div>
+                    <span class="badge badge--info">共 {{ formatNumber(promptsTotal) }} 条</span>
+                    <button
+                      type="button"
+                      class="ghost-button"
+                      :disabled="promptsLoading"
+                      @click="loadPrompts"
+                    >
+                      {{ promptsLoading ? '刷新中…' : '刷新' }}
+                    </button>
+                  </div>
+                </div>
+
+                <p class="review-notice" role="note">
+                  列表只返回元数据，不包含正文。点击任意一行会读取完整提示词与回答，服务端会在同一次请求中写入一条管理员访问审计。
+                </p>
+                <p v-if="promptUserFilter" class="prompt-filter-note">
+                  当前只显示 <strong>{{ promptFilterName }}</strong> 的提示词记录
+                  <span class="prompt-filter-note__id">{{ shortOid(promptUserFilter) }}</span>
+                  <button type="button" class="text-button" @click="clearPromptUser">清除筛选</button>
+                </p>
+
+                <div v-if="promptsLoading && !promptsLoaded" class="state-block" role="status">
+                  <span class="spinner" aria-hidden="true"></span>
+                  正在读取提示词记录…
+                </div>
+
+                <div
+                  v-else-if="promptsError && !promptsLoaded"
+                  class="state-block state-block--error"
+                  role="alert"
+                >
+                  <BubbleFeedback class="glass-feedback--error">{{ promptsError }}</BubbleFeedback>
+                  <button type="button" class="ghost-button" @click="loadPrompts">重试</button>
+                </div>
+
+                <template v-else>
+                  <BubbleFeedback
+                    v-if="promptsError"
+                    class="inline-note glass-feedback--error"
+                    role="alert"
+                  >
+                    {{ promptsError }}
+                  </BubbleFeedback>
+                  <p v-if="!prompts.length" class="empty-inline">
+                    最近 {{ promptsDays }} 天内没有留存的提示词记录。
+                  </p>
+                  <ul v-else class="row-list prompt-list" :class="{ 'is-loading': promptsLoading }">
+                    <li v-for="prompt in prompts" :key="prompt.oid">
+                      <button
+                        type="button"
+                        class="prompt-row"
+                        :aria-label="`查看 ${promptUserText(prompt)} 的提示词详情（会写入访问审计）`"
+                        @click="openPrompt(prompt)"
+                      >
+                        <span class="prompt-row__main">
+                          <span class="row__title">
+                            {{ promptUserText(prompt) }}
+                            <span class="row__id">
+                              {{ prompt.userOid ? shortOid(prompt.userOid) : '账号已移除' }}
+                            </span>
+                            <span class="badge badge--info">
+                              {{ promptPurposeText(prompt) }}
+                            </span>
+                          </span>
+                          <span class="row__meta">
+                            {{ formatDateTime(prompt.createdAt) }} ·
+                            正文 {{ promptCharsText(prompt) }}
+                            <template v-if="prompt.rolesSnapshot">
+                              · 角色 {{ prompt.rolesSnapshot }}
+                            </template>
+                          </span>
+                        </span>
+                        <span class="prompt-row__action">查看正文</span>
+                      </button>
+                    </li>
+                  </ul>
+                  <div class="pager" :key="promptsPage">
+                    <span class="pager__info">
+                      第 {{ promptsPage }} / {{ promptsPages }} 页 ·
+                      每页 {{ AI_PROMPT_PAGE_SIZE }} 条
+                    </span>
+                    <div class="pager__actions">
+                      <button
+                        type="button"
+                        class="ghost-button"
+                        :disabled="promptsPage <= 1 || promptsLoading"
+                        @click="promptsPrev"
+                      >
+                        上一页
+                      </button>
+                      <button
+                        type="button"
+                        class="ghost-button"
+                        :disabled="promptsPage >= promptsPages || promptsLoading"
+                        @click="promptsNext"
+                      >
+                        下一页
+                      </button>
+                    </div>
+                  </div>
+                  <p class="panel__footnote">
+                    提示词记录与 AI 调用流水是两张表，不按请求编号关联；调用流水只保留用量，正文只在这里。
+                  </p>
                 </template>
               </section>
             </template>
@@ -1730,6 +2004,12 @@ watch(activeTab, ensureTab, { immediate: true })
         </Transition>
       </div>
     </div>
+
+    <AiPromptDetailDialog
+      :open="promptDialogOpen"
+      :record="activePrompt"
+      @close="closePrompt"
+    />
   </div>
 </template>
 
@@ -2374,6 +2654,122 @@ watch(activeTab, ensureTab, { immediate: true })
 }
 
 /* -------------------------------------------------------------------------- */
+/* Prompt review                                                               */
+/* -------------------------------------------------------------------------- */
+
+.row--clickable {
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-smooth);
+}
+
+.row--clickable:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.row--clickable:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+
+.prompt-link {
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.prompt-filter-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--tone-amber-bg);
+  color: #8a5600;
+  font-size: var(--font-size-caption);
+}
+
+.prompt-filter-note__id {
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.review-notice {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--tone-blue-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-normal);
+}
+
+.prompt-list > li {
+  border-bottom: 1px solid var(--color-border-hairline);
+}
+
+.prompt-list > li:last-child {
+  border-bottom: none;
+}
+
+.prompt-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-smooth);
+}
+
+.prompt-row:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.prompt-row:active {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.prompt-row:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+
+.prompt-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-row__action {
+  flex-shrink: 0;
+  padding-top: 2px;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-brand);
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Meters and bars                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -2505,6 +2901,16 @@ watch(activeTab, ensureTab, { immediate: true })
     width: 100%;
     justify-content: space-between;
   }
+
+  .prompt-row {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .prompt-row__action {
+    align-self: flex-start;
+    padding-top: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2527,6 +2933,10 @@ watch(activeTab, ensureTab, { immediate: true })
   .ghost-button:hover:not(:disabled),
   .primary-button:hover:not(:disabled) {
     transform: none;
+  }
+
+  .prompt-row {
+    transition: none;
   }
 }
 

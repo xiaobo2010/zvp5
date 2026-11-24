@@ -5,7 +5,7 @@
 // frontend (`src/api/ai/*`) and sit under the shared `/api` base; `http.ts`
 // adds the Bearer token and unwraps the legacy `{ status, data }` envelope.
 
-import { apiList, apiRequest, buildQuery } from './http'
+import { ApiError, apiList, apiRequest, buildQuery } from './http'
 
 /* -------------------------------------------------------------------------- */
 /* Small normalisation helpers                                                 */
@@ -438,6 +438,148 @@ export async function fetchAiLogs(page = 1, perpage = 20): Promise<AiLogsPage> {
   const rows = rowsOf(result.data, 'items', 'logs')
   const total = result.size > 0 ? result.size : numberOf(record.total, rows.length)
   return { rows: rows.map(normalizeLog), total }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Prompt audit (read-only, admin)                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The two prompt endpoints are deliberately split: the list never selects the
+ * body (`prompt_chars` is `LENGTH(PROMPT_TEXT)`), and only the detail endpoint
+ * returns it. Each detail read writes an `APP_LOGS` admin-access audit row, so
+ * opening a record is an audited action and the UI must say so.
+ */
+
+/** Rolling window options, aligned with the backend's `PROMPT_MAX_DAYS=90`. */
+export const AI_PROMPT_DAYS_OPTIONS = [7, 14, 30, 90] as const
+export const AI_PROMPT_DAYS_DEFAULT = 7
+export const AI_PROMPT_MAX_DAYS = 90
+export const AI_PROMPT_PAGE_SIZE = 20
+const AI_PROMPT_MAX_PAGE_SIZE = 100
+
+export interface AiPromptRecord {
+  oid: string
+  /** Cleared by the backend once the account is removed. */
+  userOid: string | null
+  userName: string
+  purpose: string
+  /** Comma-separated role identifiers captured when the prompt was retained. */
+  rolesSnapshot: string
+  /** Body length in the database; the list never carries the body itself. */
+  promptChars: number
+  createdAt: string
+}
+
+export interface AiPromptsPage {
+  rows: AiPromptRecord[]
+  total: number
+}
+
+export interface AiPromptDetail {
+  oid: string
+  requestId: string | null
+  userOid: string | null
+  userName: string
+  purpose: string
+  rolesSnapshot: string
+  promptText: string
+  answerText: string
+  /** `tool_calls` JSON array text; empty string when nothing was retained. */
+  toolCalls: string
+  refused: boolean
+  warned: boolean
+  createdAt: string
+}
+
+function normalizePromptRecord(value: unknown): AiPromptRecord {
+  const row = asRecord(value)
+  return {
+    oid: textOf(row.oid) || textOf(row._id),
+    userOid: nullableText(row.user_oid),
+    userName: textOf(row.user_name, '未知用户'),
+    purpose: textOf(row.purpose),
+    rolesSnapshot: textOf(row.roles_snapshot),
+    promptChars: numberOf(row.prompt_chars),
+    createdAt: textOf(row.created_at)
+  }
+}
+
+/** JSON columns arrive as text, but tolerate an already-parsed value. */
+function jsonTextOf(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  try {
+    return JSON.stringify(value) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** `refused`/`warned` are booleans in ORM rows and 0/1 in raw payloads. */
+function flagOf(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true'
+  return false
+}
+
+function normalizePromptDetail(value: unknown): AiPromptDetail {
+  const row = asRecord(value)
+  return {
+    oid: textOf(row.oid) || textOf(row._id),
+    requestId: nullableText(row.request_id),
+    userOid: nullableText(row.user_oid),
+    userName: textOf(row.user_name, '未知用户'),
+    purpose: textOf(row.purpose),
+    rolesSnapshot: textOf(row.roles_snapshot),
+    promptText: textOf(row.prompt_text),
+    answerText: textOf(row.answer_text),
+    toolCalls: jsonTextOf(row.tool_calls),
+    refused: flagOf(row.refused),
+    warned: flagOf(row.warned),
+    createdAt: textOf(row.created_at)
+  }
+}
+
+function clampPromptDays(days: number): number {
+  if (!Number.isFinite(days)) return AI_PROMPT_DAYS_DEFAULT
+  return Math.min(AI_PROMPT_MAX_DAYS, Math.max(1, Math.trunc(days)))
+}
+
+/** One page of retained prompt metadata (newest first, never the body). */
+export async function fetchAiPrompts(
+  page = 1,
+  perpage = AI_PROMPT_PAGE_SIZE,
+  days = AI_PROMPT_DAYS_DEFAULT,
+  userOid = ''
+): Promise<AiPromptsPage> {
+  const safePage = Number.isFinite(page) && page > 0 ? Math.trunc(page) : 1
+  const safeSize = Number.isFinite(perpage)
+    ? Math.min(AI_PROMPT_MAX_PAGE_SIZE, Math.max(1, Math.trunc(perpage)))
+    : AI_PROMPT_PAGE_SIZE
+  const result = await apiList<unknown>(
+    `/ai/prompts${buildQuery({
+      page: safePage,
+      perpage: safeSize,
+      days: clampPromptDays(days),
+      user_oid: userOid.trim() || undefined
+    })}`
+  )
+  const rows = rowsOf(result.data, 'items', 'prompts', 'rows')
+    .map(normalizePromptRecord)
+    .filter((item) => item.oid.length > 0)
+  const total = result.size > 0 ? result.size : rows.length
+  return { rows, total }
+}
+
+/** Read one retained prompt body. The backend writes an access-audit row. */
+export async function fetchAiPromptDetail(oid: string): Promise<AiPromptDetail> {
+  const target = oid.trim()
+  if (!target) throw new ApiError('缺少记录编号，无法读取正文。', 400)
+  return normalizePromptDetail(
+    await apiRequest<unknown>(`/ai/prompts/${encodeURIComponent(target)}`)
+  )
 }
 
 /* -------------------------------------------------------------------------- */
