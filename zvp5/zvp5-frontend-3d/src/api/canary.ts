@@ -4,9 +4,21 @@
 // (Bearer token in localStorage, legacy `{status, data}` envelopes, the Xuehai
 // device header) without importing another frontend's modules.
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE || 'https://zvp.xiaobopisces.top/api'
-).replace(/\/+$/, '')
+function resolveApiBase(): string {
+  const configured = import.meta.env.VITE_API_BASE
+  const injected =
+    typeof document === 'undefined'
+      ? ''
+      : document.querySelector<HTMLMetaElement>('meta[name="zvms-api-base"]')
+          ?.content || ''
+  const raw = configured || injected || 'https://zvp.xiaobopisces.top/api'
+  // Theme builds can inject `/api`; resolve it against the theme origin so a
+  // request under /themes/astra-alpha/ never becomes /themes/astra-alpha/api.
+  if (raw.startsWith('/')) return `${window.location.origin}${raw}`
+  return raw
+}
+
+const API_BASE = resolveApiBase().replace(/\/+$/, '')
 
 export class CanaryApiError extends Error {
   readonly status: number
