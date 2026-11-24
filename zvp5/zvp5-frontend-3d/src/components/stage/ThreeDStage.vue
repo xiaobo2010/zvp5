@@ -584,32 +584,24 @@ function computeScreenOrientedAngles(
   const r32 = sb
   const r33 = cb * cg
 
-  // Screen axes in device frame (accounting for screen rotation)
-  // screenAngle=0 (portrait):   visualRight=device_x, visualUp=device_y
-  // screenAngle=90 (landscape): visualRight=device_y, visualUp=-device_x
+  // Screen axes in the device frame. `screen.orientation.angle` is the
+  // clockwise rotation of the document inside the device, so the content's
+  // right/up axes are rotated by -angle in device coordinates:
+  //   sr_dev = (c, -s, 0), su_dev = (s, c, 0), normal = device z (0, 0, 1)
   const theta = (screenAngle * Math.PI) / 180
   const c = Math.cos(theta), s = Math.sin(theta)
-  
-  // Rotation by screenAngle around device-z:
-  // visualRight = [c, s, 0] in device frame
-  // visualUp = [-s, c, 0] in device frame
-  
-  // Transform to world coordinates
-  const vrWorldX = r11 * c + r12 * s
-  const vrWorldY = r21 * c + r22 * s
-  const vrWorldZ = r31 * c + r32 * s
-  
-  const vuWorldX = r11 * (-s) + r12 * c
-  const vuWorldY = r21 * (-s) + r22 * c
-  const vuWorldZ = r31 * (-s) + r32 * c
 
-  // Pitch: elevation of visualUp from horizontal plane
-  // Positive = top of screen tilts away from user
-  const pitch = Math.atan2(vuWorldZ, Math.sqrt(vuWorldX * vuWorldX + vuWorldY * vuWorldY))
-  
-  // Roll: lateral tilt of visualRight from horizontal
-  // Positive = right side of screen tilts up
-  const roll = Math.atan2(vrWorldZ, Math.sqrt(vrWorldX * vrWorldX + vrWorldY * vrWorldY))
+  const srWorldZ = r31 * c + r32 * -s
+  const suWorldZ = r31 * s + r32 * c
+
+  // Pitch: elevation of the screen normal above the horizon. Device roll
+  // rotates around the normal, so it cannot leak into this value.
+  const pitch = Math.asin(clampNumber(r33, -1, 1))
+
+  // Roll: signed in-plane rotation of world-up around the viewing axis.
+  // atan2 is scale invariant, so pitch does not leak into this value either.
+  // Positive roll = the content's right edge points up (device rolled CCW).
+  const roll = Math.atan2(srWorldZ, suWorldZ)
 
   return {
     pitch: (pitch * 180) / Math.PI,
@@ -637,19 +629,18 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   const pitchDelta = normalizeAngleDiff(angles.pitch, gyroBaselinePitch)
   const rollDelta = normalizeAngleDiff(angles.roll, gyroBaselineRoll)
 
-  // Apply gain and clamp: pitch ±10°, roll ±8°
-  const gain_pitch = 0.6
-  const gain_roll = 0.8
-  const clampedPitch = clampNumber(pitchDelta * gain_pitch, -10, 10)
-  const clampedRoll = clampNumber(rollDelta * gain_roll, -8, 8)
+  // Keep the movement subtle: the screen is only a window onto the scene.
+  const clampedPitch = clampNumber(pitchDelta * 0.55, -9, 9)
+  const clampedRoll = clampNumber(rollDelta * 0.65, -9, 9)
 
   const root = stageRoot.value
   if (!root) return
 
-  // Apply to scene-zoom: pitch → rotateX, negative roll → rotateZ
-  // Negative roll makes the entire content counter-rotate to keep cards visually upright
-  root.style.setProperty('--gyro-x', `${clampedPitch.toFixed(2)}deg`)
-  root.style.setProperty('--gyro-z', `${(-clampedRoll).toFixed(2)}deg`)
+  // The content counter-rotates against the device so the cards read as
+  // world-upright: a forward pitch (top edge away) pulls the card bottom
+  // inward, and a device roll is cancelled by an equal on-screen roll.
+  root.style.setProperty('--gyro-x', `${(-clampedPitch).toFixed(2)}deg`)
+  root.style.setProperty('--gyro-z', `${clampedRoll.toFixed(2)}deg`)
 }
 
 function startGyroListener() {
@@ -1955,7 +1946,7 @@ function extraTone(item: StageExtraItem) {
   opacity: 0.4;
 }
 
-.dock-btn:not(:disabled):hover {
+.dock-btn:not(:disabled):not(.is-active):hover {
   background: rgb(111 215 196 / 0.10);
   border-color: rgb(111 215 196 / 0.32);
   color: #eef6ff;
@@ -2938,9 +2929,9 @@ function extraTone(item: StageExtraItem) {
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.pager-btn:hover:not(:disabled) {
+.pager-btn:hover:not(:disabled):not(.is-active) {
   background: var(--astra-btn-hover-bg);
-  border-color: var(--astra-btn-hover-border);
+  border-color: var(--astra-btn-hover-border-color);
   color: var(--astra-btn-hover-color);
 }
 
@@ -3148,12 +3139,15 @@ function extraTone(item: StageExtraItem) {
 
 .stage-dialog {
   width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
   padding: 0;
   border: 1px solid rgb(111 215 196 / 0.32);
   border-radius: 2px;
   background: #0b1424;
   color: #eef6ff;
   box-shadow: 0 28px 80px rgb(0 0 0 / 0.6);
+  overflow: auto;
 }
 
 .stage-dialog::backdrop {
