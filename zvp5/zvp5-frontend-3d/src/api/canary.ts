@@ -1,9 +1,8 @@
-// Minimal canary API client for the 3D concept app.
+// Minimal ZVMS API client for the Astra-Alpha 3D theme.
 //
-// The concept reuses the exact request conventions of zvp5-frontend-pro (Bearer
-// token in localStorage, legacy `{status, data}` envelopes, the Xuehai device
-// header) without importing across package boundaries. Only the read endpoints
-// the stage needs are implemented here.
+// The theme speaks the same public API conventions as the other ZVMS themes
+// (Bearer token in localStorage, legacy `{status, data}` envelopes, the Xuehai
+// device header) without importing another frontend's modules.
 
 const API_BASE = (
   import.meta.env.VITE_API_BASE || 'https://zvp.xiaobopisces.top/api'

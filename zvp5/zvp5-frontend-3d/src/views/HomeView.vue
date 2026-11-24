@@ -103,13 +103,13 @@ onMounted(load)
 <template>
   <div class="home">
     <header class="home__bar">
-      <a class="home__brand" href="./" aria-label="ZVMS 3D 首页">
+      <a class="home__brand" href="./" aria-label="ZVMS Astra-Alpha 首页">
         <span class="home__logo">ZVMS</span>
-        <span class="home__badge">3D</span>
+        <span class="home__badge">ASTRA</span>
       </a>
       <div class="home__actions">
         <span v-if="profileName" class="home__user">{{ profileName }}</span>
-        <a class="home__link" href="/#/">Pro 版</a>
+        <a class="home__link" href="/">主站</a>
       </div>
     </header>
 
@@ -128,7 +128,7 @@ onMounted(load)
         <p class="home__state-kicker">需要登录</p>
         <p class="home__state-title">登录后进入 3D 工作台</p>
         <p class="home__state-text">
-          3D 概念版复用 Canary Pro 的账号与接口。请先在 Pro 版登录，再回到这里刷新。
+          使用 ZVMS 账号登录后回到这里刷新，即可进入 Astra-Alpha 空间。
         </p>
         <div class="home__state-actions">
           <a class="home__button home__button--primary" href="/#/login">前往登录</a>

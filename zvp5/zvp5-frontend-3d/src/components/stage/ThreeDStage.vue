@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import StarfieldCanvas from './StarfieldCanvas.vue'
+import CardBrackets from './CardBrackets.vue'
 import {
   changePassword,
   clearSession,
@@ -48,6 +49,35 @@ const sceneScale = ref(1)
 type StageView = 'home' | 'volunteers' | 'profile'
 const view = ref<StageView>('home')
 
+const profileActive = ref(0)
+const profilePreviousActive = ref(0)
+const profileTransitioning = ref(false)
+const profileGroups = [
+  {
+    id: 'account',
+    kicker: '个人中心 01 / 03',
+    title: '用户名与身份',
+    summary: '账号基础信息'
+  },
+  {
+    id: 'security',
+    kicker: '个人中心 02 / 03',
+    title: '账号安全与设备',
+    summary: '修改密码、解绑学海设备'
+  },
+  {
+    id: 'preferences',
+    kicker: '个人中心 03 / 03',
+    title: '外观与会话',
+    summary: '切换主题、退出登录'
+  }
+] as const
+
+const gyroSupported = ref(false)
+const gyroState = ref<'unsupported' | 'prompt' | 'active' | 'denied'>('unsupported')
+const gyroError = ref('')
+let gyroListening = false
+
 const VOLUNTEER_PAGE_SIZE = 8
 const volunteerItems = ref<StageActivity[]>([])
 const volunteerPage = ref(1)
@@ -78,6 +108,8 @@ let dragStartX = 0
 let dragStartY = 0
 let dragStartOffsetX = 0
 let dragStartOffsetY = 0
+let dragPointerType = 'mouse'
+let dragMoved = false
 
 // Side navigation drag/swipe state
 const SIDE_ZONE_RATIO = 0.28
@@ -168,8 +200,9 @@ function getHourDelta(hours: number): string {
   return `${prefix} ${Math.abs(delta).toFixed(1)} h`
 }
 
-const DESKTOP_TILT_MAX = 18
-const MOBILE_TILT_MAX = 10
+const DESKTOP_TILT_MAX = 30
+const MOBILE_TILT_MAX = 30
+const POINTER_TILT_MAX = 5
 const CLUSTER_WIDTH = 900
 const ACTIVITY_WIDTH = 1040
 
@@ -177,10 +210,10 @@ function tiltFromCenter(centerPercent: number): number {
   if (reduced.value) return 0
   const maxTilt = isMobile.value ? MOBILE_TILT_MAX : DESKTOP_TILT_MAX
   // 25%/75% are the extreme side-card centers; centered cards stay flat.
-  // The sign is intentionally mirrored so the left card leans right and the
-  // right card leans left, matching the pointer direction.
+  // Keep the +/− direction aligned with the requested rotation axis: left
+  // cards lean left, right cards lean right, with a 35° maximum.
   const normalized = (centerPercent - 50) / 25
-  return Math.max(-maxTilt, Math.min(maxTilt, -normalized * maxTilt))
+  return Math.max(-maxTilt, Math.min(maxTilt, normalized * maxTilt))
 }
 
 function depthStyle(index: number) {
@@ -208,6 +241,68 @@ function resetActiveScroll() {
     `.stage-module[data-module="${id}"] .cluster`
   )
   if (cluster) cluster.scrollTop = 0
+}
+
+function profileDepthStyle(index: number) {
+  const raw = index - profileActive.value
+  const d = Math.max(-1, Math.min(1, raw))
+  const z = -d * GAP + 0.01
+  const scale = 1 - Math.abs(d) * 0.16
+  const isVisible = profileTransitioning.value
+    ? index === profileActive.value || index === profilePreviousActive.value
+    : index === profileActive.value
+
+  return {
+    transform: `translate(-50%, -50%) translate3d(0, 0, ${z}px) scale(${scale})`,
+    opacity: String(raw === 0 ? 1 : 0),
+    visibility: isVisible ? 'visible' : 'hidden',
+    zIndex: String(100 - Math.abs(raw))
+  } as const
+}
+
+const railItems = computed(() =>
+  view.value === 'profile'
+    ? profileGroups.map((group) => ({ id: group.id, title: group.title }))
+    : modules.value
+)
+const railActive = computed(() =>
+  view.value === 'profile' ? profileActive.value : active.value
+)
+const railTotal = computed(() => railItems.value.length)
+
+function goProfile(index: number) {
+  if (view.value !== 'profile') return
+  if (index < 0 || index >= profileGroups.length || profileTransitioning.value) return
+  profilePreviousActive.value = profileActive.value
+  profileActive.value = index
+  reverse.value = index < profilePreviousActive.value
+  profileTransitioning.value = true
+  warp.value = true
+  stageRoot.value?.classList.add('is-transitioning')
+  requestAnimationFrame(resetProfileScroll)
+
+  if (transitionTimer) clearTimeout(transitionTimer)
+  transitionTimer = setTimeout(() => {
+    profileTransitioning.value = false
+    warp.value = false
+    reverse.value = false
+    stageRoot.value?.classList.remove('is-transitioning')
+    requestAnimationFrame(resetProfileScroll)
+  }, TRANSITION_DUR)
+}
+
+function resetProfileScroll() {
+  const id = profileGroups[profileActive.value]?.id
+  if (!id) return
+  const cluster = stageRoot.value?.querySelector<HTMLElement>(
+    `.stage-module[data-profile="${id}"] .cluster`
+  )
+  if (cluster) cluster.scrollTop = 0
+}
+
+function goRail(index: number) {
+  if (view.value === 'profile') goProfile(index)
+  else goTo(index)
 }
 
 function goTo(index: number) {
@@ -275,7 +370,13 @@ async function loadVolunteerPage(page: number) {
 }
 
 async function showProfile() {
+  const wasProfile = view.value === 'profile'
   view.value = 'profile'
+  if (!wasProfile) {
+    profileActive.value = 0
+    profilePreviousActive.value = 0
+    profileTransitioning.value = false
+  }
   actionMessage.value = ''
   deviceBusy.value = true
   deviceError.value = ''
@@ -381,15 +482,23 @@ function onKeydown(event: KeyboardEvent) {
   }
   if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
     event.preventDefault()
-    go(1)
+    navigateHorizontal(1)
   } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
     event.preventDefault()
-    go(-1)
+    navigateHorizontal(-1)
   }
 }
 
+function navigateHorizontal(delta: number) {
+  if (view.value === 'profile') goProfile(profileActive.value + delta)
+  else if (view.value === 'home') go(delta)
+}
+
 function onPointerMove(event: PointerEvent) {
-  if (reduced.value || event.pointerType === 'touch') return
+  if (reduced.value) return
+  // Touch devices have no hover state: use the finger position as the
+  // parallax source while it is moving, unless that pointer is dragging a card.
+  if (event.pointerType === 'touch' && draggingCard.value) return
   targetX = (event.clientX / window.innerWidth - 0.5) * 2
   targetY = (event.clientY / window.innerHeight - 0.5) * 2
   startPointerLoop()
@@ -419,10 +528,11 @@ function updatePointerFrame() {
     currentY = targetY
   }
 
-  // Increased from ±3.2° to ±9°. Horizontal rotation is intentionally
-  // mirrored: moving to the left edge should turn the scene to the right.
-  root.style.setProperty('--pointer-x', `${(currentY * 9).toFixed(2)}deg`)
-  root.style.setProperty('--pointer-y', `${(-currentX * 9).toFixed(2)}deg`)
+  // Pointer rotation follows the horizontal axis: moving left leans cards
+  // left, moving right leans them right. Position tilt (30°) + pointer (5°)
+  // stays at the requested 35° total ceiling.
+  root.style.setProperty('--pointer-x', `${(currentY * POINTER_TILT_MAX).toFixed(2)}deg`)
+  root.style.setProperty('--pointer-y', `${(currentX * POINTER_TILT_MAX).toFixed(2)}deg`)
 
   rafId = settled ? undefined : requestAnimationFrame(updatePointerFrame)
 }
@@ -433,6 +543,69 @@ function syncMotion(e: MediaQueryListEvent | MediaQueryList) {
 
 function onResize() {
   viewportWidth.value = window.innerWidth
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function onDeviceOrientation(event: DeviceOrientationEvent) {
+  if (!gyroSupported.value) return
+  if (event.gamma === null && event.beta === null) return
+  gyroState.value = 'active'
+  const gamma = clampNumber(event.gamma ?? 0, -30, 30)
+  const beta = clampNumber((event.beta ?? 0) - 45, -30, 30)
+  const root = stageRoot.value
+  if (!root) return
+  root.style.setProperty('--gyro-y', `${(gamma * 0.18).toFixed(2)}deg`)
+  root.style.setProperty('--gyro-x', `${(beta * 0.12).toFixed(2)}deg`)
+}
+
+function startGyroListener() {
+  if (gyroListening) return
+  gyroListening = true
+  window.addEventListener('deviceorientation', onDeviceOrientation)
+}
+
+async function enableGyro() {
+  gyroError.value = ''
+  const orientation = window.DeviceOrientationEvent as unknown as {
+    requestPermission?: () => Promise<string>
+  }
+  try {
+    if (typeof orientation?.requestPermission === 'function') {
+      const permission = await orientation.requestPermission()
+      if (permission !== 'granted') {
+        gyroState.value = 'denied'
+        gyroError.value = '陀螺仪权限未授予。'
+        return
+      }
+    }
+    startGyroListener()
+    gyroState.value = 'active'
+  } catch {
+    gyroState.value = 'denied'
+    gyroError.value = '当前设备无法启用陀螺仪。'
+  }
+}
+
+function setupGyro() {
+  const orientation = window.DeviceOrientationEvent as unknown as {
+    requestPermission?: () => Promise<string>
+  }
+  const touchCapable =
+    navigator.maxTouchPoints > 0 || 'ontouchstart' in window
+  gyroSupported.value = Boolean(orientation) && touchCapable
+  if (!gyroSupported.value) {
+    gyroState.value = 'unsupported'
+    return
+  }
+  if (typeof orientation.requestPermission === 'function') {
+    gyroState.value = 'prompt'
+    return
+  }
+  startGyroListener()
+  gyroState.value = 'active'
 }
 
 function isSideZone(x: number): boolean {
@@ -451,7 +624,7 @@ function isInteractiveTarget(target: HTMLElement): boolean {
 // Mouse/pen horizontal drag on the left or right side. Cards keep their own
 // drag gesture; the centre of the screen stays free for interacting with cards.
 function onStagePointerDown(event: PointerEvent) {
-  if (view.value !== 'home') return
+  if (view.value !== 'home' && view.value !== 'profile') return
   if (event.pointerType === 'touch' || event.button !== 0) return
   if (!isSideZone(event.clientX)) return
   if (isInteractiveTarget(event.target as HTMLElement)) return
@@ -484,22 +657,23 @@ function onStagePointerEnd(event: PointerEvent) {
   const dx = event.clientX - navStartX
   const dy = event.clientY - navStartY
   if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.25) {
-    go(dx < 0 ? 1 : -1)
+    navigateHorizontal(dx < 0 ? 1 : -1)
   }
 }
 
-// Dragging logic (desktop only)
+// Dragging logic (mouse, pen and touch). Page lists keep vertical scrolling.
 function onCardPointerDown(event: PointerEvent, cardKey: string) {
-  if (isMobile.value) return
   const target = event.target as HTMLElement
   // Don't start drag from scrollable content or an action inside a card.
   if (target.closest('.extra-list, button, a, input, textarea, select')) return
 
-  event.preventDefault()
+  if (event.pointerType !== 'touch') event.preventDefault()
   draggingCard.value = cardKey
   cardStack.value[cardKey] = ++cardStackSeq
   dragStartX = event.clientX
   dragStartY = event.clientY
+  dragPointerType = event.pointerType
+  dragMoved = false
   const current = cardOffsets.value[cardKey] || { x: 0, y: 0 }
   dragStartOffsetX = current.x
   dragStartOffsetY = current.y
@@ -507,14 +681,27 @@ function onCardPointerDown(event: PointerEvent, cardKey: string) {
   document.body.style.userSelect = 'none'
   document.body.style.cursor = 'grabbing'
 
-  window.addEventListener('pointermove', onDragMove)
+  window.addEventListener('pointermove', onDragMove, { passive: false })
   window.addEventListener('pointerup', onDragEnd)
+  window.addEventListener('pointercancel', onDragEnd)
 }
 
 function onDragMove(event: PointerEvent) {
   if (!draggingCard.value) return
   const dx = event.clientX - dragStartX
   const dy = event.clientY - dragStartY
+
+  if (dragPointerType === 'touch') {
+    if (!dragMoved && Math.hypot(dx, dy) < 6) return
+    // A mostly-vertical gesture in a scrollable page stays a page scroll.
+    const target = event.target instanceof Element ? event.target : null
+    if (!dragMoved && Math.abs(dy) > Math.abs(dx) * 1.15 && target?.closest('.page-track')) {
+      onDragEnd()
+      return
+    }
+    dragMoved = true
+    if (Math.abs(dx) > Math.abs(dy)) event.preventDefault()
+  }
 
   // Keep a generous viewport bound instead of a 40%-of-screen cage. The old
   // clamp made cards stop at an invisible line near the centre of the stage.
@@ -530,10 +717,13 @@ function onDragMove(event: PointerEvent) {
 function onDragEnd() {
   if (!draggingCard.value) return
   draggingCard.value = null
+  dragPointerType = 'mouse'
+  dragMoved = false
   document.body.style.userSelect = ''
   document.body.style.cursor = ''
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', onDragEnd)
+  window.removeEventListener('pointercancel', onDragEnd)
 }
 
 function getCardStyle(cardKey: string, baseCenter: number) {
@@ -552,7 +742,7 @@ function getCardStyle(cardKey: string, baseCenter: number) {
 
 // Side swipe navigation (touch). Vertical gestures inside lists stay native.
 function onTouchStart(event: TouchEvent) {
-  if (view.value !== 'home') {
+  if (view.value !== 'home' && view.value !== 'profile') {
     touchIsSide = false
     return
   }
@@ -578,7 +768,7 @@ function onTouchEnd(event: TouchEvent) {
 
   // Horizontal swipe threshold: ~56px, more horizontal than vertical.
   if (Math.abs(deltaX) > 56 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
-    go(deltaX < 0 ? 1 : -1) // swipe left = next, swipe right = previous
+    navigateHorizontal(deltaX < 0 ? 1 : -1) // swipe left = next, swipe right = previous
   }
 }
 
@@ -591,6 +781,7 @@ onMounted(() => {
   window.addEventListener('resize', onResize)
   window.addEventListener('touchstart', onTouchStart, { passive: true })
   window.addEventListener('touchend', onTouchEnd, { passive: true })
+  setupGyro()
 
   serverTime.value = new Date(Date.now() + (props.data.serverOffsetMs ?? 0))
   serverTimeTimer = setInterval(() => {
@@ -605,6 +796,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('touchstart', onTouchStart)
   window.removeEventListener('touchend', onTouchEnd)
+  if (gyroListening) {
+    gyroListening = false
+    window.removeEventListener('deviceorientation', onDeviceOrientation)
+  }
   if (transitionTimer) clearTimeout(transitionTimer)
   if (serverTimeTimer) clearInterval(serverTimeTimer)
   if (rafId !== undefined) cancelAnimationFrame(rafId)
@@ -892,25 +1087,7 @@ function extraTone(item: StageExtraItem) {
                 :style="getCardStyle('identity-left', 24.1)"
                 @pointerdown="onCardPointerDown($event, 'identity-left')"
               >
-                <div class="card-thickness" aria-hidden="true">
-                  <span class="card-thickness__top"></span>
-                  <span class="card-thickness__bottom"></span>
-                </div>
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
+                <CardBrackets />
 
                 <div class="identity-hero">
                   <p class="identity-greeting">{{ data.identity.greeting }}</p>
@@ -937,7 +1114,6 @@ function extraTone(item: StageExtraItem) {
                   </div>
                 </div>
 
-                <div class="card-reflection"></div>
               </div>
 
               <!-- Right: Total Hours + Pending Badge -->
@@ -947,25 +1123,7 @@ function extraTone(item: StageExtraItem) {
                 :style="getCardStyle('identity-right', 75.9)"
                 @pointerdown="onCardPointerDown($event, 'identity-right')"
               >
-                <div class="card-thickness" aria-hidden="true">
-                  <span class="card-thickness__top"></span>
-                  <span class="card-thickness__bottom"></span>
-                </div>
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
+                <CardBrackets />
 
                 <div class="hours-display">
                   <span class="hours-label">累计时长</span>
@@ -977,7 +1135,6 @@ function extraTone(item: StageExtraItem) {
                   {{ data.identity.pendingCount }} 条待审批
                 </div>
 
-                <div class="card-reflection"></div>
               </div>
             </div>
           </template>
@@ -993,19 +1150,18 @@ function extraTone(item: StageExtraItem) {
                 :style="getCardStyle(`hours-${idx}`, [15.6, 50, 84.4][idx] ?? 50)"
                 @pointerdown="onCardPointerDown($event, `hours-${idx}`)"
               >
+                <CardBrackets />
                 <div class="bar-head">
                   <span class="bar-label">{{ point.label }}</span>
                   <span class="bar-index">0{{ idx + 1 }}</span>
                 </div>
 
                 <div class="bar-stage">
-                  <div class="bar-3d" :style="{ '--bar-height': point.hours / maxHour }">
-                    <div class="bar-face bar-face--front"></div>
-                    <div class="bar-face bar-face--back"></div>
-                    <div class="bar-face bar-face--left"></div>
-                    <div class="bar-face bar-face--right"></div>
-                    <div class="bar-face bar-face--top"></div>
-                    <div class="bar-face bar-face--bottom"></div>
+                  <div
+                    class="bar-2d"
+                    :style="{ height: `${Math.max(6, Math.round((point.hours / maxHour) * 155))}px` }"
+                  >
+                    <span class="bar-2d__cap"></span>
                   </div>
                 </div>
 
@@ -1032,25 +1188,7 @@ function extraTone(item: StageExtraItem) {
                   class="card card--activity"
                   :style="{ '--tone-rgb': activityTone(activity), ...getActivityCardStyle(activity, idx) }"
                 >
-                  <div class="card-thickness" aria-hidden="true">
-                    <span class="card-thickness__top"></span>
-                    <span class="card-thickness__bottom"></span>
-                  </div>
-                  <div class="card-brackets">
-                    <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                      <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                    </svg>
-                    <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                      <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                    </svg>
-                    <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                      <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                    </svg>
-                    <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                      <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                    </svg>
-                  </div>
-                  <div class="card-glow"></div>
+                <CardBrackets />
 
                   <div class="activity-status"></div>
                   <h4 class="activity-title">{{ activity.name }}</h4>
@@ -1063,7 +1201,6 @@ function extraTone(item: StageExtraItem) {
                     {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
                   </div>
 
-                  <div class="card-reflection"></div>
                 </div>
               </div>
             </div>
@@ -1079,25 +1216,7 @@ function extraTone(item: StageExtraItem) {
                 :style="getCardStyle('extra-left', 24.1)"
                 @pointerdown="onCardPointerDown($event, 'extra-left')"
               >
-                <div class="card-thickness" aria-hidden="true">
-                  <span class="card-thickness__top"></span>
-                  <span class="card-thickness__bottom"></span>
-                </div>
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
+                <CardBrackets />
 
                 <h3 class="extra-title">ZVAgent 执行记录</h3>
                 <div class="extra-list">
@@ -1119,7 +1238,6 @@ function extraTone(item: StageExtraItem) {
                   暂无执行记录
                 </div>
 
-                <div class="card-reflection"></div>
               </div>
 
               <!-- Right: Non-agent items (by role) -->
@@ -1129,25 +1247,7 @@ function extraTone(item: StageExtraItem) {
                 :style="getCardStyle('extra-right', 75.9)"
                 @pointerdown="onCardPointerDown($event, 'extra-right')"
               >
-                <div class="card-thickness" aria-hidden="true">
-                  <span class="card-thickness__top"></span>
-                  <span class="card-thickness__bottom"></span>
-                </div>
-                <div class="card-brackets">
-                  <svg class="bracket bracket-tl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 0H4C1.8 0 0 1.8 0 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-tr" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 0h16c2.2 0 4 1.8 4 4v16" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-bl" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M20 20H4c-2.2 0-4-1.8-4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                  <svg class="bracket bracket-br" width="20" height="20" viewBox="0 0 20 20">
-                    <path d="M0 20h16c2.2 0 4-1.8 4-4V0" stroke="currentColor" fill="none" />
-                  </svg>
-                </div>
-                <div class="card-glow"></div>
+                <CardBrackets />
 
                 <h3 class="extra-title">{{ rightTitle }}</h3>
                 <div class="extra-list">
@@ -1169,7 +1269,6 @@ function extraTone(item: StageExtraItem) {
                   {{ rightEmpty }}
                 </div>
 
-                <div class="card-reflection"></div>
               </div>
             </div>
           </template>
@@ -1204,11 +1303,7 @@ function extraTone(item: StageExtraItem) {
                 class="card card--activity card--volunteer"
                 :style="{ '--tone-rgb': activityTone(activity), ...getVolunteerCardStyle(activity, idx) }"
               >
-                <div class="card-thickness" aria-hidden="true">
-                  <span class="card-thickness__top"></span>
-                  <span class="card-thickness__bottom"></span>
-                </div>
-                <div class="card-glow"></div>
+                <CardBrackets />
                 <div class="activity-status"></div>
                 <h4 class="activity-title">{{ activity.name }}</h4>
                 <div class="activity-meta">
@@ -1220,144 +1315,130 @@ function extraTone(item: StageExtraItem) {
                 <div class="activity-hours">
                   {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
                 </div>
-                <div class="card-reflection"></div>
               </div>
             </div>
           </div>
 
         </div>
 
-        <!-- Personal center: three rows of two cards -->
-        <div v-else class="stage-track page-track">
-          <div class="page-heading">
-            <span class="page-kicker">03 / 账号</span>
-            <h2 class="page-title">个人中心</h2>
-            <p class="page-summary">账号、设备与偏好设置</p>
-          </div>
-
-          <div class="cluster cluster--profile">
-            <div
-              class="card card--profile"
-              :data-card-key="'profile-name'"
-              :style="getCardStyle('profile-name', 25)"
-              @pointerdown="onCardPointerDown($event, 'profile-name')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
+        <!-- Personal center: three depth modules, same transition as home -->
+        <div v-else class="stage-track">
+          <div
+            v-for="(group, index) in profileGroups"
+            :key="group.id"
+            class="stage-module profile-module"
+            :data-profile="group.id"
+            :style="profileDepthStyle(index)"
+            :aria-hidden="index !== profileActive ? 'true' : undefined"
+          >
+            <div class="profile-group">
+              <div class="profile-group__heading">
+                <span class="page-kicker">{{ group.kicker }}</span>
+                <h2 class="page-title">{{ group.title }}</h2>
+                <p class="page-summary">{{ group.summary }}</p>
               </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">用户名</span>
-              <strong class="profile-card__value">{{ data.identity.name }}</strong>
-              <span class="profile-card__meta">学号 {{ data.identity.studentId }}</span>
-              <div class="card-reflection"></div>
-            </div>
 
-            <div
-              class="card card--profile"
-              :data-card-key="'profile-identity'"
-              :style="getCardStyle('profile-identity', 75)"
-              @pointerdown="onCardPointerDown($event, 'profile-identity')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
-              </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">身份</span>
-              <strong class="profile-card__value">{{ data.identity.rolesLabel }}</strong>
-              <span class="profile-card__meta">{{ data.identity.className }}</span>
-              <div class="card-reflection"></div>
-            </div>
+              <div class="cluster cluster--profile">
+                <div
+                  v-if="group.id === 'account'"
+                  class="card card--profile"
+                  :data-card-key="'profile-name'"
+                  :style="getCardStyle('profile-name', 25)"
+                  @pointerdown="onCardPointerDown($event, 'profile-name')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">用户名</span>
+                  <strong class="profile-card__value">{{ data.identity.name }}</strong>
+                  <span class="profile-card__meta">学号 {{ data.identity.studentId }}</span>
+                </div>
 
-            <div
-              class="card card--profile card--profile-action"
-              :data-card-key="'profile-password'"
-              :style="getCardStyle('profile-password', 25)"
-              @pointerdown="onCardPointerDown($event, 'profile-password')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
-              </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">账号安全</span>
-              <strong class="profile-card__value">修改密码</strong>
-              <span class="profile-card__meta">验证当前密码后设置新密码</span>
-              <button class="profile-card__action" type="button" @click.stop="openPasswordDialog">
-                修改密码
-              </button>
-              <div class="card-reflection"></div>
-            </div>
+                <div
+                  v-if="group.id === 'account'"
+                  class="card card--profile"
+                  :data-card-key="'profile-identity'"
+                  :style="getCardStyle('profile-identity', 75)"
+                  @pointerdown="onCardPointerDown($event, 'profile-identity')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">身份</span>
+                  <strong class="profile-card__value">{{ data.identity.rolesLabel }}</strong>
+                  <span class="profile-card__meta">{{ data.identity.className }}</span>
+                </div>
 
-            <div
-              class="card card--profile card--profile-action"
-              :data-card-key="'profile-device'"
-              :style="getCardStyle('profile-device', 75)"
-              @pointerdown="onCardPointerDown($event, 'profile-device')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
-              </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">学海设备</span>
-              <strong class="profile-card__value">
-                {{ deviceBusy ? '读取中…' : (primaryDeviceId ? '已绑定' : '未绑定') }}
-              </strong>
-              <span class="profile-card__meta">
-                {{ primaryDeviceId ? `主设备 ${primaryDeviceId}` : '当前账号没有主学海设备' }}
-              </span>
-              <button
-                class="profile-card__action"
-                type="button"
-                :disabled="deviceBusy || !primaryDeviceId"
-                @click.stop="openDeviceDialog"
-              >
-                解绑设备
-              </button>
-              <div v-if="deviceError" class="profile-card__error">{{ deviceError }}</div>
-              <div class="card-reflection"></div>
-            </div>
+                <div
+                  v-if="group.id === 'security'"
+                  class="card card--profile card--profile-action"
+                  :data-card-key="'profile-password'"
+                  :style="getCardStyle('profile-password', 25)"
+                  @pointerdown="onCardPointerDown($event, 'profile-password')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">账号安全</span>
+                  <strong class="profile-card__value">修改密码</strong>
+                  <span class="profile-card__meta">验证当前密码后设置新密码</span>
+                  <button class="profile-card__action" type="button" @click.stop="openPasswordDialog">
+                    修改密码
+                  </button>
+                </div>
 
-            <div
-              class="card card--profile card--profile-action"
-              :data-card-key="'profile-theme'"
-              :style="getCardStyle('profile-theme', 25)"
-              @pointerdown="onCardPointerDown($event, 'profile-theme')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
-              </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">外观</span>
-              <strong class="profile-card__value">切换主题</strong>
-              <span class="profile-card__meta">前往站点主题选择器</span>
-              <button class="profile-card__action" type="button" @click.stop="openThemePicker">
-                打开主题选择
-              </button>
-              <div class="card-reflection"></div>
-            </div>
+                <div
+                  v-if="group.id === 'security'"
+                  class="card card--profile card--profile-action"
+                  :data-card-key="'profile-device'"
+                  :style="getCardStyle('profile-device', 75)"
+                  @pointerdown="onCardPointerDown($event, 'profile-device')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">学海设备</span>
+                  <strong class="profile-card__value">
+                    {{ deviceBusy ? '读取中…' : (primaryDeviceId ? '已绑定' : '未绑定') }}
+                  </strong>
+                  <span class="profile-card__meta">
+                    {{ primaryDeviceId ? `主设备 ${primaryDeviceId}` : '当前账号没有主学海设备' }}
+                  </span>
+                  <button
+                    class="profile-card__action"
+                    type="button"
+                    :disabled="deviceBusy || !primaryDeviceId"
+                    @click.stop="openDeviceDialog"
+                  >
+                    解绑设备
+                  </button>
+                  <div v-if="deviceError" class="profile-card__error">{{ deviceError }}</div>
+                </div>
 
-            <div
-              class="card card--profile card--profile-action"
-              :data-card-key="'profile-logout'"
-              :style="getCardStyle('profile-logout', 75)"
-              @pointerdown="onCardPointerDown($event, 'profile-logout')"
-            >
-              <div class="card-thickness" aria-hidden="true">
-                <span class="card-thickness__top"></span>
-                <span class="card-thickness__bottom"></span>
+                <div
+                  v-if="group.id === 'preferences'"
+                  class="card card--profile card--profile-action"
+                  :data-card-key="'profile-theme'"
+                  :style="getCardStyle('profile-theme', 25)"
+                  @pointerdown="onCardPointerDown($event, 'profile-theme')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">外观</span>
+                  <strong class="profile-card__value">切换主题</strong>
+                  <span class="profile-card__meta">前往站点主题选择器</span>
+                  <button class="profile-card__action" type="button" @click.stop="openThemePicker">
+                    打开主题选择
+                  </button>
+                </div>
+
+                <div
+                  v-if="group.id === 'preferences'"
+                  class="card card--profile card--profile-action"
+                  :data-card-key="'profile-logout'"
+                  :style="getCardStyle('profile-logout', 75)"
+                  @pointerdown="onCardPointerDown($event, 'profile-logout')"
+                >
+                  <CardBrackets />
+                  <span class="profile-card__label">会话</span>
+                  <strong class="profile-card__value">退出登录</strong>
+                  <span class="profile-card__meta">清除当前设备的登录状态</span>
+                  <button class="profile-card__action profile-card__action--danger" type="button" @click.stop="handleLogout">
+                    退出登录
+                  </button>
+                </div>
               </div>
-              <div class="card-glow"></div>
-              <span class="profile-card__label">会话</span>
-              <strong class="profile-card__value">退出登录</strong>
-              <span class="profile-card__meta">清除当前设备的登录状态</span>
-              <button class="profile-card__action profile-card__action--danger" type="button" @click.stop="handleLogout">
-                退出登录
-              </button>
-              <div class="card-reflection"></div>
             </div>
           </div>
         </div>
@@ -1395,27 +1476,27 @@ function extraTone(item: StageExtraItem) {
     </div>
 
     <!-- Navigation: depth rail only -->
-    <div v-if="view === 'home'" class="stage-nav">
+    <div v-if="view === 'home' || view === 'profile'" class="stage-nav">
       <div class="depth-rail">
         <div class="rail-track">
-          <div class="rail-progress" :style="{ width: `${(active / (total - 1)) * 100}%` }"></div>
+          <div class="rail-progress" :style="{ width: `${(railTotal > 1 ? railActive / (railTotal - 1) : 0) * 100}%` }"></div>
           <div class="rail-ticks">
             <button
-              v-for="(module, idx) in modules"
-              :key="module.id"
+              v-for="(item, idx) in railItems"
+              :key="item.id"
               type="button"
               class="rail-tick"
-              :class="{ 'is-active': idx === active, 'is-past': idx < active }"
-              @click="goTo(idx)"
-              :aria-label="`转到${module.title}`"
-              :aria-current="idx === active ? 'page' : undefined"
+              :class="{ 'is-active': idx === railActive, 'is-past': idx < railActive }"
+              @click="goRail(idx)"
+              :aria-label="`转到${item.title}`"
+              :aria-current="idx === railActive ? 'page' : undefined"
             ></button>
           </div>
         </div>
         <div class="rail-counter">
-          <span class="counter-current">{{ String(active + 1).padStart(2, '0') }}</span>
+          <span class="counter-current">{{ String(railActive + 1).padStart(2, '0') }}</span>
           <span class="counter-sep">/</span>
-          <span class="counter-total">{{ String(total).padStart(2, '0') }}</span>
+          <span class="counter-total">{{ String(railTotal).padStart(2, '0') }}</span>
         </div>
         <div class="rail-hint">两侧滑动 · 滚轮缩放</div>
       </div>
@@ -1425,7 +1506,7 @@ function extraTone(item: StageExtraItem) {
         aria-live="polite"
         aria-atomic="true"
       >
-        {{ transitioning ? '' : `当前模块: ${modules[active]?.title}` }}
+        {{ (view === 'profile' ? profileTransitioning : transitioning) ? '' : `当前模块: ${railItems[railActive]?.title}` }}
       </div>
     </div>
 
@@ -1452,6 +1533,20 @@ function extraTone(item: StageExtraItem) {
         @click="zoomBy(ZOOM_STEP)"
         aria-label="放大场景"
       >+</button>
+    </div>
+
+    <div v-if="gyroSupported" class="gyro-hud">
+      <button
+        v-if="gyroState === 'prompt' || gyroState === 'denied'"
+        type="button"
+        class="gyro-toggle"
+        :disabled="gyroState === 'denied'"
+        @click="enableGyro"
+      >
+        {{ gyroState === 'denied' ? '陀螺仪不可用' : '启用陀螺仪' }}
+      </button>
+      <span v-else class="gyro-chip">陀螺仪</span>
+      <span v-if="gyroError" class="gyro-error">{{ gyroError }}</span>
     </div>
 
     <!-- Drag hint -->
@@ -1846,10 +1941,6 @@ function extraTone(item: StageExtraItem) {
   pointer-events: auto;
 }
 
-.cluster--extra {
-  gap: 32px;
-}
-
 /* Card Base */
 .card {
   position: relative;
@@ -1864,150 +1955,31 @@ function extraTone(item: StageExtraItem) {
   );
   border: 1px solid rgb(172 210 255 / 0.3);
   border-radius: 2px;
-  --card-depth: 8px;
-  transform-style: preserve-3d;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    translateZ(var(--card-z, 0px))
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
-    rotateX(var(--pointer-x, 0deg));
-  transition: transform 100ms ease-out;
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg) + var(--gyro-y, 0deg)))
+    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)));
+  transition: transform 100ms ease-out, box-shadow 160ms ease;
   box-shadow:
-    4px 4px 0 -1px rgb(8 15 28 / 0.98),
-    5px 5px 0 -1px rgb(52 96 150 / 0.32),
-    0 22px 56px rgb(0 0 0 / 0.36),
-    inset 0 1px 0 rgb(169 211 255 / 0.05);
+    0 18px 48px rgb(0 0 0 / 0.38),
+    0 2px 0 rgb(52 96 150 / 0.18);
+  touch-action: none;
+}
+
+.page-track .card {
+  touch-action: pan-y;
 }
 
 .card:hover {
-  transform: perspective(1000px)
-    translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    translateZ(calc(var(--card-z, 0px) + 6px))
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
-    rotateX(var(--pointer-x, 0deg));
-}
-
-.card-thickness {
-  position: absolute;
-  inset: 0;
-  transform: translateZ(calc(var(--card-depth, 8px) * -1));
-  transform-style: preserve-3d;
-  background: linear-gradient(160deg, rgb(10 18 33 / 0.98), rgb(5 10 20 / 0.99));
-  border: 1px solid rgb(120 170 235 / 0.2);
-  border-radius: 2px;
-  pointer-events: none;
-}
-
-.card-thickness::before,
-.card-thickness::after,
-.card-thickness__top,
-.card-thickness__bottom {
-  position: absolute;
-  box-sizing: border-box;
-  background: linear-gradient(180deg, rgb(34 63 102 / 0.96), rgb(12 24 44 / 0.98));
-  border: 1px solid rgb(150 200 255 / 0.24);
-}
-
-.card-thickness::before,
-.card-thickness::after {
-  content: '';
-  top: 0;
-  width: var(--card-depth, 8px);
-  height: 100%;
-}
-
-.card-thickness::before {
-  right: 0;
-  transform-origin: 100% 50%;
-  transform: translateZ(calc(var(--card-depth, 8px) * -1)) rotateY(90deg);
-}
-
-.card-thickness::after {
-  left: 0;
-  transform-origin: 0 50%;
-  transform: translateZ(calc(var(--card-depth, 8px) * -1)) rotateY(-90deg);
-  background: linear-gradient(270deg, rgb(34 63 102 / 0.96), rgb(12 24 44 / 0.98));
-}
-
-.card-thickness__top {
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: var(--card-depth, 8px);
-  transform-origin: 50% 0;
-  transform: rotateX(-90deg);
-}
-
-.card-thickness__bottom {
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: var(--card-depth, 8px);
-  transform-origin: 50% 100%;
-  transform: rotateX(90deg);
-  background: linear-gradient(180deg, rgb(14 27 48 / 0.98), rgb(6 12 24 / 0.99));
+  box-shadow:
+    0 22px 58px rgb(0 0 0 / 0.44),
+    0 0 0 1px rgb(169 211 255 / 0.12);
 }
 
 .card-brackets {
   position: absolute;
   inset: 0;
   pointer-events: none;
-}
-
-.bracket {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  color: rgb(169 211 255 / 0.3);
-  stroke-width: 1;
-}
-
-.bracket-tl {
-  top: 12px;
-  left: 12px;
-}
-.bracket-tr {
-  top: 12px;
-  right: 12px;
-}
-.bracket-bl {
-  bottom: 12px;
-  left: 12px;
-}
-.bracket-br {
-  bottom: 12px;
-  right: 12px;
-}
-
-.card-glow {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%) translateZ(-2px);
-  width: 70%;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(169 211 255 / 0.2),
-    transparent
-  );
-  box-shadow: 0 0 20px rgb(169 211 255 / 0.15);
-}
-
-.card-reflection {
-  position: absolute;
-  bottom: -60px;
-  left: 50%;
-  transform: translateX(-50%) translateZ(-10px);
-  width: 90%;
-  height: 40px;
-  background: linear-gradient(
-    to top,
-    transparent,
-    rgb(169 211 255 / 0.015)
-  );
-  opacity: 0.18;
 }
 
 /* Identity Module Cards */
@@ -2156,15 +2128,16 @@ function extraTone(item: StageExtraItem) {
   gap: 14px;
   padding: 24px;
   min-height: 380px;
+  position: relative;
   background: transparent;
   border: none;
   box-shadow: none;
-  transform-style: preserve-3d;
   transform: perspective(1000px)
     translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
-    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg)))
-    rotateX(var(--pointer-x, 0deg));
+    rotateY(calc(var(--card-tilt, 0deg) + var(--pointer-y, 0deg) + var(--gyro-y, 0deg)))
+    rotateX(calc(var(--pointer-x, 0deg) + var(--gyro-x, 0deg)));
   transition: transform 100ms ease-out;
+  touch-action: none;
 }
 
 .bar-head {
@@ -2190,24 +2163,19 @@ function extraTone(item: StageExtraItem) {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding-bottom: 10px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid rgb(169 211 255 / 0.2);
 }
 
 .bar-stage::before {
   content: '';
   position: absolute;
-  left: 8%;
-  right: 8%;
-  bottom: 0;
-  height: 82px;
+  inset: 0 8%;
   background-image:
-    linear-gradient(rgb(169 211 255 / 0.14) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(169 211 255 / 0.12) 1px, transparent 1px);
+    linear-gradient(rgb(169 211 255 / 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(169 211 255 / 0.08) 1px, transparent 1px);
   background-size: 28px 18px;
-  transform: perspective(300px) rotateX(72deg);
-  transform-origin: bottom;
-  mask-image: linear-gradient(to top, #000 10%, transparent 90%);
-  opacity: 0.55;
+  opacity: 0.5;
   pointer-events: none;
 }
 
@@ -2226,81 +2194,37 @@ function extraTone(item: StageExtraItem) {
   );
 }
 
-.bar-3d {
-  --bar-depth: 22px;
+.bar-2d {
   position: relative;
   width: 46%;
-  height: calc(var(--bar-height, 0.5) * 180px);
-  min-height: 18px;
-  transform-style: preserve-3d;
-  transform-origin: 50% 100%;
-  transform: rotateX(-4deg) rotateY(calc(-16deg - var(--card-tilt, 0deg)));
-}
-
-.bar-face {
-  position: absolute;
-  box-sizing: border-box;
-  border: 1px solid rgb(169 211 255 / 0.22);
-  pointer-events: none;
-}
-
-.bar-face--front {
-  inset: 0;
-  transform: translateZ(0);
-  background: linear-gradient(180deg, rgb(169 211 255 / 0.55), rgb(52 130 245 / 0.22));
+  max-width: 120px;
+  max-height: 100%;
+  min-height: 6px;
+  border: 1px solid rgb(169 211 255 / 0.36);
+  border-radius: 1px;
+  background:
+    linear-gradient(180deg, rgb(169 211 255 / 0.58), rgb(52 130 245 / 0.2));
   box-shadow:
-    inset 0 0 22px rgb(109 180 255 / 0.18),
-    0 0 26px rgb(109 180 255 / 0.12);
+    0 0 24px rgb(109 180 255 / 0.14),
+    inset 0 0 18px rgb(109 180 255 / 0.12);
+  transition: height 420ms var(--ease-out);
 }
 
-.bar-face--back {
+.bar-2d::before {
+  content: '';
+  position: absolute;
   inset: 0;
-  transform: translateZ(calc(var(--bar-depth) * -1));
-  background: rgb(8 16 30 / 0.96);
-  border-color: rgb(120 170 235 / 0.16);
+  background: linear-gradient(90deg, transparent, rgb(220 240 255 / 0.18), transparent);
 }
 
-.bar-face--left,
-.bar-face--right {
-  top: 0;
-  width: var(--bar-depth);
-  height: 100%;
-  background: linear-gradient(90deg, rgb(58 112 178 / 0.95), rgb(18 38 70 / 0.98));
-}
-
-.bar-face--right {
-  right: 0;
-  transform-origin: 100% 50%;
-  transform: translateZ(calc(var(--bar-depth) * -1)) rotateY(90deg);
-}
-
-.bar-face--left {
-  left: 0;
-  transform-origin: 0 50%;
-  transform: translateZ(calc(var(--bar-depth) * -1)) rotateY(-90deg);
-  background: linear-gradient(270deg, rgb(58 112 178 / 0.92), rgb(18 38 70 / 0.98));
-}
-
-.bar-face--top {
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: var(--bar-depth);
-  transform-origin: 50% 0;
-  transform: rotateX(-90deg);
-  background: linear-gradient(180deg, rgb(169 211 255 / 0.5), rgb(92 160 245 / 0.26));
-  border-color: rgb(169 211 255 / 0.32);
-}
-
-.bar-face--bottom {
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: var(--bar-depth);
-  transform-origin: 50% 100%;
-  transform: rotateX(90deg);
-  background: rgb(8 16 30 / 0.96);
-  border-color: rgb(120 170 235 / 0.14);
+.bar-2d__cap {
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  top: -3px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgb(196 226 255 / 0.9), transparent);
+  box-shadow: 0 0 12px rgb(109 180 255 / 0.55);
 }
 
 .bar-display {
@@ -2856,6 +2780,22 @@ function extraTone(item: StageExtraItem) {
   white-space: nowrap;
 }
 
+.profile-module {
+  width: 100%;
+}
+
+.profile-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  width: 100%;
+}
+
+.profile-group__heading {
+  text-align: center;
+}
+
 .cluster--profile {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2937,6 +2877,50 @@ function extraTone(item: StageExtraItem) {
   margin-top: 6px;
   color: #ffa1ad;
   font-size: 10px;
+}
+
+.gyro-hud {
+  position: fixed;
+  right: 24px;
+  bottom: 92px;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.gyro-toggle,
+.gyro-chip {
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid rgb(111 215 196 / 0.28);
+  border-radius: 2px;
+  background: rgb(8 15 28 / 0.92);
+  color: rgb(169 211 255 / 0.76);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+.gyro-toggle {
+  cursor: pointer;
+}
+
+.gyro-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.gyro-chip {
+  color: rgb(111 215 196 / 0.82);
+}
+
+.gyro-error {
+  max-width: 160px;
+  color: #ffa1ad;
+  font-size: 9px;
+  text-align: right;
 }
 
 .stage-toast {
@@ -3158,7 +3142,6 @@ function extraTone(item: StageExtraItem) {
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    --card-depth: 5px;
     padding: 24px;
     margin: 0 auto;
   }
@@ -3190,10 +3173,9 @@ function extraTone(item: StageExtraItem) {
     min-height: 135px;
   }
 
-  .bar-3d {
-    --bar-depth: 15px;
+  .bar-2d {
     width: 60%;
-    height: calc(var(--bar-height, 0.5) * 115px);
+    max-height: 100%;
   }
 
   .bar-value {
@@ -3274,6 +3256,15 @@ function extraTone(item: StageExtraItem) {
     display: none;
   }
 
+  .profile-group {
+    gap: 16px;
+    padding: 0 12px;
+  }
+
+  .profile-group__heading .page-title {
+    font-size: 24px;
+  }
+
   .cluster--profile {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
@@ -3301,7 +3292,51 @@ function extraTone(item: StageExtraItem) {
     font-size: 9px;
   }
 
-  .stage-toast {
+  .gyro-hud {
+  position: fixed;
+  right: 24px;
+  bottom: 92px;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.gyro-toggle,
+.gyro-chip {
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid rgb(111 215 196 / 0.28);
+  border-radius: 2px;
+  background: rgb(8 15 28 / 0.92);
+  color: rgb(169 211 255 / 0.76);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+.gyro-toggle {
+  cursor: pointer;
+}
+
+.gyro-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.gyro-chip {
+  color: rgb(111 215 196 / 0.82);
+}
+
+.gyro-error {
+  max-width: 160px;
+  color: #ffa1ad;
+  font-size: 9px;
+  text-align: right;
+}
+
+.stage-toast {
     top: 70px;
     right: 12px;
     max-width: calc(100vw - 24px);
