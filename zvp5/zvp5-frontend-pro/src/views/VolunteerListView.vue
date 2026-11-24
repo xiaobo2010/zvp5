@@ -734,7 +734,7 @@ onBeforeUnmount(() => {
   max-width: var(--content-max-width);
   margin: 0 auto;
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 
 .glass-card {
@@ -844,15 +844,15 @@ onBeforeUnmount(() => {
 .page-header__eyebrow {
   font-size: var(--font-size-callout);
   color: var(--color-text-tertiary);
-  font-weight: 500;
-  letter-spacing: var(--letter-spacing-wide);
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 0 0 var(--space-1);
 }
 
 .page-header__title {
-  font-size: var(--font-size-title-3);
-  font-weight: 700;
+  font-size: var(--font-size-title-2);
+  font-weight: 650;
   color: var(--color-text-primary);
   letter-spacing: var(--letter-spacing-tight);
   line-height: var(--line-height-tight);
@@ -860,9 +860,10 @@ onBeforeUnmount(() => {
 }
 
 .page-header__subtitle {
-  font-size: var(--font-size-callout);
+  font-size: var(--font-size-body);
   color: var(--color-text-secondary);
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .page-header__actions {
@@ -880,7 +881,7 @@ onBeforeUnmount(() => {
 
 .scope-tab {
   flex: 1;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
   background: var(--glass-floating-bg, linear-gradient(135deg, rgba(255, 255, 255, 0.68) 0%, rgba(232, 242, 252, 0.46) 100%));
   -webkit-backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
   backdrop-filter: var(--glass-blur, blur(10px) saturate(170%));
@@ -889,7 +890,7 @@ onBeforeUnmount(() => {
   box-shadow:
     0 2px 6px rgba(18, 48, 82, 0.04),
     var(--glass-rim, inset 0 1px 0 rgba(255, 255, 255, 0.92));
-  font-size: var(--font-size-callout);
+  font-size: var(--font-size-body);
   font-weight: 600;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -899,7 +900,7 @@ onBeforeUnmount(() => {
     border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   z-index: 1;
-  min-height: 40px;
+  min-height: 44px;
 }
 
 .scope-tab:hover {
@@ -944,7 +945,7 @@ onBeforeUnmount(() => {
 }
 
 .search-bar {
-  padding: var(--space-4);
+  padding: var(--space-4) var(--space-5);
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1010,16 +1011,17 @@ onBeforeUnmount(() => {
 /* The status slot is rendered inside the shared volunteer card. */
 .detail-status {
   display: inline-block;
-  padding: 0.25rem 0.75rem;
+  padding: 0.3rem 0.85rem;
   border-radius: 999px;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.status-draft { background: rgba(148, 163, 184, 0.1); color: rgb(71, 85, 105); }
-.status-pending { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
-.status-refused { background: rgba(239, 68, 68, 0.1); color: rgb(185, 28, 28); }
-.status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
+.status-draft { background: rgba(148, 163, 184, 0.14); color: rgb(71, 85, 105); border: 1px solid rgba(148, 163, 184, 0.24); }
+.status-pending { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
+.status-refused { background: rgba(239, 68, 68, 0.14); color: rgb(185, 28, 28); border: 1px solid rgba(239, 68, 68, 0.24); }
+.status-effective { background: rgba(34, 197, 94, 0.14); color: rgb(21, 128, 61); border: 1px solid rgba(34, 197, 94, 0.24); }
 
 .detail-status--action {
   border: 1px solid currentColor;
@@ -1079,7 +1081,7 @@ onBeforeUnmount(() => {
 
 .activities-skeleton {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-5);
 }
 
 .activity-skeleton {
@@ -1130,7 +1132,7 @@ onBeforeUnmount(() => {
 }
 
 .pagination {
-  padding: var(--space-4);
+  padding: var(--space-5);
   display: flex;
   align-items: center;
   justify-content: space-between;

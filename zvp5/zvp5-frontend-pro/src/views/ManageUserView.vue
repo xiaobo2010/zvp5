@@ -15,6 +15,7 @@ import {
   ADMIN_EDITABLE_ROLES,
   clearUserClass,
   createUserTempPassword,
+  deleteAdminUser,
   fetchAdminGroupName,
   fetchAdminUserActivities,
   fetchAdminUserProfile,
@@ -121,6 +122,10 @@ const banCustomDays = ref('')
 const banSubmitting = ref(false)
 const banError = ref('')
 const banNotice = ref('')
+
+const deleteDialog = ref<HTMLDialogElement>()
+const deleteSubmitting = ref(false)
+const deleteError = ref('')
 
 // Stale-response guard for the profile/time/activity reads.
 let runId = 0
@@ -237,6 +242,12 @@ const canModerateBan = computed(() => {
 })
 
 const banActionLabel = computed(() => (profile.value?.banned ? '解封账号' : '封禁账号'))
+
+/**
+ * Hard delete is admin-only and never applies to the operator's own account:
+ * the backend independently rejects self-delete with 403.
+ */
+const canDeleteUser = computed(() => isAdminUser && !!profile.value && !isSelf.value)
 
 const banReasonLength = computed(() => banReason.value.trim().length)
 const banReasonInvalid = computed(
@@ -457,6 +468,8 @@ function start() {
   banNotice.value = ''
   banError.value = ''
   closeBanDialog(true)
+  deleteError.value = ''
+  closeDeleteDialog(true)
 
   void loadProfile(run)
   void loadTime(run)
@@ -481,10 +494,16 @@ function goActivities(delta: number) {
 }
 
 function backToList() {
-  const query: Record<string, string> = { tab: 'users' }
-  for (const key of ['q', 'role', 'page']) {
-    const value = route.query[key]
-    if (typeof value === 'string' && value) query[key] = value
+  const sourceTab =
+    typeof route.query.tab === 'string' && route.query.tab ? route.query.tab : 'users'
+  const query: Record<string, string> = { tab: sourceTab }
+  // Only the users tab encodes its list state in the URL; the class roster
+  // links back with `tab=groups` and has nothing else to restore.
+  if (sourceTab === 'users') {
+    for (const key of ['q', 'role', 'page']) {
+      const value = route.query[key]
+      if (typeof value === 'string' && value) query[key] = value
+    }
   }
   void router.push({ name: 'manage', query })
 }
@@ -598,6 +617,54 @@ function closeBanDialog(force = false) {
 
 function onBanBackdrop(event: MouseEvent) {
   if (event.target === banDialog.value) closeBanDialog()
+}
+
+function openDeleteDialog() {
+  if (!canDeleteUser.value) return
+  deleteError.value = ''
+  deleteSubmitting.value = false
+  const dialog = deleteDialog.value
+  if (!dialog) return
+  if (typeof dialog.showModal === 'function') {
+    if (!dialog.open) dialog.showModal()
+  } else {
+    dialog.setAttribute('open', '')
+  }
+}
+
+function closeDeleteDialog(force = false) {
+  if (deleteSubmitting.value && !force) return
+  const dialog = deleteDialog.value
+  if (!dialog) return
+  if (typeof dialog.close === 'function' && dialog.open) dialog.close()
+  else dialog.removeAttribute('open')
+}
+
+function onDeleteBackdrop(event: MouseEvent) {
+  if (event.target === deleteDialog.value) closeDeleteDialog()
+}
+
+async function submitDelete() {
+  const target = profile.value
+  if (!target?._id || !canDeleteUser.value || deleteSubmitting.value) return
+
+  deleteError.value = ''
+  // Confirmation already happened; the password proof is the second gate the
+  // backend requires before the irreversible hard delete.
+  const proof = await adminVerification.value?.request()
+  if (!proof) return
+
+  deleteSubmitting.value = true
+  try {
+    await deleteAdminUser(target._id, proof)
+    deleteSubmitting.value = false
+    closeDeleteDialog(true)
+    backToList()
+  } catch (reason) {
+    deleteError.value = actionError(reason, '删除账号失败，请稍后重试。')
+  } finally {
+    deleteSubmitting.value = false
+  }
 }
 
 function applyBanResult(result: AdminUserBanResult, reason: string | null) {
@@ -838,6 +905,46 @@ watch(userId, (next, previous) => {
       </div>
     </form>
   </dialog>
+  <dialog
+    ref="deleteDialog"
+    class="ban-dialog delete-dialog"
+    aria-labelledby="delete-dialog-title"
+    aria-modal="true"
+    @cancel.prevent="closeDeleteDialog()"
+    @click="onDeleteBackdrop"
+  >
+    <form class="ban-dialog__form" @submit.prevent="submitDelete">
+      <header class="ban-dialog__head">
+        <h2 id="delete-dialog-title" class="ban-dialog__title">删除账号</h2>
+        <p v-if="profile" class="ban-dialog__target">
+          {{ profile.name || '未命名用户' }} · <span class="detail-mono">{{ profile.id }}</span>
+        </p>
+      </header>
+
+      <p class="ban-dialog__note">
+        此操作会硬删除该账号及其关联数据，并使其当前登录立即失效。删除的数据会进入回收站，保留 30 天后清除，无法在此页面恢复。
+      </p>
+
+      <BubbleFeedback v-if="deleteError" class="glass-feedback--error" role="alert">
+        {{ deleteError }}
+      </BubbleFeedback>
+
+      <div class="ban-dialog__actions">
+        <button
+          type="button"
+          class="detail-button"
+          :disabled="deleteSubmitting"
+          @click="closeDeleteDialog()"
+        >
+          取消
+        </button>
+        <button type="submit" class="danger-button danger-button--solid" :disabled="deleteSubmitting">
+          <span v-if="deleteSubmitting" class="spinner" aria-hidden="true"></span>
+          {{ deleteSubmitting ? '删除中…' : '确认删除账号' }}
+        </button>
+      </div>
+    </form>
+  </dialog>
   <div class="user-page">
     <div class="user-page__container">
       <header class="user-page__header">
@@ -877,6 +984,14 @@ watch(userId, (next, previous) => {
             @click="openBanDialog"
           >
             {{ banActionLabel }}
+          </button>
+          <button
+            v-if="canDeleteUser"
+            type="button"
+            class="danger-button"
+            @click="openDeleteDialog"
+          >
+            删除账号
           </button>
           <span v-if="isSecretaryUser" class="detail-badge detail-badge--info">团支书视图</span>
         </div>

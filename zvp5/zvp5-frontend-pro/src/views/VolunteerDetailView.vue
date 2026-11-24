@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
   max-width: var(--content-max-width);
   margin: 0 auto;
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 
 .glass-card {
@@ -658,58 +658,62 @@ onBeforeUnmount(() => {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .detail-info-row {
   display: grid;
-  grid-template-columns: min(5rem, 30%) minmax(0, 1fr);
-  gap: var(--space-3);
+  grid-template-columns: min(6rem, 30%) minmax(0, 1fr);
+  gap: var(--space-4);
   align-items: baseline;
 }
 
 .detail-info-row dt {
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: var(--font-size-callout);
+  font-weight: 600;
   color: var(--color-text-tertiary);
+  letter-spacing: -0.01em;
 }
 
 .detail-info-row dd {
   margin: 0;
-  font-size: 0.9375rem;
+  font-size: var(--font-size-body);
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
+  font-weight: 500;
 }
 
 .detail-type,
 .detail-status {
   display: inline-block;
-  padding: 0.25rem 0.75rem;
+  padding: 0.3rem 0.85rem;
   border-radius: 999px;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.activity-type--on-campus { background: rgba(56, 189, 248, 0.1); color: var(--accent-ink); }
-.activity-type--off-campus { background: rgba(110, 231, 183, 0.1); color: rgb(5, 150, 105); }
-.activity-type--social-practice { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
-.activity-type--hybrid { background: rgba(167, 139, 250, 0.1); color: rgb(109, 40, 217); }
+.activity-type--on-campus { background: rgba(56, 189, 248, 0.14); color: rgb(3, 105, 161); border: 1px solid rgba(56, 189, 248, 0.24); }
+.activity-type--off-campus { background: rgba(110, 231, 183, 0.14); color: rgb(5, 150, 105); border: 1px solid rgba(110, 231, 183, 0.24); }
+.activity-type--social-practice { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
+.activity-type--hybrid { background: rgba(167, 139, 250, 0.14); color: rgb(109, 40, 217); border: 1px solid rgba(167, 139, 250, 0.24); }
 
-.status-draft { background: rgba(148, 163, 184, 0.1); color: rgb(71, 85, 105); }
-.status-pending { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
-.status-refused { background: rgba(239, 68, 68, 0.1); color: rgb(185, 28, 28); }
-.status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
+.status-draft { background: rgba(148, 163, 184, 0.14); color: rgb(71, 85, 105); border: 1px solid rgba(148, 163, 184, 0.24); }
+.status-pending { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
+.status-refused { background: rgba(239, 68, 68, 0.14); color: rgb(185, 28, 28); border: 1px solid rgba(239, 68, 68, 0.24); }
+.status-effective { background: rgba(34, 197, 94, 0.14); color: rgb(21, 128, 61); border: 1px solid rgba(34, 197, 94, 0.24); }
 
 .detail-description {
-  padding-block-start: var(--space-4);
+  padding-block-start: var(--space-5);
   border-block-start: 1px solid var(--color-border-hairline);
 }
 
 .detail-description__title {
-  font-size: var(--font-size-callout);
+  font-size: var(--font-size-headline);
   font-weight: 600;
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--space-3);
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-4);
+  letter-spacing: -0.01em;
 }
 
 .detail-description__body {
@@ -736,7 +740,7 @@ onBeforeUnmount(() => {
   margin: 0 0 var(--space-3);
 }
 
-.roster { padding: var(--space-6); display: grid; gap: var(--space-4); }
+.roster { padding: var(--space-6); display: grid; gap: var(--space-5); }
 
 .roster__head {
   display: flex;
@@ -827,18 +831,23 @@ onBeforeUnmount(() => {
 
 .roster-table th,
 .roster-table td {
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-4) var(--space-3);
   border-block-end: 1px solid var(--color-border-hairline);
-  font-size: 0.9375rem;
+  font-size: var(--font-size-body);
   text-align: start;
   vertical-align: middle;
 }
 
 .roster-table thead th {
-  font-size: 0.8125rem;
+  font-size: var(--font-size-callout);
   font-weight: 600;
   color: var(--color-text-tertiary);
   white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.roster-table tbody tr:hover {
+  background: rgba(0, 113, 227, 0.03);
 }
 
 .roster-table tbody tr:last-child th,
@@ -856,22 +865,24 @@ onBeforeUnmount(() => {
 
 .roster-table__mode {
   display: inline-block;
-  padding: 0.15rem 0.6rem;
+  padding: 0.25rem 0.7rem;
   border-radius: 999px;
   background: rgba(56, 189, 248, 0.1);
   color: var(--accent-ink);
-  font-size: 0.8125rem;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
-.roster-table__mode--on-campus { background: rgba(56, 189, 248, 0.1); color: var(--accent-ink); }
-.roster-table__mode--off-campus { background: rgba(110, 231, 183, 0.1); color: rgb(5, 150, 105); }
-.roster-table__mode--social-practice { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
+.roster-table__mode--on-campus { background: rgba(56, 189, 248, 0.14); color: rgb(3, 105, 161); border: 1px solid rgba(56, 189, 248, 0.24); }
+.roster-table__mode--off-campus { background: rgba(110, 231, 183, 0.14); color: rgb(5, 150, 105); border: 1px solid rgba(110, 231, 183, 0.24); }
+.roster-table__mode--social-practice { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
 
 .roster-table__duration {
   font-variant-numeric: tabular-nums;
-  color: var(--accent-ink);
-  font-weight: 600;
+  color: var(--color-text-primary);
+  font-weight: 650;
   white-space: nowrap;
 }
 

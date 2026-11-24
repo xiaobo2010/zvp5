@@ -361,6 +361,19 @@ async function openUserDetail(user: AdminUser) {
   })
 }
 
+/**
+ * Class roster → user detail. The detail page is shared with the users tab;
+ * `tab=groups` tells its back action to return here instead of the user list.
+ */
+async function openMemberDetail(member: AdminUser) {
+  if (!member?._id) return
+  await router.push({
+    name: 'manage-user',
+    params: { id: member._id },
+    query: { tab: 'groups' }
+  })
+}
+
 /** Roles that the users tab can actually filter by (mirrors the <select>). */
 function roleUserFilterable(role: string): boolean {
   return USER_FILTER_ROLES.includes(role)
@@ -1976,12 +1989,19 @@ watch(activeTab, ensureTab, { immediate: true })
                         <p v-if="!groupMembers.length" class="empty-inline">该班级还没有成员。</p>
                         <ul v-else class="group-member-list" :class="{ 'is-loading': groupMembersLoading }">
                           <li v-for="member in groupMembers" :key="member._id" class="group-member">
-                            <div class="group-member__main">
-                              <span class="group-member__name">{{ member.name || '未命名学生' }}</span>
-                              <span class="group-member__id">学号 {{ member.id ?? '—' }}</span>
-                            </div>
-                            <span v-if="member.banned" class="badge badge--bad">已封禁</span>
-                            <span v-else class="badge badge--good">正常</span>
+                            <button
+                              type="button"
+                              class="group-member__button"
+                              :title="`打开 ${member.name || '未命名学生'} 的用户页面`"
+                              @click="openMemberDetail(member)"
+                            >
+                              <span class="group-member__main">
+                                <span class="group-member__name">{{ member.name || '未命名学生' }}</span>
+                                <span class="group-member__id">学号 {{ member.id ?? '—' }}</span>
+                              </span>
+                              <span v-if="member.banned" class="badge badge--bad">已封禁</span>
+                              <span v-else class="badge badge--good">正常</span>
+                            </button>
                           </li>
                         </ul>
                         <div v-if="groupMembersTotal > GROUP_MEMBER_PAGE_SIZE" class="pager">
@@ -3737,15 +3757,39 @@ select.input:focus-visible {
 }
 
 .group-member {
+  min-width: 0;
+}
+
+.group-member__button {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  width: 100%;
   min-width: 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border-hairline);
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.62);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-smooth),
+    background-color var(--duration-fast) var(--ease-smooth),
+    box-shadow var(--duration-fast) var(--ease-smooth);
+}
+
+.group-member__button:hover {
+  border-color: var(--color-brand);
+  background: rgba(236, 246, 255, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.12);
+}
+
+.group-member__button:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
 }
 
 .group-member__main {

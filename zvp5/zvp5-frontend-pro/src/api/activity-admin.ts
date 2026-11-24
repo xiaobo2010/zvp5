@@ -33,6 +33,17 @@ export interface StudentRecord {
   class_id?: string
 }
 
+/**
+ * 学号/姓名查询的结果。
+ *
+ * 刻意区分「查无此人」「同名多人」「查询失败」：调用方需要给用户不同的提示，
+ * 也需要知道 `matched` 之外的情况不能提交 oid。
+ */
+export type StudentLookupResult =
+  | { status: 'matched'; student: StudentRecord }
+  | { status: 'not-found' }
+  | { status: 'ambiguous'; options: string[] }
+
 export interface ActivityMemberPage {
   members: ActivityMemberRow[]
   total: number
@@ -88,11 +99,14 @@ export async function addActivityMembers(
 
 export async function updateActivityMember(
   activityId: string,
-  memberOid: string,
+  memberDocumentId: string,
   duration: number,
   mode: RegistrationMode
 ): Promise<void> {
-  await apiVoid(`/v1/activities/${activityId}/members/${memberOid}/record`, {
+  // 第二个参数必须是活动成员**记录**的 `_id`（v3 成员列表里的 `_id`），不是成员
+  // 的用户 oid：v2 的 `PUT /{activity_id}/members/{document_id}/record` 先校验
+  // 记录归属再改时长，传用户 oid 会稳定 404。
+  await apiVoid(`/v1/activities/${activityId}/members/${memberDocumentId}/record`, {
     method: 'PUT',
     body: JSON.stringify({ duration, mode })
   })
@@ -106,14 +120,21 @@ export async function searchStudents(query: string, page = 1, size = 10): Promis
   return Array.isArray(result?.data) ? result.data : []
 }
 
-export async function lookupStudent(value: string): Promise<StudentRecord | null> {
+export async function lookupStudent(value: string): Promise<StudentLookupResult> {
   const text = value.trim()
-  if (!text) return null
-  const rows = await searchStudents(text, 1, 10)
+  if (!text) return { status: 'not-found' }
+  // `GET /api/v1/users` 按 `name`/`business_id` 做包含匹配，排序键是学号，
+  // 所以「张伟」的精确行可能排在一堆「张伟X」之后。默认每页 10 条会让精确匹配
+  // 落在页外、被误判成查无此人；这里一次拿满一页（上限 100）再在本地挑精确项。
+  const rows = await searchStudents(text, 1, 100)
   const normalized = text.toLowerCase()
-  return (
-    rows.find((row) => String(row.id).toLowerCase() === normalized) ??
-    rows.find((row) => row.name.trim() === text) ??
-    null
-  )
+  const byId = rows.find((row) => String(row.id).toLowerCase() === normalized)
+  if (byId) return { status: 'matched', student: byId }
+  const byName = rows.filter((row) => row.name.trim() === text)
+  if (byName.length === 1 && byName[0]) return { status: 'matched', student: byName[0] }
+  if (byName.length > 1) {
+    // 同名同姓不算错误输入，但不该让前端随便挑一个：把候选学号交给用户决定。
+    return { status: 'ambiguous', options: byName.map((row) => String(row.id)).slice(0, 3) }
+  }
+  return { status: 'not-found' }
 }

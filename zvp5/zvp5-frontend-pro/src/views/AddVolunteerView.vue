@@ -120,7 +120,7 @@ function goBack() {
   display: flex;
   align-items: flex-start;
   gap: var(--space-4);
-  margin-bottom: var(--space-7);
+  margin-bottom: var(--space-8);
 }
 
 .register-entry__back {
@@ -186,7 +186,7 @@ function goBack() {
 .register-entry__choices {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 
 .register-entry__choice {
@@ -309,7 +309,7 @@ function goBack() {
 }
 
 .register-entry__hint {
-  margin: var(--space-6) 0 0;
+  margin: var(--space-7) 0 0;
 }
 
 @media (max-width: 900px) {

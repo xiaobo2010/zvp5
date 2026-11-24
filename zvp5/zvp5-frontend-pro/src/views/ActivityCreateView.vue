@@ -270,7 +270,7 @@ async function handleSubmit() {
   display: flex;
   align-items: flex-start;
   gap: var(--space-4);
-  margin-bottom: var(--space-7);
+  margin-bottom: var(--space-8);
 }
 
 .add-volunteer__back {
@@ -335,12 +335,12 @@ async function handleSubmit() {
 }
 
 .add-volunteer__title {
-  font-size: var(--font-size-title-3);
-  font-weight: 600;
-  line-height: var(--line-height-snug);
+  font-size: var(--font-size-title-2);
+  font-weight: 650;
+  line-height: var(--line-height-tight);
   letter-spacing: var(--letter-spacing-tight);
   color: var(--color-text-primary);
-  margin-bottom: var(--space-2);
+  margin: 0 0 var(--space-2);
 }
 
 .add-volunteer__subtitle {
@@ -351,7 +351,7 @@ async function handleSubmit() {
 
 .add-volunteer__layout {
   display: grid;
-  gap: var(--space-6);
+  gap: var(--space-7);
   grid-template-columns: 1fr;
 }
 
@@ -367,7 +367,7 @@ async function handleSubmit() {
   background: var(--surface-matte);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  padding: var(--space-6);
+  padding: var(--space-7);
   box-shadow: var(--glass-shadow);
   display: flex;
   flex-direction: column;
@@ -391,15 +391,16 @@ async function handleSubmit() {
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   position: relative;
   z-index: 1;
 }
 
 .form-field__label {
   font-size: var(--font-size-body);
-  font-weight: 600;
+  font-weight: 650;
   color: var(--color-text-primary);
+  letter-spacing: -0.01em;
 }
 
 .form-field__input,
@@ -629,7 +630,7 @@ async function handleSubmit() {
   border: 1px solid var(--color-border-hairline);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
 }
 
 .hint-card__title {

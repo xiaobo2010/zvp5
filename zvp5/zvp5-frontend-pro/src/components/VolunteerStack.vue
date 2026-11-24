@@ -131,7 +131,7 @@ function handleCardKeydown(event: KeyboardEvent, id: string) {
   --card-overlap: clamp(32px, 6vw, 52px);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  width: min(100%, 620px);
+  width: min(100%, 900px);
   margin-inline: auto;
   isolation: isolate;
 }
@@ -247,17 +247,18 @@ function handleCardKeydown(event: KeyboardEvent, id: string) {
 
 .activity-card__type {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .activity-card__duration { color: var(--accent-ink); font-weight: 600; }
 
 .activity-card__details {
-  margin-block-start: var(--space-4);
-  padding-block-start: var(--space-4);
+  margin-block-start: var(--space-5);
+  padding-block-start: var(--space-5);
   border-block-start: 1px solid var(--color-border-hairline);
   animation: card-expand 320ms var(--ease-settle) backwards;
 }
@@ -273,56 +274,61 @@ function handleCardKeydown(event: KeyboardEvent, id: string) {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .detail-info-row {
   display: grid;
-  grid-template-columns: min(5rem, 30%) minmax(0, 1fr);
-  gap: var(--space-3);
+  grid-template-columns: min(6rem, 30%) minmax(0, 1fr);
+  gap: var(--space-4);
   align-items: baseline;
 }
 
 .detail-info-row dt {
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: var(--font-size-callout);
+  font-weight: 600;
   color: var(--color-text-tertiary);
+  letter-spacing: -0.01em;
 }
 
 .detail-info-row dd {
   margin: 0;
-  font-size: 0.9375rem;
+  font-size: var(--font-size-body);
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
+  font-weight: 500;
 }
 
 .detail-type {
   display: inline-block;
-  padding: 0.25rem 0.75rem;
-  background: rgba(56, 189, 248, 0.1);
+  padding: 0.3rem 0.85rem;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.24);
   border-radius: 999px;
   font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--accent-ink);
+  font-weight: 600;
+  color: rgb(3, 105, 161);
+  letter-spacing: -0.01em;
 }
 
-.activity-type--on-campus { background: rgba(56, 189, 248, 0.1); color: var(--accent-ink); }
-.activity-type--off-campus { background: rgba(110, 231, 183, 0.1); color: rgb(5, 150, 105); }
-.activity-type--social-practice { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
-.activity-type--hybrid { background: rgba(167, 139, 250, 0.1); color: rgb(109, 40, 217); }
+.activity-type--on-campus { background: rgba(56, 189, 248, 0.14); color: rgb(3, 105, 161); border: 1px solid rgba(56, 189, 248, 0.24); }
+.activity-type--off-campus { background: rgba(110, 231, 183, 0.14); color: rgb(5, 150, 105); border: 1px solid rgba(110, 231, 183, 0.24); }
+.activity-type--social-practice { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
+.activity-type--hybrid { background: rgba(167, 139, 250, 0.14); color: rgb(109, 40, 217); border: 1px solid rgba(167, 139, 250, 0.24); }
 
 .detail-status {
   display: inline-block;
-  padding: 0.25rem 0.75rem;
+  padding: 0.3rem 0.85rem;
   border-radius: 999px;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.status-draft { background: rgba(148, 163, 184, 0.1); color: rgb(71, 85, 105); }
-.status-pending { background: rgba(251, 191, 36, 0.1); color: rgb(180, 83, 9); }
-.status-refused { background: rgba(239, 68, 68, 0.1); color: rgb(185, 28, 28); }
-.status-effective { background: rgba(34, 197, 94, 0.1); color: rgb(21, 128, 61); }
+.status-draft { background: rgba(148, 163, 184, 0.14); color: rgb(71, 85, 105); border: 1px solid rgba(148, 163, 184, 0.24); }
+.status-pending { background: rgba(251, 191, 36, 0.14); color: rgb(180, 83, 9); border: 1px solid rgba(251, 191, 36, 0.24); }
+.status-refused { background: rgba(239, 68, 68, 0.14); color: rgb(185, 28, 28); border: 1px solid rgba(239, 68, 68, 0.24); }
+.status-effective { background: rgba(34, 197, 94, 0.14); color: rgb(21, 128, 61); border: 1px solid rgba(34, 197, 94, 0.24); }
 
 .detail-status-cell {
   display: flex;
@@ -335,7 +341,7 @@ function handleCardKeydown(event: KeyboardEvent, id: string) {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-3);
-  padding-block-start: var(--space-4);
+  padding-block-start: var(--space-5);
   border-block-start: 1px solid var(--color-border-hairline);
 }
 
