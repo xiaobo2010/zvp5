@@ -51,10 +51,9 @@ THEMES: tuple[Theme, ...] = (
     ),
     Theme(
         id="astra-alpha",
-        label="Astra-Alpha(Only Students)",
-        description="学生专属 3D 空间：星系工作台、立体卡片与沉浸式模块布局",
+        label="Astra-Alpha",
+        description="3D 空间：星系工作台、立体卡片与沉浸式模块布局",
         status="experimental",
-        students_only=True,
     ),
 )
 
