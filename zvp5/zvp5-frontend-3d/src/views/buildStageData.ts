@@ -133,7 +133,7 @@ function normalizeStatus(value: string | undefined): StageActivityStatus {
   return 'pending'
 }
 
-function mapActivity(activity: CanaryActivity): StageActivity {
+export function mapActivity(activity: CanaryActivity): StageActivity {
   const mine = activity.mine
   const typeKey = (mine?.mode ?? activity.type) as StageActivity['typeKey']
   const status = normalizeStatus(mine?.status ?? activity.status)
@@ -267,6 +267,7 @@ export function buildStageData(source: StageSource): StageData {
   const identity: StageIdentity = {
     name: source.profile.name || '同学',
     studentId: String(source.profile.id ?? ''),
+    userOid: String(source.profile._id ?? ''),
     className: source.className || '未分配班级',
     rolesLabel: roles.map((role) => ROLE_LABELS[role] ?? role).join(' · ') || '学生',
     greeting: greetingFor(now.getHours()),

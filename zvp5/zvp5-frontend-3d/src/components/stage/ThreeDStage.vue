@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import StarfieldCanvas from './StarfieldCanvas.vue'
+import {
+  changePassword,
+  clearSession,
+  fetchActivities,
+  fetchMyDevice,
+  logout as logoutSession,
+  readableError,
+  unbindPrimaryDevice,
+  validatePasswordStrength,
+  verifyPassword
+} from '@/api/canary'
+import { mapActivity } from '@/views/buildStageData'
 
 import type { StageActivity, StageData, StageExtraItem } from '@/types/stage'
 
@@ -32,6 +44,30 @@ const ZOOM_MIN = 0.72
 const ZOOM_MAX = 1.35
 const ZOOM_STEP = 0.06
 const sceneScale = ref(1)
+
+type StageView = 'home' | 'volunteers' | 'profile'
+const view = ref<StageView>('home')
+
+const VOLUNTEER_PAGE_SIZE = 8
+const volunteerItems = ref<StageActivity[]>([])
+const volunteerPage = ref(1)
+const volunteerTotal = ref(0)
+const volunteerBusy = ref(false)
+const volunteerError = ref('')
+
+const primaryDeviceId = ref<string | null>(null)
+const deviceBusy = ref(false)
+const deviceError = ref('')
+const actionMessage = ref('')
+
+const passwordDialog = ref<HTMLDialogElement | null>(null)
+const deviceDialog = ref<HTMLDialogElement | null>(null)
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const passwordError = ref('')
+const passwordBusy = ref(false)
+const unbindPassword = ref('')
 
 // Drag state
 const draggingCard = ref<string | null>(null)
@@ -70,7 +106,7 @@ function onWheelZoom(event: WheelEvent) {
   // Lists keep their native wheel scrolling. Everywhere else the wheel is
   // reserved for zooming the scene; it never switches modules.
   const target = event.target as HTMLElement
-  const scrollable = target.closest<HTMLElement>('.extra-list, .cluster')
+  const scrollable = target.closest<HTMLElement>('.extra-list, .cluster, .page-track')
   if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
     return
   }
@@ -141,8 +177,10 @@ function tiltFromCenter(centerPercent: number): number {
   if (reduced.value) return 0
   const maxTilt = isMobile.value ? MOBILE_TILT_MAX : DESKTOP_TILT_MAX
   // 25%/75% are the extreme side-card centers; centered cards stay flat.
+  // The sign is intentionally mirrored so the left card leans right and the
+  // right card leans left, matching the pointer direction.
   const normalized = (centerPercent - 50) / 25
-  return Math.max(-maxTilt, Math.min(maxTilt, normalized * maxTilt))
+  return Math.max(-maxTilt, Math.min(maxTilt, -normalized * maxTilt))
 }
 
 function depthStyle(index: number) {
@@ -173,6 +211,7 @@ function resetActiveScroll() {
 }
 
 function goTo(index: number) {
+  if (view.value !== 'home') return
   if (index < 0 || index >= total.value || transitioning.value) return
   previousActive.value = active.value
   active.value = index
@@ -194,6 +233,145 @@ function goTo(index: number) {
 
 function go(delta: number) {
   goTo(active.value + delta)
+}
+
+const volunteerTotalPages = computed(() =>
+  Math.max(1, Math.ceil(volunteerTotal.value / VOLUNTEER_PAGE_SIZE))
+)
+const visibleVolunteerPages = computed(() => {
+  const totalPages = volunteerTotalPages.value
+  const start = Math.max(
+    1,
+    Math.min(volunteerPage.value - 2, totalPages - 4)
+  )
+  const end = Math.min(totalPages, start + 4)
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset)
+})
+
+function showHome() {
+  view.value = 'home'
+  goTo(0)
+}
+
+async function showVolunteers(page = 1) {
+  view.value = 'volunteers'
+  await loadVolunteerPage(page)
+}
+
+async function loadVolunteerPage(page: number) {
+  const next = Math.max(1, Math.min(volunteerTotalPages.value, page))
+  volunteerBusy.value = true
+  volunteerError.value = ''
+  try {
+    const result = await fetchActivities('mine', next, VOLUNTEER_PAGE_SIZE, '')
+    volunteerItems.value = result.activities.map(mapActivity)
+    volunteerTotal.value = result.total
+    volunteerPage.value = next
+  } catch (reason) {
+    volunteerError.value = readableError(reason, '义工记录加载失败，请稍后重试。')
+  } finally {
+    volunteerBusy.value = false
+  }
+}
+
+async function showProfile() {
+  view.value = 'profile'
+  actionMessage.value = ''
+  deviceBusy.value = true
+  deviceError.value = ''
+  try {
+    const result = await fetchMyDevice()
+    primaryDeviceId.value = result.primary_xuehai_id || null
+  } catch (reason) {
+    deviceError.value = readableError(reason, '设备信息加载失败。')
+  } finally {
+    deviceBusy.value = false
+  }
+}
+
+function openPasswordDialog() {
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  passwordError.value = ''
+  passwordDialog.value?.showModal()
+}
+
+function closePasswordDialog() {
+  if (passwordBusy.value) return
+  passwordDialog.value?.close()
+}
+
+async function submitPassword() {
+  if (passwordBusy.value) return
+  passwordError.value = ''
+  if (!validatePasswordStrength(newPassword.value)) {
+    passwordError.value = '新密码需为 8–14 位可打印字符，且至少包含三类字符。'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    passwordError.value = '两次输入的新密码不一致。'
+    return
+  }
+  passwordBusy.value = true
+  try {
+    const token = await verifyPassword(
+      props.data.identity.studentId,
+      currentPassword.value
+    )
+    await changePassword(props.data.identity.userOid, newPassword.value, token)
+    clearSession()
+    passwordDialog.value?.close()
+    window.location.assign('/#/login')
+  } catch (reason) {
+    passwordError.value = readableError(reason, '密码修改失败，请稍后重试。')
+  } finally {
+    passwordBusy.value = false
+  }
+}
+
+function openDeviceDialog() {
+  if (!primaryDeviceId.value) {
+    actionMessage.value = '当前账号还未绑定主学海设备。'
+    return
+  }
+  unbindPassword.value = ''
+  deviceError.value = ''
+  deviceDialog.value?.showModal()
+}
+
+function closeDeviceDialog() {
+  if (deviceBusy.value) return
+  deviceDialog.value?.close()
+}
+
+async function submitUnbind() {
+  if (deviceBusy.value || !primaryDeviceId.value) return
+  deviceError.value = ''
+  deviceBusy.value = true
+  try {
+    const token = await verifyPassword(
+      props.data.identity.studentId,
+      unbindPassword.value
+    )
+    await unbindPrimaryDevice(token)
+    primaryDeviceId.value = null
+    deviceDialog.value?.close()
+    actionMessage.value = '主学海设备已解绑。'
+  } catch (reason) {
+    deviceError.value = readableError(reason, '解绑失败，请稍后重试。')
+  } finally {
+    deviceBusy.value = false
+  }
+}
+
+function openThemePicker() {
+  window.location.assign('/?choose-theme')
+}
+
+async function handleLogout() {
+  await logoutSession()
+  window.location.assign('/#/login')
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -273,6 +451,7 @@ function isInteractiveTarget(target: HTMLElement): boolean {
 // Mouse/pen horizontal drag on the left or right side. Cards keep their own
 // drag gesture; the centre of the screen stays free for interacting with cards.
 function onStagePointerDown(event: PointerEvent) {
+  if (view.value !== 'home') return
   if (event.pointerType === 'touch' || event.button !== 0) return
   if (!isSideZone(event.clientX)) return
   if (isInteractiveTarget(event.target as HTMLElement)) return
@@ -313,8 +492,8 @@ function onStagePointerEnd(event: PointerEvent) {
 function onCardPointerDown(event: PointerEvent, cardKey: string) {
   if (isMobile.value) return
   const target = event.target as HTMLElement
-  // Don't start drag from scrollable .extra-list content
-  if (target.closest('.extra-list')) return
+  // Don't start drag from scrollable content or an action inside a card.
+  if (target.closest('.extra-list, button, a, input, textarea, select')) return
 
   event.preventDefault()
   draggingCard.value = cardKey
@@ -373,6 +552,10 @@ function getCardStyle(cardKey: string, baseCenter: number) {
 
 // Side swipe navigation (touch). Vertical gestures inside lists stay native.
 function onTouchStart(event: TouchEvent) {
+  if (view.value !== 'home') {
+    touchIsSide = false
+    return
+  }
   if (draggingCard.value || event.touches.length !== 1) return
   const touch = event.touches[0]
   const target = event.target as HTMLElement
@@ -535,6 +718,68 @@ function getActivityCardStyle(activity: StageActivity, index: number) {
   }
 }
 
+const VOLUNTEER_WIDTH = 1040
+const VOLUNTEER_SLOTS = [
+  [2, 8],
+  [26, 2],
+  [50, 10],
+  [74, 5],
+  [4, 52],
+  [28, 48],
+  [52, 58],
+  [76, 54]
+]
+
+function volunteerScatterStyle(activity: StageActivity, index: number): Record<string, string> {
+  if (isMobile.value) return {}
+  const cardKey = `volunteer-${activity.id}`
+  const offset = cardOffsets.value[cardKey] || { x: 0, y: 0 }
+  const slot = VOLUNTEER_SLOTS[index % VOLUNTEER_SLOTS.length]
+  const [baseX, baseY] = slot
+
+  let seed = 0
+  for (let i = 0; i < activity.id.length; i++) {
+    seed = (seed * 31 + activity.id.charCodeAt(i)) | 0
+  }
+  const rng = seededRandom(seed)
+  const left = Math.min(74, Math.max(2, baseX + (rng() - 0.5) * 2.2))
+  const top = Math.min(66, Math.max(2, baseY + (rng() - 0.5) * 3.2))
+  const width = 21.5
+  const height = 136
+
+  return {
+    position: 'absolute',
+    left: `${left.toFixed(2)}%`,
+    top: `${top.toFixed(2)}%`,
+    width: `${width}%`,
+    height: `${height}px`,
+    '--drag-x': `${offset.x}px`,
+    '--drag-y': `${offset.y}px`,
+    '--card-rotate': `${((rng() - 0.5) * 4).toFixed(2)}deg`,
+    '--card-scale': `${(1 - (index % 3) * 0.015).toFixed(3)}`,
+    cursor: isMobile.value ? 'default' : draggingCard.value === cardKey ? 'grabbing' : 'grab',
+    zIndex: String(
+      draggingCard.value === cardKey ? 1000 : (cardStack.value[cardKey] ?? 1 + index)
+    )
+  }
+}
+
+function getVolunteerCardStyle(activity: StageActivity, index: number) {
+  const cardKey = `volunteer-${activity.id}`
+  const offset = cardOffsets.value[cardKey] || { x: 0, y: 0 }
+  const slot = VOLUNTEER_SLOTS[index % VOLUNTEER_SLOTS.length]
+  const [baseX] = slot
+  const width = 21.5
+  const actualCenter = baseX + width / 2 + (offset.x / VOLUNTEER_WIDTH) * 100
+
+  return {
+    '--drag-x': '0px',
+    '--drag-y': '0px',
+    '--card-z': '0px',
+    '--card-tilt': `${tiltFromCenter(actualCenter).toFixed(1)}deg`
+  }
+}
+
 function activityTone(activity: StageActivity) {
   const tones: Record<string, string> = {
     effective: '111, 215, 196',
@@ -580,52 +825,55 @@ function extraTone(item: StageExtraItem) {
       </div>
       <button
         type="button"
-        class="dock-btn is-active"
-        @click="goTo(0)"
+        class="dock-btn"
+        :class="{ 'is-active': view === 'home' }"
+        @click="showHome"
         aria-label="首页"
-        aria-current="page"
+        :aria-current="view === 'home' ? 'page' : undefined"
       >
         <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
           <path d="M3 10L10 3L17 10M5 8V17H8V13H12V17H15V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span class="dock-label">首页</span>
-        <span class="dock-led"></span>
+        <span v-if="view === 'home'" class="dock-led"></span>
       </button>
 
       <button
         type="button"
         class="dock-btn"
-        disabled
-        aria-label="义工列表（待开放）"
-        aria-disabled="true"
+        :class="{ 'is-active': view === 'volunteers' }"
+        @click="showVolunteers(1)"
+        aria-label="义工列表"
+        :aria-current="view === 'volunteers' ? 'page' : undefined"
       >
         <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
           <path d="M3 6H17M3 10H17M3 14H17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
         <span class="dock-label">义工列表</span>
-        <span class="dock-status">待接入</span>
+        <span v-if="view === 'volunteers'" class="dock-led"></span>
       </button>
 
       <button
         type="button"
         class="dock-btn"
-        disabled
-        aria-label="个人中心（待开放）"
-        aria-disabled="true"
+        :class="{ 'is-active': view === 'profile' }"
+        @click="showProfile"
+        aria-label="个人中心"
+        :aria-current="view === 'profile' ? 'page' : undefined"
       >
         <svg class="dock-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
           <circle cx="10" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
           <path d="M4 17C4 14 6.5 12 10 12C13.5 12 16 14 16 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
         <span class="dock-label">个人中心</span>
-        <span class="dock-status">待开放</span>
+        <span v-if="view === 'profile'" class="dock-led"></span>
       </button>
     </nav>
 
     <!-- 3D scene -->
     <div class="stage-scene" @wheel="onWheelZoom" @pointerdown="onStagePointerDown">
       <div class="scene-zoom" :style="{ '--scene-scale': sceneScale }">
-        <div class="stage-track">
+        <div v-if="view === 'home'" class="stage-track">
         <div
           v-for="(module, index) in modules"
           :key="module.id"
@@ -927,11 +1175,227 @@ function extraTone(item: StageExtraItem) {
           </template>
         </div>
         </div>
+
+        <!-- Volunteer list: 8 scattered cards per page -->
+        <div v-else-if="view === 'volunteers'" class="stage-track page-track">
+          <div class="page-heading">
+            <span class="page-kicker">02 / 记录</span>
+            <h2 class="page-title">我的义工列表</h2>
+            <p class="page-summary">仅显示当前账号自己的记录 · 每页最多 8 条</p>
+          </div>
+
+          <div v-if="volunteerBusy" class="page-state">正在读取义工记录…</div>
+          <div v-else-if="volunteerError" class="page-state page-state--error">
+            {{ volunteerError }}
+          </div>
+          <div v-else-if="volunteerItems.length === 0" class="page-state">
+            还没有义工记录。
+          </div>
+          <div v-else class="cluster cluster--volunteer">
+            <div
+              v-for="(activity, idx) in volunteerItems"
+              :key="activity.id"
+              class="activity-card-wrapper volunteer-card-wrapper"
+              :data-card-key="`volunteer-${activity.id}`"
+              :style="volunteerScatterStyle(activity, idx)"
+              @pointerdown="onCardPointerDown($event, `volunteer-${activity.id}`)"
+            >
+              <div
+                class="card card--activity card--volunteer"
+                :style="{ '--tone-rgb': activityTone(activity), ...getVolunteerCardStyle(activity, idx) }"
+              >
+                <div class="card-thickness" aria-hidden="true">
+                  <span class="card-thickness__top"></span>
+                  <span class="card-thickness__bottom"></span>
+                </div>
+                <div class="card-glow"></div>
+                <div class="activity-status"></div>
+                <h4 class="activity-title">{{ activity.name }}</h4>
+                <div class="activity-meta">
+                  <span>{{ activity.dateLabel }}</span>
+                  <span class="meta-sep">·</span>
+                  <span>{{ activity.place }}</span>
+                </div>
+                <div class="activity-type">{{ activity.typeLabel }} · {{ activity.statusLabel }}</div>
+                <div class="activity-hours">
+                  {{ activity.hours !== null ? `${activity.hours}h` : '待记录' }}
+                </div>
+                <div class="card-reflection"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Personal center: three rows of two cards -->
+        <div v-else class="stage-track page-track">
+          <div class="page-heading">
+            <span class="page-kicker">03 / 账号</span>
+            <h2 class="page-title">个人中心</h2>
+            <p class="page-summary">账号、设备与偏好设置</p>
+          </div>
+
+          <div class="cluster cluster--profile">
+            <div
+              class="card card--profile"
+              :data-card-key="'profile-name'"
+              :style="getCardStyle('profile-name', 25)"
+              @pointerdown="onCardPointerDown($event, 'profile-name')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">用户名</span>
+              <strong class="profile-card__value">{{ data.identity.name }}</strong>
+              <span class="profile-card__meta">学号 {{ data.identity.studentId }}</span>
+              <div class="card-reflection"></div>
+            </div>
+
+            <div
+              class="card card--profile"
+              :data-card-key="'profile-identity'"
+              :style="getCardStyle('profile-identity', 75)"
+              @pointerdown="onCardPointerDown($event, 'profile-identity')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">身份</span>
+              <strong class="profile-card__value">{{ data.identity.rolesLabel }}</strong>
+              <span class="profile-card__meta">{{ data.identity.className }}</span>
+              <div class="card-reflection"></div>
+            </div>
+
+            <div
+              class="card card--profile card--profile-action"
+              :data-card-key="'profile-password'"
+              :style="getCardStyle('profile-password', 25)"
+              @pointerdown="onCardPointerDown($event, 'profile-password')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">账号安全</span>
+              <strong class="profile-card__value">修改密码</strong>
+              <span class="profile-card__meta">验证当前密码后设置新密码</span>
+              <button class="profile-card__action" type="button" @click.stop="openPasswordDialog">
+                修改密码
+              </button>
+              <div class="card-reflection"></div>
+            </div>
+
+            <div
+              class="card card--profile card--profile-action"
+              :data-card-key="'profile-device'"
+              :style="getCardStyle('profile-device', 75)"
+              @pointerdown="onCardPointerDown($event, 'profile-device')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">学海设备</span>
+              <strong class="profile-card__value">
+                {{ deviceBusy ? '读取中…' : (primaryDeviceId ? '已绑定' : '未绑定') }}
+              </strong>
+              <span class="profile-card__meta">
+                {{ primaryDeviceId ? `主设备 ${primaryDeviceId}` : '当前账号没有主学海设备' }}
+              </span>
+              <button
+                class="profile-card__action"
+                type="button"
+                :disabled="deviceBusy || !primaryDeviceId"
+                @click.stop="openDeviceDialog"
+              >
+                解绑设备
+              </button>
+              <div v-if="deviceError" class="profile-card__error">{{ deviceError }}</div>
+              <div class="card-reflection"></div>
+            </div>
+
+            <div
+              class="card card--profile card--profile-action"
+              :data-card-key="'profile-theme'"
+              :style="getCardStyle('profile-theme', 25)"
+              @pointerdown="onCardPointerDown($event, 'profile-theme')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">外观</span>
+              <strong class="profile-card__value">切换主题</strong>
+              <span class="profile-card__meta">前往站点主题选择器</span>
+              <button class="profile-card__action" type="button" @click.stop="openThemePicker">
+                打开主题选择
+              </button>
+              <div class="card-reflection"></div>
+            </div>
+
+            <div
+              class="card card--profile card--profile-action"
+              :data-card-key="'profile-logout'"
+              :style="getCardStyle('profile-logout', 75)"
+              @pointerdown="onCardPointerDown($event, 'profile-logout')"
+            >
+              <div class="card-thickness" aria-hidden="true">
+                <span class="card-thickness__top"></span>
+                <span class="card-thickness__bottom"></span>
+              </div>
+              <div class="card-glow"></div>
+              <span class="profile-card__label">会话</span>
+              <strong class="profile-card__value">退出登录</strong>
+              <span class="profile-card__meta">清除当前设备的登录状态</span>
+              <button class="profile-card__action profile-card__action--danger" type="button" @click.stop="handleLogout">
+                退出登录
+              </button>
+              <div class="card-reflection"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
+    <div
+      v-if="view === 'volunteers' && volunteerTotalPages > 1"
+      class="volunteer-pager"
+      aria-label="义工记录分页"
+    >
+      <button
+        type="button"
+        class="pager-btn"
+        :disabled="volunteerPage <= 1 || volunteerBusy"
+        @click="loadVolunteerPage(volunteerPage - 1)"
+      >上一页</button>
+      <button
+        v-for="page in visibleVolunteerPages"
+        :key="page"
+        type="button"
+        class="pager-btn pager-btn--number"
+        :class="{ 'is-active': page === volunteerPage }"
+        :aria-current="page === volunteerPage ? 'page' : undefined"
+        :disabled="volunteerBusy"
+        @click="loadVolunteerPage(page)"
+      >{{ page }}</button>
+      <button
+        type="button"
+        class="pager-btn"
+        :disabled="volunteerPage >= volunteerTotalPages || volunteerBusy"
+        @click="loadVolunteerPage(volunteerPage + 1)"
+      >下一页</button>
+      <span class="pager-count">{{ volunteerPage }} / {{ volunteerTotalPages }}</span>
+    </div>
+
     <!-- Navigation: depth rail only -->
-    <div class="stage-nav">
+    <div v-if="view === 'home'" class="stage-nav">
       <div class="depth-rail">
         <div class="rail-track">
           <div class="rail-progress" :style="{ width: `${(active / (total - 1)) * 100}%` }"></div>
@@ -992,6 +1456,61 @@ function extraTone(item: StageExtraItem) {
 
     <!-- Drag hint -->
     <div class="drag-hint" v-if="!isMobile">卡片可拖动</div>
+
+    <div v-if="actionMessage" class="stage-toast" role="status">{{ actionMessage }}</div>
+
+    <dialog ref="passwordDialog" class="stage-dialog" aria-labelledby="stage-password-title">
+      <form class="stage-dialog__form" @submit.prevent="submitPassword">
+        <p class="stage-dialog__kicker">账号安全</p>
+        <h2 id="stage-password-title" class="stage-dialog__title">修改密码</h2>
+        <p class="stage-dialog__hint">需要先验证当前密码，再设置 8–14 位新密码。</p>
+        <label class="stage-dialog__field">
+          <span>当前密码</span>
+          <input v-model="currentPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <label class="stage-dialog__field">
+          <span>新密码</span>
+          <input v-model="newPassword" type="password" autocomplete="new-password" required />
+        </label>
+        <label class="stage-dialog__field">
+          <span>确认新密码</span>
+          <input v-model="confirmPassword" type="password" autocomplete="new-password" required />
+        </label>
+        <p v-if="passwordError" class="stage-dialog__error">{{ passwordError }}</p>
+        <div class="stage-dialog__actions">
+          <button type="button" class="stage-dialog__btn" :disabled="passwordBusy" @click="closePasswordDialog">
+            取消
+          </button>
+          <button type="submit" class="stage-dialog__btn stage-dialog__btn--primary" :disabled="passwordBusy">
+            {{ passwordBusy ? '保存中…' : '保存新密码' }}
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog ref="deviceDialog" class="stage-dialog" aria-labelledby="stage-device-title">
+      <form class="stage-dialog__form" @submit.prevent="submitUnbind">
+        <p class="stage-dialog__kicker">学海设备</p>
+        <h2 id="stage-device-title" class="stage-dialog__title">解绑主学海设备</h2>
+        <p class="stage-dialog__hint">
+          解绑后，当前账号回到“未绑定设备”状态。请输入密码确认。
+        </p>
+        <p class="stage-dialog__device">{{ primaryDeviceId || '未绑定' }}</p>
+        <label class="stage-dialog__field">
+          <span>当前密码</span>
+          <input v-model="unbindPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <p v-if="deviceError" class="stage-dialog__error">{{ deviceError }}</p>
+        <div class="stage-dialog__actions">
+          <button type="button" class="stage-dialog__btn" :disabled="deviceBusy" @click="closeDeviceDialog">
+            取消
+          </button>
+          <button type="submit" class="stage-dialog__btn stage-dialog__btn--danger" :disabled="deviceBusy">
+            {{ deviceBusy ? '解绑中…' : '确认解绑' }}
+          </button>
+        </div>
+      </form>
+    </dialog>
   </div>
 </template>
 
@@ -2185,6 +2704,363 @@ function extraTone(item: StageExtraItem) {
   border-radius: 1px;
 }
 
+/* Secondary 3D pages */
+.page-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 170px 0 60px;
+}
+
+.page-heading {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  z-index: 5;
+  width: min(560px, calc(100% - 48px));
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.page-kicker {
+  display: block;
+  margin-bottom: 6px;
+  color: rgb(111 215 196 / 0.62);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.page-title {
+  color: #eef6ff;
+  font-size: clamp(24px, 3vw, 38px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.page-summary {
+  margin-top: 6px;
+  color: rgb(169 211 255 / 0.55);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.page-state {
+  color: rgb(169 211 255 / 0.68);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.page-state--error {
+  color: #ffa1ad;
+}
+
+.cluster--volunteer {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 1040px;
+  height: 500px;
+  padding: 0;
+  overflow: visible;
+}
+
+.volunteer-card-wrapper {
+  position: absolute;
+  transform-style: preserve-3d;
+  transform: translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
+    rotate(var(--card-rotate, 0deg)) scale(var(--card-scale, 1));
+  transition: transform 100ms ease-out;
+  background: rgb(0 0 0 / 0.001);
+}
+
+.volunteer-card-wrapper .card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.card--volunteer {
+  padding: 20px;
+}
+
+.card--volunteer .activity-title {
+  font-size: 14px;
+  padding-right: 14px;
+}
+
+.card--volunteer .activity-meta {
+  font-size: 10px;
+}
+
+.activity-type {
+  margin-top: 7px;
+  color: rgb(169 211 255 / 0.48);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+}
+
+.volunteer-pager {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  transform: translateX(-50%);
+  background: rgb(8 15 28 / 0.92);
+  border: 1px solid rgb(111 215 196 / 0.24);
+  box-shadow: 0 0 24px rgb(0 0 0 / 0.4);
+}
+
+.pager-btn {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgb(111 215 196 / 0.18);
+  border-radius: 2px;
+  background: rgb(14 22 38 / 0.8);
+  color: rgb(169 211 255 / 0.72);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled),
+.pager-btn.is-active {
+  border-color: rgb(111 215 196 / 0.6);
+  background: rgb(20 42 48 / 0.9);
+  color: #eef6ff;
+}
+
+.pager-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.pager-count {
+  margin-left: 4px;
+  color: rgb(169 211 255 / 0.42);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.cluster--profile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  width: 100%;
+  max-width: 900px;
+  padding: 0;
+  gap: 20px;
+}
+
+.card--profile {
+  display: flex;
+  flex-direction: column;
+  min-height: 148px;
+  padding: 22px;
+  text-align: left;
+}
+
+.profile-card__label {
+  color: rgb(111 215 196 / 0.58);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.profile-card__value {
+  margin-top: 9px;
+  color: #eef6ff;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.profile-card__meta {
+  margin-top: 7px;
+  color: rgb(169 211 255 / 0.55);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.profile-card__action {
+  align-self: flex-start;
+  min-height: 32px;
+  margin-top: auto;
+  padding: 6px 12px;
+  border: 1px solid rgb(111 215 196 / 0.32);
+  border-radius: 2px;
+  background: rgb(14 22 38 / 0.9);
+  color: #c4e2ff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.profile-card__action:hover:not(:disabled) {
+  border-color: rgb(111 215 196 / 0.62);
+  background: rgb(20 42 48 / 0.95);
+}
+
+.profile-card__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.profile-card__action--danger {
+  border-color: rgb(255 161 173 / 0.3);
+  color: #ffb7c0;
+}
+
+.profile-card__action--danger:hover:not(:disabled) {
+  border-color: rgb(255 161 173 / 0.65);
+  background: rgb(48 20 28 / 0.95);
+}
+
+.profile-card__error {
+  margin-top: 6px;
+  color: #ffa1ad;
+  font-size: 10px;
+}
+
+.stage-toast {
+  position: fixed;
+  top: 84px;
+  right: 24px;
+  z-index: 200;
+  padding: 8px 12px;
+  border: 1px solid rgb(111 215 196 / 0.28);
+  background: rgb(8 15 28 / 0.94);
+  color: #c4e2ff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.stage-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid rgb(111 215 196 / 0.32);
+  border-radius: 2px;
+  background: #0b1424;
+  color: #eef6ff;
+  box-shadow: 0 28px 80px rgb(0 0 0 / 0.6);
+}
+
+.stage-dialog::backdrop {
+  background: rgb(2 5 10 / 0.72);
+}
+
+.stage-dialog__form {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+}
+
+.stage-dialog__kicker {
+  color: rgb(111 215 196 / 0.62);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stage-dialog__title {
+  font-size: 22px;
+  letter-spacing: 0.06em;
+}
+
+.stage-dialog__hint,
+.stage-dialog__device {
+  color: rgb(169 211 255 / 0.62);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.stage-dialog__device {
+  padding: 8px 10px;
+  border: 1px solid rgb(169 211 255 / 0.14);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.stage-dialog__field {
+  display: grid;
+  gap: 5px;
+  color: rgb(169 211 255 / 0.7);
+  font-size: 11px;
+}
+
+.stage-dialog__field input {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgb(169 211 255 / 0.22);
+  border-radius: 2px;
+  background: #07101d;
+  color: #eef6ff;
+  font: inherit;
+}
+
+.stage-dialog__field input:focus-visible {
+  outline: 1px solid rgb(111 215 196 / 0.7);
+  outline-offset: 1px;
+}
+
+.stage-dialog__error {
+  color: #ffa1ad;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stage-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stage-dialog__btn {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid rgb(169 211 255 / 0.2);
+  border-radius: 2px;
+  background: rgb(14 22 38 / 0.9);
+  color: #c4e2ff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.stage-dialog__btn--primary {
+  border-color: rgb(61 141 255 / 0.6);
+  background: #1d5fbf;
+  color: #fff;
+}
+
+.stage-dialog__btn--danger {
+  border-color: rgb(255 161 173 / 0.5);
+  background: #8f2633;
+  color: #fff;
+}
+
+.stage-dialog__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -2333,6 +3209,100 @@ function extraTone(item: StageExtraItem) {
 
   .card--activity {
     min-height: 120px;
+  }
+
+  .page-track {
+    align-items: flex-start;
+    padding: 150px 0 132px;
+    overflow-y: auto;
+  }
+
+  .page-heading {
+    top: 52px;
+    width: calc(100% - 32px);
+  }
+
+  .page-title {
+    font-size: 24px;
+  }
+
+  .cluster--volunteer {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    max-height: none;
+    padding: 0 16px 8px;
+    overflow: visible;
+  }
+
+  .volunteer-card-wrapper {
+    position: static;
+    width: 100%;
+    height: auto;
+    transform: none;
+    left: 0;
+    top: 0;
+  }
+
+  .volunteer-card-wrapper .card {
+    height: auto;
+    min-height: 104px;
+  }
+
+  .card--volunteer {
+    padding: 16px;
+  }
+
+  .volunteer-pager {
+    bottom: 18px;
+    max-width: calc(100vw - 24px);
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .pager-btn {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .pager-count {
+    display: none;
+  }
+
+  .cluster--profile {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    max-height: none;
+    padding: 0 12px 8px;
+    overflow: visible;
+  }
+
+  .card--profile {
+    min-height: 132px;
+    padding: 14px;
+  }
+
+  .profile-card__value {
+    font-size: 16px;
+  }
+
+  .profile-card__meta {
+    font-size: 10px;
+  }
+
+  .profile-card__action {
+    min-height: 28px;
+    padding: 5px 8px;
+    font-size: 9px;
+  }
+
+  .stage-toast {
+    top: 70px;
+    right: 12px;
+    max-width: calc(100vw - 24px);
   }
 
   .activity-title {

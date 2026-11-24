@@ -1,8 +1,8 @@
 // Data contract between the API wiring (HomeView) and the 3D stage visuals.
 //
-// The stage owns presentation only: it receives a fully formatted snapshot and
-// never fetches, so the same props can be replayed with fixtures or screenshots.
-// Keep this file read-only for visual work — propose contract changes instead.
+// The home snapshot is fully formatted and replayable with fixtures. The
+// volunteer list and personal-center account actions are live secondary views
+// and may fetch their own data/actions from the stage.
 
 export type StageModuleId = 'identity' | 'hours' | 'activities' | 'extra'
 
@@ -18,6 +18,8 @@ export interface StageModuleMeta {
 export interface StageIdentity {
   name: string
   studentId: string
+  /** Internal user OID used by password/device account actions. */
+  userOid: string
   className: string
   rolesLabel: string
   greeting: string

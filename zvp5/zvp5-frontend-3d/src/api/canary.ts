@@ -203,12 +203,23 @@ function errorMeta(payload: unknown, fallback: string): { message: string; code:
   return meta
 }
 
-export async function canaryRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+interface RequestOptions {
+  /** Explicit bearer token (password verification/change use a short token). */
+  token?: string
+  /** A rejected short token must not clear the long-lived session token. */
+  keepSessionOn401?: boolean
+}
+
+export async function canaryRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  options: RequestOptions = {}
+): Promise<T> {
   const headers = new Headers(init.headers)
   if (!headers.has('Content-Type') && init.body) {
     headers.set('Content-Type', 'application/json')
   }
-  const value = token()
+  const value = options.token ?? token()
   if (value && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${value}`)
   }
@@ -237,7 +248,7 @@ export async function canaryRequest<T>(path: string, init: RequestInit = {}): Pr
 
   if (!response.ok) {
     if (response.status === 401) {
-      clearSession()
+      if (!options.keepSessionOn401) clearSession()
       throw new CanaryApiError('登录状态已失效，请重新登录。', 401)
     }
     const meta = errorMeta(payload, `请求失败（${response.status}）`)
@@ -336,4 +347,127 @@ export function fetchGroupName(groupId: string): Promise<string> {
     .catch(() => '')
   groupNameCache.set(groupId, pending)
   return pending
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account actions                                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface CanaryDeviceInfo {
+  xuehai_id: string | null
+  primary_xuehai_id: string | null
+  device_banned: boolean
+  device_ban_reason: string | null
+  device_ban_until: string | null
+}
+
+export async function fetchMyDevice(): Promise<CanaryDeviceInfo> {
+  return canaryRequest<CanaryDeviceInfo>('/v1/users/me/device')
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  const binary = atob(padded)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+async function encryptCredential(publicKey: string, password: string): Promise<string> {
+  const pem = publicKey
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .split(/\s+/)
+    .join('')
+  const key = await crypto.subtle.importKey(
+    'spki',
+    base64ToBytes(pem),
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    true,
+    ['encrypt']
+  )
+  const payload = new TextEncoder().encode(
+    JSON.stringify({ password, time: Date.now() })
+  )
+  const encrypted = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, payload)
+  return bytesToHex(new Uint8Array(encrypted))
+}
+
+async function encryptedCredential(password: string): Promise<string> {
+  const publicKey = await canaryRequest<string>('/cert?type=public&method=RSA')
+  return encryptCredential(publicKey, password)
+}
+
+/** Mirrors the backend's password strength rule (8–14 ASCII, 3 classes). */
+export function validatePasswordStrength(password: string): boolean {
+  if (password.length < 8 || password.length > 14) return false
+  if (!/^[\x20-\x7e]+$/.test(password)) return false
+  let classes = 0
+  if (/[a-z]/.test(password)) classes += 1
+  if (/[A-Z]/.test(password)) classes += 1
+  if (/[0-9]/.test(password)) classes += 1
+  if (/[^a-zA-Z0-9]/.test(password)) classes += 1
+  return classes >= 3
+}
+
+/** Exchange the current password for the short-lived verify token. */
+export async function verifyPassword(id: string, password: string): Promise<string> {
+  const credential = await encryptedCredential(password)
+  const result = await canaryRequest<{ token?: string }>(
+    '/v1/users/auth',
+    {
+      method: 'POST',
+      body: JSON.stringify({ id, credential, mode: 'short', purpose: 'verify' })
+    },
+    { keepSessionOn401: true }
+  )
+  if (!result?.token) throw new CanaryApiError('密码验证没有返回凭证。', 500)
+  return result.token
+}
+
+export async function changePassword(
+  userOid: string,
+  newPassword: string,
+  passwordToken: string
+): Promise<void> {
+  const credential = await encryptedCredential(newPassword)
+  await canaryRequest<unknown>(
+    `/v1/users/${encodeURIComponent(userOid)}/password`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ credential })
+    },
+    { token: passwordToken, keepSessionOn401: true }
+  )
+}
+
+/** The backend rotates the session on password change, so always drop it. */
+export async function logout(): Promise<void> {
+  const value = token()
+  if (value) {
+    try {
+      await canaryRequest<unknown>(
+        '/v1/users/auth/logout',
+        { method: 'POST' },
+        { token: value, keepSessionOn401: true }
+      )
+    } catch {
+      // Expired/invalid tokens still get dropped locally.
+    }
+  }
+  clearSession()
+}
+
+export async function unbindPrimaryDevice(verificationToken: string): Promise<void> {
+  await canaryRequest<unknown>('/v1/users/me/primary-device', {
+    method: 'DELETE',
+    body: JSON.stringify({ verification_token: verificationToken })
+  })
 }
