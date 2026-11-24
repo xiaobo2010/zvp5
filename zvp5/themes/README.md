@@ -32,7 +32,7 @@
 }
 ```
 
-预览构建器会给 `build.command` 追加 `--base=/themes/canary-example/`，将子应用产物并入主站产物，注入主题切换器，并生成供浏览器读取的 `/themes.json`。所有主题复用同一套构建流程和 Worker 路由。[构建器](../deployment/build-theme-apps.mjs)
+预览构建器会给 `build.command` 追加 `--base=/themes/canary-example/`，将子应用产物并入主站产物，注入主题切换器，并生成供浏览器读取的 `/themes.json`。仅限学生的主题额外声明 `"audience": "students"`，构建器会把它们排除在公开的 `/themes.json` 之外，只通过登录后的后端注册表下发。所有主题复用同一套构建流程和 Worker 路由。[构建器](../deployment/build-theme-apps.mjs)
 
 在个人主页或设置中用本应用的样式放一个「切换站点主题」链接，标记 `data-zvms-theme-picker`。同源构建会在原地打开选择器。独立预览站的链接可指向同源主题站中对应应用的入口，并附上 `?choose-theme`。首次引导按主题记在当前浏览器中，选择或跳过后可从个人页重新打开。
 

@@ -269,13 +269,18 @@ function writeRuntimeManifest(manifest) {
   const runtime = {
     default: manifest.default,
     prefix: manifest.prefix,
-    themes: manifest.themes.map((theme) => ({
-      id: theme.id,
-      label: theme.label,
-      description: theme.description,
-      status: theme.status,
-      base: theme.base
-    }))
+    // Student-only themes are served through the authenticated registry; keep
+    // them out of the public static catalog so the unauthenticated fallback
+    // cannot advertise a theme the caller may not select.
+    themes: manifest.themes
+      .filter((theme) => theme.audience !== 'students')
+      .map((theme) => ({
+        id: theme.id,
+        label: theme.label,
+        description: theme.description,
+        status: theme.status,
+        base: theme.base
+      }))
   }
   const target = path.join(MAIN_DIST, 'themes.json')
   writeFileSync(target, `${JSON.stringify(runtime, null, 2)}\n`)
