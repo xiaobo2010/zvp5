@@ -31,6 +31,9 @@ class Theme:
     label: str
     description: str
     status: str
+    #: ``True`` = only accounts carrying the raw ``student`` role may see or
+    #: select it. Missing/unknown roles never qualify (fail closed).
+    students_only: bool = False
 
 
 THEMES: tuple[Theme, ...] = (
@@ -45,6 +48,13 @@ THEMES: tuple[Theme, ...] = (
         label="Canary Pro",
         description="Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",
         status="stable",
+    ),
+    Theme(
+        id="astra-alpha",
+        label="Astra-Alpha(Only Students)",
+        description="学生专属 3D 空间：星系工作台、立体卡片与沉浸式模块布局",
+        status="experimental",
+        students_only=True,
     ),
 )
 
@@ -61,18 +71,41 @@ def _clean(value: object) -> str:
     return value.strip().lower()
 
 
-def normalize_theme_id(value: object) -> str:
-    """把库里的值/请求值归一化成注册表里的 id；未知或空值回 :data:`DEFAULT_THEME`。
+def _audience_allows(theme: Theme, user: dict | None) -> bool:
+    """Return whether ``user`` may see/select ``theme``.
+
+    ``user=None`` means "registry inspection" (manifest parity tests and
+    stats), not "anonymous caller"; callers that expose the catalog always
+    pass the authenticated user. Student-only themes therefore fail closed
+    for both missing roles and non-student roles.
+    """
+    if not theme.students_only:
+        return True
+    if user is None:
+        return False
+    roles = user.get("per") or []
+    return "student" in roles
+
+
+def normalize_theme_id(value: object, user: dict | None = None) -> str:
+    """把库里的值/请求值归一化成注册表里的 id；未知、空值或无权访问回 :data:`DEFAULT_THEME`。
 
     读路径专用：历史值可能已被下线，显示上按默认主题处理，不抛错。
     """
     cleaned = _clean(value)
-    return cleaned if cleaned in THEME_IDS else DEFAULT_THEME
+    for theme in THEMES:
+        if theme.id == cleaned and _audience_allows(theme, user):
+            return cleaned
+    return DEFAULT_THEME
 
 
-def is_valid_theme_id(value: object) -> bool:
-    """``value`` 归一化后是否命中注册表（写路径的严格校验）。"""
-    return _clean(value) in THEME_IDS
+def is_valid_theme_id(value: object, user: dict | None = None) -> bool:
+    """``value`` 归一化后是否命中注册表且对 ``user`` 可见（写路径的严格校验）。"""
+    cleaned = _clean(value)
+    for theme in THEMES:
+        if theme.id == cleaned and _audience_allows(theme, user):
+            return True
+    return False
 
 
 def theme_path(value: object) -> str:
@@ -82,12 +115,17 @@ def theme_path(value: object) -> str:
     前端不再自己拼路径，也不再维护一份主题目录；清单/注册表增删主题时，
     切换器、登录后跳转和独立 Pro 站都读同一个字段。
     """
-    theme_id = normalize_theme_id(value)
+    cleaned = _clean(value)
+    theme_id = cleaned if cleaned in THEME_IDS else DEFAULT_THEME
     return "/" if theme_id == DEFAULT_THEME else f"/themes/{theme_id}/"
 
 
-def theme_items() -> list[dict]:
-    """``GET /api/v1/themes`` 的 ``items``：注册表顺序 + 对外字段。"""
+def theme_items(user: dict | None = None) -> list[dict]:
+    """``GET /api/v1/themes`` 的 ``items``：注册表顺序 + 对外字段。
+
+    ``user=None`` 只用于内部/测试的全量视图；路由必须传入当前用户，否则
+    学生专属主题会被误当成公开主题。
+    """
     return [
         {
             "id": theme.id,
@@ -98,4 +136,5 @@ def theme_items() -> list[dict]:
             "path": theme_path(theme.id),
         }
         for theme in THEMES
+        if user is None or _audience_allows(theme, user)
     ]

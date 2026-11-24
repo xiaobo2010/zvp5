@@ -38,7 +38,7 @@
 
 ## 3. 同步后端注册表
 
-在 `services/theme_registry.py` 的 `THEMES` 元组加入对应的 `Theme(...)`。`id`、`label`、`description`、`status` 和条目顺序须与清单一致。注册表负责校验账号的默认主题，并提供管理员统计所需的主题目录。已有 `USERS.THEME` 字段可容纳新主题 ID。[后端主题注册表](../zvp5-backend-python/services/theme_registry.py)
+在 `services/theme_registry.py` 的 `THEMES` 元组加入对应的 `Theme(...)`。`id`、`label`、`description`、`status` 和条目顺序须与清单一致。注册表负责校验账号的默认主题，并提供管理员统计所需的主题目录。已有 `USERS.THEME` 字段可容纳新主题 ID。仅限学生访问的主题额外设置 `students_only=True`：`GET /themes` 会按当前账号角色过滤，`PUT /themes/me` 会拒绝非学生，历史偏好也会在角色变化后回落到默认主题。[后端主题注册表](../zvp5-backend-python/services/theme_registry.py)
 
 ## 4. 校验并发布预览
 

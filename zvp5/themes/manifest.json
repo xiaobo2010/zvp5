@@ -25,6 +25,23 @@
         "install": ["pnpm", "install", "--no-frozen-lockfile"],
         "command": ["pnpm", "exec", "vite", "build"]
       }
+    },
+    {
+      "id": "astra-alpha",
+      "label": "Astra-Alpha(Only Students)",
+      "description": "学生专属 3D 空间：星系工作台、立体卡片与沉浸式模块布局",
+      "status": "experimental",
+      "base": "/themes/astra-alpha/",
+      "source": {
+        "kind": "git",
+        "ref": "v5-canary-pro",
+        "path": "zvp5/zvp5-frontend-3d"
+      },
+      "build": {
+        "kind": "vite",
+        "install": ["pnpm", "install", "--no-frozen-lockfile"],
+        "command": ["pnpm", "exec", "vite", "build"]
+      }
     }
   ]
 }

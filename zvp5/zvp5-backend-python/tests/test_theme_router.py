@@ -66,7 +66,7 @@ def make_client(monkeypatch):
 
 def test_registry_contains_the_shipped_themes() -> None:
     assert theme_registry.DEFAULT_THEME == "canary"
-    assert {"canary", "canary-pro"} <= set(theme_registry.THEME_IDS)
+    assert {"canary", "canary-pro", "astra-alpha"} <= set(theme_registry.THEME_IDS)
     assert theme_registry.THEME_IDS == {theme.id for theme in theme_registry.THEMES}
 
     items = theme_registry.theme_items()
@@ -92,7 +92,21 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     paths = {item["id"]: item["path"] for item in body["data"]["items"]}
     assert paths["canary"] == "/"
     assert paths["canary-pro"] == "/themes/canary-pro/"
+    assert paths["astra-alpha"] == "/themes/astra-alpha/"
     assert "canary-anthropic" not in paths
+
+
+def test_list_themes_hides_student_only_theme_from_non_students(make_client) -> None:
+    client = make_client(
+        _FakeUsersRepo(),
+        user={"id": USER["id"], "per": ["department"]},
+    )
+
+    body = client.get(PREFIX).json()
+
+    ids = [item["id"] for item in body["data"]["items"]]
+    assert "astra-alpha" not in ids
+    assert ids == ["canary", "canary-pro"]
 
 
 def test_server_time_is_public_and_returns_theme_phase_hour(make_client) -> None:
@@ -166,6 +180,57 @@ def test_put_me_rejects_unknown_theme_without_writing(make_client) -> None:
     assert repo.theme is None
 
 
+def test_put_me_rejects_student_only_theme_for_non_students(make_client) -> None:
+    repo = _FakeUsersRepo()
+    client = make_client(
+        repo,
+        user={"id": USER["id"], "per": ["admin"]},
+    )
+
+    response = client.put(f"{PREFIX}/me", json={"theme": "astra-alpha"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "未知主题"
+    assert repo.set_calls == []
+    assert repo.theme is None
+
+
+def test_get_me_falls_back_when_student_only_theme_is_no_longer_allowed(make_client) -> None:
+    client = make_client(
+        _FakeUsersRepo(theme="astra-alpha"),
+        user={"id": USER["id"], "per": ["secretary"]},
+    )
+
+    body = client.get(f"{PREFIX}/me").json()
+
+    assert body["data"]["theme"] == "canary"
+
+
+def test_student_can_select_student_only_theme(make_client) -> None:
+    repo = _FakeUsersRepo()
+    client = make_client(repo)
+
+    body = client.put(f"{PREFIX}/me", json={"theme": "astra-alpha"}).json()
+
+    assert body == {"status": "ok", "data": {"theme": "astra-alpha"}}
+    assert repo.set_calls == [(USER["id"], "astra-alpha")]
+    assert client.get(f"{PREFIX}/me").json()["data"] == {
+        "theme": "astra-alpha",
+        "path": "/themes/astra-alpha/",
+    }
+
+
+def test_entry_returns_student_only_theme_for_students(make_client) -> None:
+    client = make_client(_FakeUsersRepo(theme="astra-alpha"))
+
+    body = client.get(f"{PREFIX}/entry").json()
+
+    assert body == {
+        "status": "ok",
+        "data": {"theme": "astra-alpha", "path": "/themes/astra-alpha/"},
+    }
+
+
 def test_put_me_normalizes_case_and_whitespace(make_client) -> None:
     repo = _FakeUsersRepo()
     client = make_client(repo)
@@ -208,6 +273,7 @@ def test_stats_reports_counts_percent_and_other(
     assert [item["id"] for item in data["items"]] == [
         "canary",
         "canary-pro",
+        "astra-alpha",
     ]
     by_id = {item["id"]: item for item in data["items"]}
     assert by_id["canary"] == {
@@ -218,6 +284,7 @@ def test_stats_reports_counts_percent_and_other(
     }
     assert by_id["canary-pro"]["count"] == 6
     assert by_id["canary-pro"]["percent"] == 30.0
+    assert by_id["astra-alpha"]["count"] == 0
     # 未知历史值只计入 other，不伪造 item。
     assert data["other"] == 2
     assert "retired-theme" not in by_id

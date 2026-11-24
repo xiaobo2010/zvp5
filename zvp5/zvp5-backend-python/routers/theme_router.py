@@ -49,7 +49,7 @@ class ThemeUpdateRequest(BaseModel):
 @router.get("")
 async def list_themes(user=Depends(get_current_user)):
     """可选主题列表（注册表顺序）。"""
-    return {"status": "ok", "data": {"default": DEFAULT_THEME, "items": theme_items()}}
+    return {"status": "ok", "data": {"default": DEFAULT_THEME, "items": theme_items(user)}}
 
 
 @router.get("/server-time")
@@ -67,7 +67,7 @@ async def read_server_time(response: Response):
 async def read_my_theme(user=Depends(get_current_user)):
     """当前账号的主题；库里为 NULL 或未知历史值时回默认主题。"""
     stored = await backends.get_users_repo().get_theme(user["id"])
-    theme = normalize_theme_id(stored)
+    theme = normalize_theme_id(stored, user)
     return {"status": "ok", "data": {"theme": theme, "path": theme_path(theme)}}
 
 
@@ -80,7 +80,7 @@ async def read_theme_entry(user=Depends(get_current_user)):
     路径约定和默认值都留在服务端，前端不再各自拼一份。
     """
     stored = await backends.get_users_repo().get_theme(user["id"])
-    theme = normalize_theme_id(stored)
+    theme = normalize_theme_id(stored, user)
     return {"status": "ok", "data": {"theme": theme, "path": theme_path(theme)}}
 
 
@@ -91,7 +91,7 @@ async def update_my_theme(
 ):
     """保存当前账号的主题（未知主题 400，且不触碰仓储）。"""
     theme_id = payload.theme.strip().lower()
-    if not is_valid_theme_id(theme_id):
+    if not is_valid_theme_id(theme_id, user):
         raise HTTPException(status_code=400, detail="未知主题")
 
     await backends.get_users_repo().set_theme(user["id"], theme_id)
