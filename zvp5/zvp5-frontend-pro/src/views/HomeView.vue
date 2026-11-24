@@ -91,15 +91,36 @@ const sectionsVisible = ref<Record<string, boolean>>({
   work: false
 })
 
-const currentTime = ref('00:00')
+const currentTime = ref(new Date())
 let clockInterval: ReturnType<typeof setInterval> | null = null
 
 const updateClock = () => {
-  const now = new Date()
-  const hours = String(now.getHours()).padStart(2, '0')
-  const minutes = String(now.getMinutes()).padStart(2, '0')
-  currentTime.value = `${hours}:${minutes}`
+  currentTime.value = new Date()
 }
+
+// Analog clock hand angles
+const hourAngle = computed(() => {
+  const hours = currentTime.value.getHours()
+  const minutes = currentTime.value.getMinutes()
+  return ((hours % 12) * 30) + (minutes * 0.5)
+})
+
+const minuteAngle = computed(() => {
+  const minutes = currentTime.value.getMinutes()
+  const seconds = currentTime.value.getSeconds()
+  return (minutes * 6) + (seconds * 0.1)
+})
+
+const secondAngle = computed(() => {
+  const seconds = currentTime.value.getSeconds()
+  return seconds * 6
+})
+
+const timeString = computed(() => {
+  const h = currentTime.value.getHours().toString().padStart(2, '0')
+  const m = currentTime.value.getMinutes().toString().padStart(2, '0')
+  return `${h}:${m}`
+})
 
 let observer: IntersectionObserver | null = null
 let greetingTimeout: ReturnType<typeof setTimeout> | null = null
@@ -595,7 +616,53 @@ onUnmounted(() => {
       <div class="greeting__panel">
         <div class="greeting__clock-orb">
           <div class="greeting__clock-light"></div>
-          <time class="greeting__clock" :datetime="`${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`">{{ currentTime }}</time>
+          <time
+            class="greeting__clock"
+            :datetime="timeString"
+            :aria-label="timeString"
+            :style="{
+              '--hour-angle': `${hourAngle}deg`,
+              '--minute-angle': `${minuteAngle}deg`,
+              '--second-angle': `${secondAngle}deg`
+            }"
+          >
+            <svg class="clock-face" viewBox="0 0 100 100" aria-hidden="true">
+              <!-- Hour tick marks -->
+              <line v-for="i in 12" :key="`tick-${i}`"
+                :x1="50" :y1="8"
+                :x2="50" :y2="14"
+                :transform="`rotate(${i * 30} 50 50)`"
+                class="clock-tick"
+              />
+
+              <!-- Hour hand -->
+              <line
+                x1="50" y1="50"
+                x2="50" y2="28"
+                class="clock-hand clock-hand--hour"
+                :style="{ transform: `rotate(var(--hour-angle))` }"
+              />
+
+              <!-- Minute hand -->
+              <line
+                x1="50" y1="50"
+                x2="50" y2="18"
+                class="clock-hand clock-hand--minute"
+                :style="{ transform: `rotate(var(--minute-angle))` }"
+              />
+
+              <!-- Second hand -->
+              <line
+                x1="50" y1="50"
+                x2="50" y2="15"
+                class="clock-hand clock-hand--second"
+                :style="{ transform: `rotate(var(--second-angle))` }"
+              />
+
+              <!-- Center cap -->
+              <circle cx="50" cy="50" r="3" class="clock-center" />
+            </svg>
+          </time>
         </div>
         <div class="greeting__info">
           <p class="greeting__date">{{ todayLabel }}</p>
@@ -990,10 +1057,7 @@ onUnmounted(() => {
 
 .hours-feedback { margin-bottom: var(--space-4); }
 
-/* Apple-style "now" panel */
-/* Cross-platform gradient frosted glass: the panel reads as a gradient frost
-   from its own layered gradients, grain, rim light and inner shadow. It does
-   not depend on `backdrop-filter`, so tablets and desktops render the same. */
+/* Apple-style "now" panel: simple translucent glass, no gradient/grain. */
 .greeting__panel {
   position: relative;
   isolation: isolate;
@@ -1002,11 +1066,12 @@ onUnmounted(() => {
   gap: var(--space-3);
   padding: 10px 18px 10px 10px;
   border-radius: var(--radius-pill);
-  background: var(--frosted-bg);
-  background-size: var(--frosted-size);
-  background-repeat: var(--frosted-repeat);
-  border: 1px solid var(--frosted-border);
-  box-shadow: var(--frosted-shadow), 0 20px 48px rgba(51, 79, 108, 0.12);
+  background: var(--glass-btn-bg);
+  -webkit-backdrop-filter: var(--glass-btn-blur);
+  backdrop-filter: var(--glass-btn-blur);
+  border: 1px solid var(--glass-btn-border);
+  box-shadow: var(--glass-btn-shadow),
+    0 20px 48px rgb(51 79 108 / 0.12);
   overflow: hidden;
 }
 
@@ -1015,10 +1080,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background:
-    radial-gradient(80% 120% at 12% 20%, rgba(0, 122, 255, 0.16), transparent 58%),
-    radial-gradient(80% 130% at 92% 76%, rgba(255, 149, 0, 0.12), transparent 60%),
-    linear-gradient(115deg, transparent 28%, rgba(175, 82, 222, 0.1) 62%, transparent 84%);
+  background: rgb(255 255 255 / 0.1);
   pointer-events: none;
 }
 
@@ -1044,18 +1106,18 @@ onUnmounted(() => {
   position: relative;
   isolation: isolate;
   z-index: 2;
-  width: 66px;
-  height: 66px;
+  width: 76px;
+  height: 76px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--frosted-orb-bg);
-  background-size: var(--frosted-orb-size);
-  background-repeat: var(--frosted-orb-repeat);
-  border: 1px solid var(--frosted-border);
-  box-shadow: var(--frosted-shadow), 0 6px 18px rgba(0, 122, 255, 0.12);
+  background: var(--clock-glass-bg);
+  -webkit-backdrop-filter: var(--clock-glass-blur);
+  backdrop-filter: var(--clock-glass-blur);
+  border: 1px solid var(--clock-glass-border);
+  box-shadow: var(--clock-glass-shadow);
   overflow: hidden;
 }
 
@@ -1064,26 +1126,63 @@ onUnmounted(() => {
   inset: -6px;
   z-index: 0;
   border-radius: 50%;
-  background: conic-gradient(
-    from 210deg,
-    rgba(0, 122, 255, 0.32),
-    rgba(20, 184, 166, 0.24),
-    rgba(255, 149, 0, 0.26),
-    rgba(0, 122, 255, 0.32)
-  );
-  opacity: 0.38;
+  background: rgb(255 255 255 / 0.16);
+  border: 1px solid rgb(255 255 255 / 0.48);
+  opacity: 0.62;
   pointer-events: none;
 }
 
 .greeting__clock {
   position: relative;
   z-index: 1;
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clock-face {
+  width: 100%;
+  height: 100%;
+}
+
+.clock-tick {
+  stroke: var(--color-text-primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+
+.clock-hand {
+  stroke-linecap: round;
+  transform-origin: 50px 50px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.clock-hand--hour {
+  stroke: var(--color-text-primary);
+  stroke-width: 3;
+}
+
+.clock-hand--minute {
+  stroke: var(--color-text-primary);
+  stroke-width: 2;
+}
+
+.clock-hand--second {
+  stroke: var(--color-brand);
+  stroke-width: 1.5;
+}
+
+.clock-center {
+  fill: var(--color-brand);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clock-hand {
+    transition: none;
+  }
 }
 
 .greeting__info {
