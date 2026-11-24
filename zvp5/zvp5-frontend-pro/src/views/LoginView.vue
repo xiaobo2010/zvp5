@@ -48,6 +48,24 @@ const dateString = computed(() => {
   })
 })
 
+// Analog clock hand angles
+const hourAngle = computed(() => {
+  const hours = currentTime.value.getHours()
+  const minutes = currentTime.value.getMinutes()
+  return ((hours % 12) * 30) + (minutes * 0.5)
+})
+
+const minuteAngle = computed(() => {
+  const minutes = currentTime.value.getMinutes()
+  const seconds = currentTime.value.getSeconds()
+  return (minutes * 6) + (seconds * 0.1)
+})
+
+const secondAngle = computed(() => {
+  const seconds = currentTime.value.getSeconds()
+  return seconds * 6
+})
+
 const isValidStudentId = computed(() => {
   return /^\d{8}$/.test(studentId.value.trim())
 })
@@ -172,10 +190,11 @@ onMounted(() => {
     showContent.value = true
   })
 
-  // Update clock every minute
+  // Update clock every second for smooth second hand
+  currentTime.value = new Date()
   clockTimer = setInterval(() => {
     currentTime.value = new Date()
-  }, 60000)
+  }, 1000)
 })
 
 onUnmounted(() => {
@@ -196,7 +215,53 @@ onUnmounted(() => {
         <div class="clock-orb">
           <div class="orb-halo"></div>
           <div class="orb-core">
-            <div class="time-display">{{ timeString }}</div>
+            <time
+              class="time-display"
+              :datetime="timeString"
+              :aria-label="timeString"
+              :style="{
+                '--hour-angle': `${hourAngle}deg`,
+                '--minute-angle': `${minuteAngle}deg`,
+                '--second-angle': `${secondAngle}deg`
+              }"
+            >
+              <svg class="clock-face" viewBox="0 0 100 100" aria-hidden="true">
+                <!-- Hour tick marks -->
+                <line v-for="i in 12" :key="`tick-${i}`"
+                  :x1="50" :y1="8"
+                  :x2="50" :y2="14"
+                  :transform="`rotate(${i * 30} 50 50)`"
+                  class="clock-tick"
+                />
+
+                <!-- Hour hand -->
+                <line
+                  x1="50" y1="50"
+                  x2="50" y2="28"
+                  class="clock-hand clock-hand--hour"
+                  :style="{ transform: `rotate(var(--hour-angle))` }"
+                />
+
+                <!-- Minute hand -->
+                <line
+                  x1="50" y1="50"
+                  x2="50" y2="18"
+                  class="clock-hand clock-hand--minute"
+                  :style="{ transform: `rotate(var(--minute-angle))` }"
+                />
+
+                <!-- Second hand -->
+                <line
+                  x1="50" y1="50"
+                  x2="50" y2="15"
+                  class="clock-hand clock-hand--second"
+                  :style="{ transform: `rotate(var(--second-angle))` }"
+                />
+
+                <!-- Center cap -->
+                <circle cx="50" cy="50" r="3" class="clock-center" />
+              </svg>
+            </time>
           </div>
         </div>
         <div class="date-display">{{ dateString }}</div>
@@ -492,20 +557,13 @@ onUnmounted(() => {
   inset: -12px;
   z-index: 0;
   border-radius: 50%;
-  background: conic-gradient(
-    from 35deg,
-    rgba(228, 236, 255, 0.33),
-    rgba(180, 214, 236, 0.62),
-    rgba(255, 203, 179, 0.5),
-    rgba(228, 236, 255, 0.33)
-  );
-  opacity: 0.7;
+  background: rgb(255 255 255 / 0.18);
+  opacity: 0.72;
   border: 1px solid rgba(255, 255, 255, 0.66);
   pointer-events: none;
 }
 
-/* Same gradient frosted recipe as the home clock: explicit gradients, grain
-   and rim highlights instead of a backdrop-filter layer. */
+/* Clean translucent glass clock face with backdrop blur. */
 .orb-core {
   position: relative;
   z-index: 1;
@@ -515,12 +573,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: var(--frosted-orb-bg);
-  background-size: var(--frosted-orb-size);
-  background-repeat: var(--frosted-orb-repeat);
+  background: var(--clock-glass-bg);
+  -webkit-backdrop-filter: var(--clock-glass-blur);
+  backdrop-filter: var(--clock-glass-blur);
   border-radius: 50%;
-  border: 1px solid var(--frosted-border);
-  box-shadow: var(--frosted-shadow), 0 20px 44px rgba(51, 79, 108, 0.16);
+  border: 1px solid var(--clock-glass-border);
+  box-shadow: var(--clock-glass-shadow);
 }
 
 .orb-core::after {
@@ -541,11 +599,48 @@ onUnmounted(() => {
 .time-display {
   position: relative;
   z-index: 1;
-  font-size: var(--font-size-title-3);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clock-face {
+  width: 100%;
+  height: 100%;
+}
+
+.clock-tick {
+  stroke: var(--color-text-primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+
+.clock-hand {
+  stroke-linecap: round;
+  transform-origin: 50px 50px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.clock-hand--hour {
+  stroke: var(--color-text-primary);
+  stroke-width: 3;
+}
+
+.clock-hand--minute {
+  stroke: var(--color-text-primary);
+  stroke-width: 2;
+}
+
+.clock-hand--second {
+  stroke: var(--color-brand);
+  stroke-width: 1.5;
+}
+
+.clock-center {
+  fill: var(--color-brand);
 }
 
 .date-display {
@@ -949,6 +1044,10 @@ onUnmounted(() => {
   .welcome-text {
     transition: opacity 0.15s linear;
     transform: none;
+  }
+
+  .clock-hand {
+    transition: none;
   }
 
   .submit-button:hover:not(:disabled) {
