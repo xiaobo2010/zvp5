@@ -1,110 +1,128 @@
-/* Aggressive overrides for injected theme selector */
+/**
+ * Astra Alpha Flat Controls
+ * 
+ * 扁平 Astra 控件风格：细分隔线、极小圆角（2-3px）、等宽字标签、
+ * 扁平填充、天空蓝高亮、明确的 hover/active/disabled/focus-visible。
+ * 
+ * 参考：zvms4-modified-main/README.md §7
+ * - 圆角约为常规的 70%（这里用 2-3px）
+ * - 对话框内不做半透明
+ * - 天空蓝 + 黑白 + logo 色
+ * - 扁平 + 阴影
+ * - 卡片间距更大
+ */
 
-/* Overlay */
-html body .zvms-theme-overlay {
-  background: rgba(0, 0, 0, 0.5) !important;
+:root {
+  --astra-btn-height: 32px;
+  --astra-btn-height-sm: 28px;
+  --astra-btn-radius: 2px;
+  --astra-btn-border: 1px solid rgb(172 210 255 / 0.22);
+  --astra-btn-bg: transparent;
+  --astra-btn-color: rgb(196 226 255 / 0.86);
+  --astra-btn-hover-bg: rgb(111 215 196 / 0.10);
+  --astra-btn-hover-border: 1px solid rgb(111 215 196 / 0.32);
+  --astra-btn-active-bg: #6fd7c4;
+  --astra-btn-active-color: #06121f;
+  --astra-btn-disabled-opacity: 0.4;
+  --astra-btn-focus-outline: 2px solid rgb(111 215 196 / 0.7);
+  --astra-btn-font: var(--font-mono, 'Roboto Mono', 'Consolas', monospace);
+  --astra-btn-font-size: 10px;
+  --astra-btn-letter-spacing: 0.06em;
 }
 
-/* Dialog container */
-html body .zvms-theme-dialog {
-  border: 1px solid rgb(169 211 255 / 0.2) !important;
-  border-radius: 2px !important;
-  background: rgb(14 22 38 / 0.95) !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
-  padding: 16px !important;
+/* Base button */
+.astra-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--astra-btn-height);
+  padding: 6px 12px;
+  border: var(--astra-btn-border);
+  border-radius: var(--astra-btn-radius);
+  background: var(--astra-btn-bg);
+  color: var(--astra-btn-color);
+  font-family: var(--astra-btn-font);
+  font-size: var(--astra-btn-font-size);
+  letter-spacing: var(--astra-btn-letter-spacing);
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+  text-align: center;
+  white-space: nowrap;
 }
 
-/* Dialog title/label */
-html body .zvms-theme-dialog h2,
-html body .zvms-theme-dialog h3,
-html body .zvms-theme-dialog label {
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: 11px !important;
-  letter-spacing: 0.08em !important;
-  color: rgb(169 211 255 / 0.9) !important;
-  font-weight: 500 !important;
+.astra-btn:hover:not(:disabled) {
+  background: var(--astra-btn-hover-bg);
+  border: var(--astra-btn-hover-border);
+  color: #eef6ff;
 }
 
-/* Option buttons */
-html body .zvms-theme-dialog__option {
-  padding: 8px 12px !important;
-  margin: 4px 0 !important;
-  border: 1px solid rgb(111 215 196 / 0.25) !important;
-  border-radius: 2px !important;
-  background: rgb(8 15 28 / 0.8) !important;
-  color: rgb(169 211 255 / 0.72) !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: 10px !important;
-  letter-spacing: 0.04em !important;
-  cursor: pointer !important;
-  transition: border-color 160ms ease, background 160ms ease !important;
-  box-shadow: none !important;
+.astra-btn:active:not(:disabled),
+.astra-btn.is-active {
+  background: var(--astra-btn-active-bg);
+  color: var(--astra-btn-active-color);
+  border-color: var(--astra-btn-active-bg);
 }
 
-html body .zvms-theme-dialog__option:hover {
-  border-color: rgb(111 215 196 / 0.6) !important;
-  background: rgb(20 42 48 / 0.9) !important;
-  color: #eef6ff !important;
-  box-shadow: none !important;
+.astra-btn:disabled {
+  opacity: var(--astra-btn-disabled-opacity);
+  cursor: not-allowed;
 }
 
-html body .zvms-theme-dialog__option:active {
-  border-color: rgb(111 215 196 / 0.8) !important;
-  background: rgb(32 60 72 / 0.95) !important;
+.astra-btn:focus-visible {
+  outline: var(--astra-btn-focus-outline);
+  outline-offset: 1px;
 }
 
-html body .zvms-theme-dialog__option:disabled {
-  opacity: 0.4 !important;
-  cursor: not-allowed !important;
+/* Small variant */
+.astra-btn--sm {
+  min-height: var(--astra-btn-height-sm);
+  padding: 4px 9px;
+  font-size: 9px;
 }
 
-/* Primary/selected option */
-html body .zvms-theme-dialog__option.selected,
-html body .zvms-theme-dialog__option[aria-pressed="true"] {
-  border-color: rgb(169 211 255 / 0.6) !important;
-  background: rgb(20 32 54 / 0.95) !important;
-  color: #c4e2ff !important;
+/* Primary variant (more prominent cyan) */
+.astra-btn--primary {
+  border-color: rgb(111 215 196 / 0.52);
+  background: rgb(10 34 38 / 0.5);
+  color: #dffaf4;
 }
 
-/* Dismiss/close button */
-html body .zvms-theme-dialog__dismiss {
-  padding: 6px 10px !important;
-  margin-top: 12px !important;
-  border: 1px solid rgb(111 215 196 / 0.28) !important;
-  border-radius: 2px !important;
-  background: rgb(8 15 28 / 0.8) !important;
-  color: rgb(169 211 255 / 0.72) !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: 9px !important;
-  letter-spacing: 0.04em !important;
-  cursor: pointer !important;
-  transition: border-color 160ms ease, background 160ms ease !important;
-  box-shadow: none !important;
+.astra-btn--primary:hover:not(:disabled) {
+  border-color: rgb(111 215 196 / 0.78);
+  background: rgb(14 46 50 / 0.7);
+  color: #ffffff;
 }
 
-html body .zvms-theme-dialog__dismiss:hover {
-  border-color: rgb(111 215 196 / 0.6) !important;
-  background: rgb(20 42 48 / 0.9) !important;
-  color: #eef6ff !important;
-  box-shadow: none !important;
+.astra-btn--primary:active:not(:disabled) {
+  background: #6fd7c4;
+  color: #06121f;
 }
 
-html body .zvms-theme-dialog__dismiss:active {
-  border-color: rgb(111 215 196 / 0.8) !important;
-  background: rgb(32 60 72 / 0.95) !important;
+/* Danger variant (red tint) */
+.astra-btn--danger {
+  border-color: rgb(255 161 173 / 0.46);
+  background: rgb(42 20 28 / 0.5);
+  color: #ffd3d9;
 }
 
-/* Remove any inner shadows, glows, or translucency effects */
-html body .zvms-theme-dialog,
-html body .zvms-theme-dialog__option,
-html body .zvms-theme-dialog__dismiss {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+.astra-btn--danger:hover:not(:disabled) {
+  border-color: rgb(255 161 173 / 0.68);
+  background: rgb(52 24 32 / 0.75);
+  color: #ffffff;
 }
 
-/* Focus states for accessibility */
-html body .zvms-theme-dialog__option:focus-visible,
-html body .zvms-theme-dialog__dismiss:focus-visible {
-  outline: 2px solid rgb(169 211 255 / 0.6) !important;
-  outline-offset: 1px !important;
+.astra-btn--danger:active:not(:disabled) {
+  background: rgb(255 100 120 / 0.9);
+  color: #ffffff;
+}
+
+/* Square icon button (zoom controls) */
+.astra-btn--square {
+  width: var(--astra-btn-height-sm);
+  min-width: var(--astra-btn-height-sm);
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
 }
