@@ -504,8 +504,8 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* Same cross-platform glass recipe as the home clock: explicit gradients and
-   rim highlights instead of a backdrop-filter layer. */
+/* Same gradient frosted recipe as the home clock: explicit gradients, grain
+   and rim highlights instead of a backdrop-filter layer. */
 .orb-core {
   position: relative;
   z-index: 1;
@@ -515,28 +515,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: rgba(246, 251, 255, 0.9);
-  background:
-    radial-gradient(
-      circle at 32% 24%,
-      rgba(255, 255, 255, 0.98) 0%,
-      rgba(255, 255, 255, 0.5) 28%,
-      transparent 58%
-    ),
-    linear-gradient(
-      145deg,
-      rgba(255, 255, 255, 0.82),
-      rgba(211, 235, 255, 0.48) 58%,
-      rgba(244, 238, 255, 0.58)
-    ),
-    var(--glass-floating-bg, #f5f9ffd9);
+  background: var(--frosted-orb-bg);
+  background-size: var(--frosted-orb-size);
+  background-repeat: var(--frosted-orb-repeat);
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.92);
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.98),
-    inset 0 -4px 10px rgba(54, 101, 145, 0.13),
-    0 6px 18px rgba(0, 122, 255, 0.14),
-    0 20px 44px rgba(51, 79, 108, 0.16);
+  border: 1px solid var(--frosted-border);
+  box-shadow: var(--frosted-shadow), 0 20px 44px rgba(51, 79, 108, 0.16);
 }
 
 .orb-core::after {
