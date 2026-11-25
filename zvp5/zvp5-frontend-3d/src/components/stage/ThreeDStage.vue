@@ -644,7 +644,9 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   const clampedPitch = clampNumber(pitchDelta * 0.55, -9, 9)
   const clampedRoll = clampNumber(rollDelta * 0.65, -9, 9)
   // Yaw is low-passed: compass headings are noisier than the gravity vector.
-  const targetYaw = clampNumber(yawDelta * 0.7, -12, 12)
+  // No hard ceiling here: the inward/outward tablet turn is the strongest 3D
+  // cue, and the old ±12° cap flattened it. The gain is 2.5× the previous one.
+  const targetYaw = yawDelta * 0.7 * 2.5
   gyroYawSmooth += (targetYaw - gyroYawSmooth) * 0.25
 
   const root = stageRoot.value
@@ -1169,7 +1171,12 @@ function extraTone(item: StageExtraItem) {
   <div
     ref="stageRoot"
     class="stage"
-    :class="{ 'is-reduced': reduced, 'is-card-dragging': Boolean(draggingCard) }"
+    :class="{
+      'is-reduced': reduced,
+      'is-card-dragging': Boolean(draggingCard),
+      'is-volunteers': view === 'volunteers'
+    }"
+    @wheel="onWheelZoom"
   >
     <!-- Background environment -->
     <div class="stage-backdrop">
@@ -1237,7 +1244,7 @@ function extraTone(item: StageExtraItem) {
     </nav>
 
     <!-- 3D scene -->
-    <div class="stage-scene" @wheel="onWheelZoom" @pointerdown="onStagePointerDown">
+    <div class="stage-scene" @pointerdown="onStagePointerDown">
       <div class="scene-zoom" :style="{ '--scene-scale': sceneScale }">
         <div v-if="view === 'home'" class="stage-track">
         <div
@@ -2047,6 +2054,20 @@ function extraTone(item: StageExtraItem) {
    them and disappearing at the page edge. */
 .stage.is-card-dragging .stage-scene {
   z-index: 140;
+}
+
+@media (min-width: 901px) {
+  /* Volunteer board: cards live above the fixed dock/pager so a card can be
+     dragged anywhere and still stay visible. The scene itself is transparent
+     to pointer events, so the dock/pager/zoom HUD keep working in the gaps. */
+  .stage.is-volunteers .stage-scene {
+    z-index: 140;
+    pointer-events: none;
+  }
+
+  .stage.is-volunteers .volunteer-card-wrapper {
+    pointer-events: auto;
+  }
 }
 
 .stage-track {

@@ -79,6 +79,20 @@ def test_registry_contains_the_shipped_themes() -> None:
     assert canary["description"]
 
 
+def test_students_only_flag_remains_opt_in_and_fail_closed() -> None:
+    """No shipped theme uses the gate; keep the mechanism covered for future ones."""
+    gated = theme_registry.Theme(
+        id="future-campus",
+        label="Future Campus",
+        description="",
+        status="experimental",
+        students_only=True,
+    )
+    assert theme_registry._audience_allows(gated, {"per": ["student"]})
+    assert not theme_registry._audience_allows(gated, {"per": ["admin"]})
+    assert not theme_registry._audience_allows(gated, None)
+
+
 def test_list_themes_returns_registry_and_default(make_client) -> None:
     client = make_client(_FakeUsersRepo())
 
@@ -96,17 +110,18 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     assert "canary-anthropic" not in paths
 
 
-def test_list_themes_hides_student_only_theme_from_non_students(make_client) -> None:
-    client = make_client(
-        _FakeUsersRepo(),
-        user={"id": USER["id"], "per": ["department"]},
-    )
+def test_list_themes_offers_astra_alpha_to_every_role(make_client) -> None:
+    """Astra-Alpha is public: no role may be filtered out of the catalog."""
+    for roles in (["department"], ["admin"], ["secretary"], []):
+        client = make_client(
+            _FakeUsersRepo(),
+            user={"id": USER["id"], "per": roles},
+        )
 
-    body = client.get(PREFIX).json()
+        body = client.get(PREFIX).json()
 
-    ids = [item["id"] for item in body["data"]["items"]]
-    assert "astra-alpha" not in ids
-    assert ids == ["canary", "canary-pro"]
+        ids = [item["id"] for item in body["data"]["items"]]
+        assert ids == ["canary", "canary-pro", "astra-alpha"]
 
 
 def test_server_time_is_public_and_returns_theme_phase_hour(make_client) -> None:
@@ -180,7 +195,7 @@ def test_put_me_rejects_unknown_theme_without_writing(make_client) -> None:
     assert repo.theme is None
 
 
-def test_put_me_rejects_student_only_theme_for_non_students(make_client) -> None:
+def test_put_me_accepts_astra_alpha_for_non_students(make_client) -> None:
     repo = _FakeUsersRepo()
     client = make_client(
         repo,
@@ -189,13 +204,13 @@ def test_put_me_rejects_student_only_theme_for_non_students(make_client) -> None
 
     response = client.put(f"{PREFIX}/me", json={"theme": "astra-alpha"})
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "未知主题"
-    assert repo.set_calls == []
-    assert repo.theme is None
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "data": {"theme": "astra-alpha"}}
+    assert repo.set_calls == [(USER["id"], "astra-alpha")]
+    assert repo.theme == "astra-alpha"
 
 
-def test_get_me_falls_back_when_student_only_theme_is_no_longer_allowed(make_client) -> None:
+def test_get_me_returns_astra_alpha_for_non_students(make_client) -> None:
     client = make_client(
         _FakeUsersRepo(theme="astra-alpha"),
         user={"id": USER["id"], "per": ["secretary"]},
@@ -203,10 +218,13 @@ def test_get_me_falls_back_when_student_only_theme_is_no_longer_allowed(make_cli
 
     body = client.get(f"{PREFIX}/me").json()
 
-    assert body["data"]["theme"] == "canary"
+    assert body["data"] == {
+        "theme": "astra-alpha",
+        "path": "/themes/astra-alpha/",
+    }
 
 
-def test_student_can_select_student_only_theme(make_client) -> None:
+def test_student_can_select_astra_alpha(make_client) -> None:
     repo = _FakeUsersRepo()
     client = make_client(repo)
 
@@ -220,7 +238,7 @@ def test_student_can_select_student_only_theme(make_client) -> None:
     }
 
 
-def test_entry_returns_student_only_theme_for_students(make_client) -> None:
+def test_entry_returns_astra_alpha(make_client) -> None:
     client = make_client(_FakeUsersRepo(theme="astra-alpha"))
 
     body = client.get(f"{PREFIX}/entry").json()
