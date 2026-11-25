@@ -645,8 +645,9 @@ function onDeviceOrientation(event: DeviceOrientationEvent) {
   const clampedRoll = clampNumber(rollDelta * 0.65, -9, 9)
   // Yaw is low-passed: compass headings are noisier than the gravity vector.
   // No hard ceiling here: the inward/outward tablet turn is the strongest 3D
-  // cue, and the old ±12° cap flattened it. The gain is 2.5× the previous one.
-  const targetYaw = yawDelta * 0.7 * 2.5
+  // cue, and the old ±12° cap flattened it. The gain is 2.5× the previous one,
+  // toned down to 60% (0.7 × 2.5 × 0.6 = 1.05) after device feedback.
+  const targetYaw = yawDelta * 0.7 * 2.5 * 0.6
   gyroYawSmooth += (targetYaw - gyroYawSmooth) * 0.25
 
   const root = stageRoot.value
