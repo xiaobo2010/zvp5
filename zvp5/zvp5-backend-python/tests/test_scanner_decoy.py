@@ -118,6 +118,26 @@ def test_body_and_switch_read_from_settings(monkeypatch) -> None:
     assert scanner_decoy._body() == "第一行\n第二行"
 
 
+def test_honeypot_default_path_matches() -> None:
+    assert scanner_decoy.is_honeypot_path("/database.db.jpg")
+    assert scanner_decoy.is_honeypot_path("/database.db.jpg?download=1")
+    assert not scanner_decoy.is_honeypot_path("/database.db.jpg.bak")
+    assert not scanner_decoy.is_honeypot_path("/api/health")
+
+
+def test_honeypot_paths_are_configurable(monkeypatch) -> None:
+    values = {"security.honeypot_paths": "/db.txt\n/backup.sql"}
+    monkeypatch.setattr(
+        scanner_decoy.settings_runtime,
+        "get_sync",
+        lambda key: values[key],
+    )
+
+    assert scanner_decoy.is_honeypot_path("/db.txt")
+    assert scanner_decoy.is_honeypot_path("/backup.sql")
+    assert not scanner_decoy.is_honeypot_path("/database.db.jpg")
+
+
 # ---------------------------------------------------------------------------
 # 中间件实测
 # ---------------------------------------------------------------------------
@@ -185,6 +205,53 @@ def test_decoy_hit_is_written_to_security_log(monkeypatch, client) -> None:
     assert log["level"] == "warning"
     assert log["client_ip"]
     assert log["user_agent"] == "dirsearch/0.4.3"
+
+
+def test_honeypot_hit_is_logged_even_with_decoy_disabled(monkeypatch, client) -> None:
+    """钓鱼文件独立于扫描器诱饵开关；登录用户下载也要记。"""
+    monkeypatch.setattr(scanner_decoy, "_enabled", lambda: False)
+    captured: list[_CaptureLog] = []
+    monkeypatch.setattr(app_setup, "_spawn_security_audit", captured.append)
+    monkeypatch.setattr(main, "ZVMSLog", _CaptureLog)
+    token = jwt_encode("0" * 24, [], ["student"], type="long")
+
+    response = client.get(
+        "/database.db.jpg?download=1",
+        headers={**MOZ, "Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert len(captured) == 1
+    log = captured[0].kwargs
+    payload = json.loads(log["data"])
+    assert payload["reason"] == "honeypot"
+    assert payload["match"] == "/database.db.jpg"
+    assert payload["path"] == "/database.db.jpg"
+    assert payload["query"] == "download=1"
+    assert log["type"] == "security_alert"
+    assert log["user_agent"].startswith("Mozilla/5.0")
+
+
+def test_honeypot_path_can_be_changed_in_settings(monkeypatch, client) -> None:
+    def fake_get_sync(key: str):
+        return {
+            "security.honeypot_paths": "/db.txt",
+            "security.scanner_decoy_body": "fake db",
+        }.get(key, "Not Found")
+
+    monkeypatch.setattr(scanner_decoy.settings_runtime, "get_sync", fake_get_sync)
+    captured: list[_CaptureLog] = []
+    monkeypatch.setattr(app_setup, "_spawn_security_audit", captured.append)
+    monkeypatch.setattr(main, "ZVMSLog", _CaptureLog)
+
+    response = client.get("/db.txt")
+
+    assert response.status_code == 200
+    assert response.text == "fake db"
+    assert len(captured) == 1
+    payload = json.loads(captured[0].kwargs["data"])
+    assert payload["reason"] == "honeypot"
+    assert payload["path"] == "/db.txt"
 
 
 def test_pro_referer_is_not_decoyed(monkeypatch, client) -> None:

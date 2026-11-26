@@ -59,6 +59,7 @@ EXPECTED_KEYS = {
     "ops.export_retention_days",
     "security.scanner_decoy_enabled",
     "security.scanner_decoy_body",
+    "security.honeypot_paths",
 }
 
 
@@ -244,6 +245,7 @@ def test_registry_defaults_come_from_the_code_constants() -> None:
     assert defaults["ops.export_retention_days"] == config.EXPORT_TASKS_RETENTION_DAYS
     assert defaults["security.scanner_decoy_enabled"] is True
     assert defaults["security.scanner_decoy_body"] == "Not Found"
+    assert defaults["security.honeypot_paths"] == "/database.db.jpg"
 
 
 def test_every_spec_has_group_label_and_description() -> None:

@@ -263,6 +263,14 @@ async def shield_middleware(request: Request, call_next):
     审计用的日志类走 :mod:`bindings` 取（测试在 ``main.ZVMSLog`` 上打桩）。
     """
 
+    if scanner_decoy.is_honeypot_request(request):
+        _audit_scanner_decoy(
+            request,
+            reason="honeypot",
+            match=request.url.path,
+        )
+        return scanner_decoy.decoy_response()
+
     pattern_hit = SEC_PATTERN.search(request.url.path)
     bad_ua = (
         "Mozilla" not in request.headers.get("User-Agent", "")

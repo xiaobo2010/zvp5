@@ -487,6 +487,18 @@ def _build_registry() -> None:
             description="命中时返回的纯文本，支持多行；最多 16384 个字符",
             max=16_384,
         ),
+        SettingSpec(
+            key="security.honeypot_paths",
+            type="text",
+            default="/database.db.jpg",
+            group=GROUP_SECURITY,
+            label="钓鱼路径",
+            description=(
+                "每行一个路径；GET/HEAD 访问这些路径会写 security_alert 日志"
+                "（reason=honeypot）并返回上面的诱饵正文。留空关闭。"
+            ),
+            max=4_096,
+        ),
     ]
     for spec in specs:
         REGISTRY[spec.key] = spec

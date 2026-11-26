@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import posixpath
 import re
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -264,6 +265,42 @@ def is_scanner_path(path: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=8)
+def _parse_path_list(raw: str) -> frozenset[str]:
+    """把设置里的多行/逗号分隔路径解析成归一化集合。"""
+    paths: set[str] = set()
+    for token in re.split(r"[\s,;]+", raw):
+        token = token.strip()
+        if not token:
+            continue
+        normalized = normalize_path(token)
+        if normalized and normalized != "/":
+            paths.add(normalized)
+    return frozenset(paths)
+
+
+def honeypot_paths() -> frozenset[str]:
+    """设置中心配置的钓鱼路径；默认 ``/database.db.jpg``。"""
+    return _parse_path_list(
+        _setting_str("security.honeypot_paths", "/database.db.jpg")
+    )
+
+
+def is_honeypot_path(path: str) -> bool:
+    """请求路径是否命中钓鱼路径（公开入口白名单不参与）。"""
+    normalized = normalize_path(path)
+    if not normalized or is_allowlisted(normalized):
+        return False
+    return normalized in honeypot_paths()
+
+
+def is_honeypot_request(request: Request) -> bool:
+    """钓鱼文件只记 GET/HEAD 访问；不要求登录，谁访问都记。"""
+    if request.method.upper() not in {"GET", "HEAD"}:
+        return False
+    return is_honeypot_path(request.url.path)
+
+
 def is_authenticated(request: Request) -> bool:
     """是否携带可验证的 access/temporary token。
 
@@ -333,9 +370,12 @@ def decoy_response() -> PlainTextResponse:
 __all__ = [
     "PATHS",
     "decoy_response",
+    "honeypot_paths",
     "is_allowlisted",
     "is_authenticated",
     "is_canary_request",
+    "is_honeypot_path",
+    "is_honeypot_request",
     "is_scanner_path",
     "load_paths",
     "normalize_path",
