@@ -105,6 +105,7 @@ export function resolveControlKind(item: SystemSettingItem): SettingControlKind 
     case 'bool':
       return 'switch'
     case 'str':
+    case 'text':
       return 'text'
     case 'list':
       return 'multiselect'

@@ -238,12 +238,14 @@ export const zhCN = {
     off: '关',
     emptyValue: '（空）',
     range: '取值范围 {min} ~ {max}',
+    textLimit: '最多 {max} 个字符',
     updatedAt: '{time} 由 {actor} 修改',
     updatedAtOnly: '{time} 修改',
     updatedBy: '由 {actor} 修改',
     groups: {
       ai: 'AI 网关',
       ops: '运维阈值',
+      security: '安全防护',
       other: '其他设置'
     },
     confirm: {

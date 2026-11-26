@@ -17,6 +17,7 @@ import time
 from fastapi.testclient import TestClient
 
 import main
+from services import scanner_decoy
 
 MOZ = {"User-Agent": "Mozilla/5.0 (lane2 harness)"}
 CURL = {"User-Agent": "curl/8.5.0"}
@@ -64,6 +65,8 @@ def test_418_is_returned_without_waiting_for_the_audit_write(monkeypatch):
 
 def test_audit_failure_does_not_change_the_418(monkeypatch):
     monkeypatch.setattr(main, "ZVMSLog", _FailingLog)
+    # 本用例钉的是盾牌 418；诱饵默认开启，先把扫描器分支关掉。
+    monkeypatch.setattr(scanner_decoy, "_enabled", lambda: False)
 
     client = TestClient(main.app)
     try:

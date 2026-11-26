@@ -29,6 +29,7 @@ import bindings
 import realtime
 from db.system_state import is_enabled_async as maintenance_enabled
 from db.system_state import is_enabled_fresh_async as maintenance_enabled_fresh
+from services import scanner_decoy
 from services.api_metrics import ApiMetricsMiddleware
 from typings.log import ZVMSLog, client_ip_from, user_agent_from, xuehai_id_from
 from util.object_id import is_admin_token
@@ -199,8 +200,14 @@ SHIELD_BLOCKED_MESSAGE = "您的请求被服务器判定为非法访问。已经
 async def shield_middleware(request: Request, call_next):
     """非浏览器 UA / 可疑路径 / 非法方法 → 418，并异步落后台审计。
 
+    最外层先看「未登录目录扫描诱饵」：命中字典的匿名 GET/HEAD 直接回 200，
+    不进入 418 分支。诱饵只作用于 canary 根站，Pro 的 ``/themes/`` 请求放过。
+
     审计用的日志类走 :mod:`bindings` 取（测试在 ``main.ZVMSLog`` 上打桩）。
     """
+
+    if scanner_decoy.should_decoy(request):
+        return scanner_decoy.decoy_response()
 
     pattern_hit = SEC_PATTERN.search(request.url.path)
     bad_ua = (

@@ -57,6 +57,8 @@ EXPECTED_KEYS = {
     "ops.activity_description_max_length",
     "ops.log_retention_days",
     "ops.export_retention_days",
+    "security.scanner_decoy_enabled",
+    "security.scanner_decoy_body",
 }
 
 
@@ -240,14 +242,17 @@ def test_registry_defaults_come_from_the_code_constants() -> None:
     )
     assert defaults["ops.log_retention_days"] == config.APP_LOGS_RETENTION_DAYS
     assert defaults["ops.export_retention_days"] == config.EXPORT_TASKS_RETENTION_DAYS
+    assert defaults["security.scanner_decoy_enabled"] is True
+    assert defaults["security.scanner_decoy_body"] == "Not Found"
 
 
 def test_every_spec_has_group_label_and_description() -> None:
     for spec in settings_runtime.registry().values():
-        assert spec.group in {"ai", "ops"}, spec.key
+        assert spec.group in {"ai", "ops", "security"}, spec.key
         assert spec.label and spec.description, spec.key
         # ``float`` 只有压缩阈值一个：值本身是 0~1 的小数，用 int 表达会丢掉精度。
-        assert spec.type in {"int", "bool", "str", "list", "dict", "float"}, spec.key
+        # ``text`` 是给扫描器诱饵正文用的多行纯文本控件。
+        assert spec.type in {"int", "bool", "str", "text", "list", "dict", "float"}, spec.key
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +279,26 @@ def test_set_many_persists_and_readers_see_it_immediately(repos) -> None:
 
     assert ai_config.rate_limit_per_minute("chat") == 7
     assert settings_runtime.get_sync("ai.rate_limit_per_minute")["ocr"] == 3
+
+
+def test_scanner_decoy_text_round_trips_multiline(repos) -> None:
+    settings, _quotas = repos
+    body = "第一行\n第二行：任意文本"
+
+    changed = asyncio.run(
+        settings_runtime.set_many({"security.scanner_decoy_body": body}, ADMIN_OID)
+    )
+
+    assert settings.writes == [({"security.scanner_decoy_body": body}, ADMIN_OID)]
+    assert changed[0]["value"] == body
+    assert settings_runtime.get_sync("security.scanner_decoy_body") == body
+
+
+def test_scanner_decoy_text_rejects_over_limit() -> None:
+    spec = settings_runtime.registry()["security.scanner_decoy_body"]
+    assert spec.max == 16_384
+    with pytest.raises(settings_runtime.SettingsValidationError):
+        settings_runtime._validate(spec, "x" * (spec.max + 1))
 
 
 def test_set_many_rejects_before_writing_anything(repos) -> None:

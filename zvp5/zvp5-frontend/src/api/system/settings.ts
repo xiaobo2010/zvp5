@@ -13,10 +13,10 @@ import { resolveErrorMessageOr } from '@/utils/errorMessage'
  */
 
 /** 设置项的值类型。后端按这个字段决定前端用哪种控件渲染。 */
-export type SettingValueType = 'int' | 'bool' | 'str' | 'list' | 'dict'
+export type SettingValueType = 'int' | 'bool' | 'str' | 'text' | 'list' | 'dict'
 
-/** 设置分组：ai = AI 网关，ops = 运维阈值。 */
-export type SettingGroup = 'ai' | 'ops'
+/** 设置分组：ai = AI 网关，ops = 运维阈值，security = 安全防护。 */
+export type SettingGroup = 'ai' | 'ops' | 'security'
 
 /** 设置值的标量部分。 */
 export type SettingScalar = string | number | boolean | null

@@ -81,6 +81,9 @@ function sectionTitle(group: string): string {
   if (group === 'ops') {
     return t('manage.settings.groups.ops')
   }
+  if (group === 'security') {
+    return t('manage.settings.groups.security')
+  }
   return t('manage.settings.groups.other')
 }
 
@@ -497,6 +500,9 @@ onMounted(() => {
             <p v-if="item.type === 'int' && (item.min !== null || item.max !== null)" class="setting-row__hint">
               {{ t('manage.settings.range', { min: item.min ?? '—', max: item.max ?? '—' }) }}
             </p>
+            <p v-if="item.type === 'text' && item.max !== null" class="setting-row__hint">
+              {{ t('manage.settings.textLimit', { max: item.max }) }}
+            </p>
           </div>
 
           <div class="setting-row__control">
@@ -521,10 +527,14 @@ onMounted(() => {
               @update:model-value="(value: boolean | string | number) => updateBool(item, value)"
             />
 
-            <!-- str -->
+            <!-- str / text（text 用多行文本域，正文可任意编辑） -->
             <ElInput
-              v-else-if="item.type === 'str'"
+              v-else-if="item.type === 'str' || item.type === 'text'"
               :model-value="textValue(item)"
+              :type="item.type === 'text' ? 'textarea' : 'text'"
+              :rows="item.type === 'text' ? 6 : undefined"
+              :maxlength="item.type === 'text' ? item.max ?? undefined : undefined"
+              :show-word-limit="item.type === 'text'"
               :size="controlSize"
               clearable
               @update:model-value="(value: string) => updateText(item, value)"

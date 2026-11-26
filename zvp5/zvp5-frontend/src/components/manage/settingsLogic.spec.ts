@@ -58,6 +58,7 @@ describe('类型 → 控件分支', () => {
     expect(resolveControlKind(makeItem({ type: 'int' }))).toBe('number')
     expect(resolveControlKind(makeItem({ type: 'bool' }))).toBe('switch')
     expect(resolveControlKind(makeItem({ type: 'str' }))).toBe('text')
+    expect(resolveControlKind(makeItem({ type: 'text' }))).toBe('text')
   })
 
   it('list 用多选，dict 用角色额度表', () => {
@@ -108,6 +109,13 @@ describe('草稿与存储值的互转', () => {
     const draft = draftFromValue(item, item.value)
     expect(draft).toEqual([{ role: 'admin', limits: { ocr: 100, chat: 200 } }])
     expect(storedFromDraft(item, draft)).toEqual({ admin: { ocr: 100, chat: 200 } })
+  })
+
+  it('多行文本沿用字符串草稿，可以保留换行', () => {
+    const item = makeItem({ type: 'text', value: '第一行\n第二行' })
+    const draft = draftFromValue(item, item.value)
+    expect(draft).toBe('第一行\n第二行')
+    expect(storedFromDraft(item, draft)).toBe('第一行\n第二行')
   })
 
   it('缺字段时给中性占位，不回退到硬编码常量', () => {

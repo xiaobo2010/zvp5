@@ -51,6 +51,7 @@ VERSION_SCOPE = "settings"
 
 GROUP_AI = "ai"
 GROUP_OPS = "ops"
+GROUP_SECURITY = "security"
 
 _RATE_LIMIT_MAX = 1_000_000
 _ROLE_QUOTA_MAX = 10_000_000
@@ -464,6 +465,28 @@ def _build_registry() -> None:
             min=1,
             max=3650,
         ),
+        SettingSpec(
+            key="security.scanner_decoy_enabled",
+            type="bool",
+            # 默认开启：这是「匿名目录扫描」的诱饵，只有命中高信号字典才生效，
+            # 正常用户和登录用户都不受影响。管理员可以在这里随时关掉。
+            default=True,
+            group=GROUP_SECURITY,
+            label="扫描器诱饵",
+            description=(
+                "未登录的 GET/HEAD 命中目录扫描字典时返回 200 和下面的正文；"
+                "只作用于 canary 根站，关闭后恢复原有 404/418 行为"
+            ),
+        ),
+        SettingSpec(
+            key="security.scanner_decoy_body",
+            type="text",
+            default="Not Found",
+            group=GROUP_SECURITY,
+            label="扫描器诱饵正文",
+            description="命中时返回的纯文本，支持多行；最多 16384 个字符",
+            max=16_384,
+        ),
     ]
     for spec in specs:
         REGISTRY[spec.key] = spec
@@ -515,6 +538,16 @@ def _validate(spec: SettingSpec, value: Any) -> Any:
     if spec.type == "str":
         if not isinstance(value, str):
             raise SettingsValidationError(spec.key, "必须是字符串")
+        return value
+
+    if spec.type == "text":
+        if not isinstance(value, str):
+            raise SettingsValidationError(spec.key, "必须是字符串")
+        limit = spec.max if spec.max is not None else 16_384
+        if len(value) > limit:
+            raise SettingsValidationError(
+                spec.key, f"最多 {limit} 个字符"
+            )
         return value
 
     raise SettingsValidationError(spec.key, f"未支持的类型 {spec.type}")
