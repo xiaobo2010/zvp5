@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Log } from '../../../types/log'
-import { computed, toRefs } from 'vue'
+import { computed, ref, toRefs } from 'vue'
 import { ElCard } from 'element-plus/es/components/card/index.mjs'
 import { ElForm } from 'element-plus/es/components/form/index.mjs'
 import { ElFormItem } from 'element-plus/es/components/form/index.mjs'
@@ -14,6 +14,12 @@ const props = defineProps<{
 
 const { log } = toRefs(props)
 const { t } = useI18n()
+
+// 审计详情默认最多 3 行；点开卡片后解除截断，完整展示。
+const expanded = ref(false)
+function toggleExpanded() {
+  expanded.value = !expanded.value
+}
 
 type LogWithClient = Log & { client_ip?: string | null; user_agent?: string | null }
 
@@ -203,7 +209,12 @@ const auditDetail = computed(() => {
 
 <template>
   <div class="py-1 yg-form-wrap">
-    <ElCard shadow="hover">
+    <ElCard
+      shadow="hover"
+      class="zlog-card"
+      :class="{ 'is-expanded': expanded }"
+      @click="toggleExpanded"
+    >
       <ElForm>
         <ElFormItem label="类型">
           <ElTag v-if="log.type" size="small">{{ typeLabels[log.type] ?? log.type }}</ElTag>
@@ -247,9 +258,18 @@ const auditDetail = computed(() => {
             v-if="auditDetail"
             :class="auditDetail.mono ? 'font-mono' : ''"
             class="audit-text"
-            :title="auditDetail.text"
+            :title="expanded ? undefined : auditDetail.text"
           >{{ auditDetail.text }}</span>
           <template v-else>{{ log.data }}</template>
+          <button
+            v-if="auditDetail"
+            type="button"
+            class="zlog-card__toggle"
+            :aria-expanded="expanded"
+            @click.stop="toggleExpanded"
+          >
+            {{ expanded ? '收起' : '展开全文' }}
+          </button>
         </ElFormItem>
         <ElFormItem label="URL">
           {{ log.url }}
@@ -260,11 +280,39 @@ const auditDetail = computed(() => {
 </template>
 
 <style scoped>
-/* 解析后的审计详情:最多 3 行截断,title 悬浮已有全文 */
+/* 解析后的审计详情:默认 3 行,点开卡片后解除截断展示全文 */
 .audit-text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
+}
+
+.zlog-card {
+  cursor: pointer;
+}
+
+.zlog-card.is-expanded .audit-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: pre-wrap;
+}
+
+.zlog-card__toggle {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--phi-accent, var(--yg-color-primary, #0b9f93));
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.zlog-card__toggle:focus-visible {
+  outline: 2px solid var(--phi-accent, var(--yg-color-primary, #0b9f93));
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>
