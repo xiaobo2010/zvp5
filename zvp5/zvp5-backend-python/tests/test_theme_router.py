@@ -66,7 +66,7 @@ def make_client(monkeypatch):
 
 def test_registry_contains_the_shipped_themes() -> None:
     assert theme_registry.DEFAULT_THEME == "canary"
-    assert {"canary", "canary-pro", "astra-alpha"} <= set(theme_registry.THEME_IDS)
+    assert {"canary", "art", "canary-pro", "astra-alpha"} <= set(theme_registry.THEME_IDS)
     assert theme_registry.THEME_IDS == {theme.id for theme in theme_registry.THEMES}
 
     items = theme_registry.theme_items()
@@ -105,6 +105,7 @@ def test_list_themes_returns_registry_and_default(make_client) -> None:
     ]
     paths = {item["id"]: item["path"] for item in body["data"]["items"]}
     assert paths["canary"] == "/"
+    assert paths["art"] == "/themes/art/"
     assert paths["canary-pro"] == "/themes/canary-pro/"
     assert paths["astra-alpha"] == "/themes/astra-alpha/"
     assert "canary-anthropic" not in paths
@@ -121,7 +122,7 @@ def test_list_themes_offers_astra_alpha_to_every_role(make_client) -> None:
         body = client.get(PREFIX).json()
 
         ids = [item["id"] for item in body["data"]["items"]]
-        assert ids == ["canary", "canary-pro", "astra-alpha"]
+        assert ids == ["canary", "art", "canary-pro", "astra-alpha"]
 
 
 def test_server_time_is_public_and_returns_theme_phase_hour(make_client) -> None:
@@ -181,6 +182,20 @@ def test_put_me_persists_a_registered_theme(make_client) -> None:
     assert body == {"status": "ok", "data": {"theme": "canary-pro"}}
     assert repo.set_calls == [(USER["id"], "canary-pro")]
     assert client.get(f"{PREFIX}/me").json()["data"]["theme"] == "canary-pro"
+
+
+def test_put_me_persists_the_art_theme(make_client) -> None:
+    repo = _FakeUsersRepo()
+    client = make_client(repo)
+
+    body = client.put(f"{PREFIX}/me", json={"theme": "art"}).json()
+
+    assert body == {"status": "ok", "data": {"theme": "art"}}
+    assert repo.set_calls == [(USER["id"], "art")]
+    assert client.get(f"{PREFIX}/me").json()["data"] == {
+        "theme": "art",
+        "path": "/themes/art/",
+    }
 
 
 def test_put_me_rejects_unknown_theme_without_writing(make_client) -> None:
@@ -290,6 +305,7 @@ def test_stats_reports_counts_percent_and_other(
     # 注册表顺序 + 0 人的主题也必须在。
     assert [item["id"] for item in data["items"]] == [
         "canary",
+        "art",
         "canary-pro",
         "astra-alpha",
     ]

@@ -44,6 +44,12 @@ THEMES: tuple[Theme, ...] = (
         status="stable",
     ),
     Theme(
+        id="art",
+        label="Art",
+        description="艺术展画：全屏画作随义工进度逐像素显影",
+        status="experimental",
+    ),
+    Theme(
         id="canary-pro",
         label="Canary Pro",
         description="Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局",

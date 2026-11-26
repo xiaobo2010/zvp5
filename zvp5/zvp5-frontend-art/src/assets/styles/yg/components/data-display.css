@@ -1,0 +1,1308 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/components/data-display.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   义工平台 · 数据展示组件样式 data-display.css
+   文件：css/components/data-display.css
+   范围：卡片、表格、列表、标签、徽标、头像、时间线、树形控件、折叠面板、
+         统计数值、进度条、空状态、骨架屏、日历、描述列表、轮播、快捷键提示
+         （准则 4.4）。
+   规则：
+   - 只引用 design-tokens.css 的 --yg-* 变量；1px/2px 线宽由 --yg-space-1 推导；
+   - 扁平化：层次只靠 --yg-shadow-*；
+   - 交互组件覆盖 hover/active/focus-visible/disabled 状态；
+   - 文件末尾提供 corner-shape: squircle 渐进增强（圆形与胶囊除外）。
+   ========================================================================== */
+
+/* ==========================================================================
+   4.4.1 卡片 .yg-card
+   白底 + 1px 细边框 + 圆角 lg；默认无阴影（需要层次时叠加 --yg-shadow-sm/md）；
+   __header（__title + __extra 右上操作）、__body、__footer；
+   --hoverable 悬停上浮 + 中阴影；--narrow 紧凑内边距。
+   ========================================================================== */
+.yg-card {
+  background-color: var(--yg-bg-surface);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+}
+
+.yg-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-4) var(--yg-space-5);
+}
+
+.yg-card__title {
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+}
+
+.yg-card__extra {
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-card__body {
+  padding: var(--yg-space-4) var(--yg-space-5);
+  color: var(--yg-text-secondary);
+}
+
+.yg-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-3) var(--yg-space-5);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+
+/* 悬停抬升：上浮 2px + 中阴影（200ms） */
+.yg-card--hoverable {
+  transition: transform var(--yg-dur-base) var(--yg-ease-out),
+    box-shadow var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-card--hoverable:hover {
+  transform: translateY(calc(var(--yg-space-1) / -2)); /* -2px */
+  box-shadow: var(--yg-shadow-md);
+}
+
+/* 紧凑内边距 */
+.yg-card--narrow .yg-card__header,
+.yg-card--narrow .yg-card__body {
+  padding-block: var(--yg-space-3);
+}
+.yg-card--narrow .yg-card__header,
+.yg-card--narrow .yg-card__body,
+.yg-card--narrow .yg-card__footer {
+  padding-inline: var(--yg-space-4);
+}
+
+/* ==========================================================================
+   4.4.2 表格 .yg-table
+   外层 __wrapper 横向滚动容器（≤768px 横滚，准则 3.7）；表头 sunken 底 +
+   13px Medium，.is-sortable 排序箭头；行 hover --yg-bg-hover、选中 .is-selected
+   天蓝浅底；--stripe 斑马纹、--sticky 固定表头、--sm/--md 尺寸；空态 __empty；
+   数字单元格右对齐 + .yg-text-num。
+   ========================================================================== */
+.yg-table__wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  background-color: var(--yg-bg-surface);
+}
+
+.yg-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--yg-bg-surface);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-table th,
+.yg-table td {
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-bottom: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  text-align: left;
+}
+
+.yg-table th {
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-secondary);
+  font-weight: var(--yg-font-weight-medium);
+  white-space: nowrap;
+}
+
+.yg-table tbody tr {
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-table tbody tr:hover {
+  background-color: var(--yg-bg-hover);
+}
+.yg-table tbody tr.is-selected {
+  background-color: var(--yg-color-primary-soft);
+}
+.yg-table tbody tr.is-selected:hover {
+  background-color: var(--yg-bg-active);
+}
+
+/* 可排序表头：排序箭头 */
+.yg-table th.is-sortable {
+  cursor: pointer;
+}
+.yg-table th.is-sortable:hover {
+  color: var(--yg-color-primary);
+}
+.yg-table th.is-sortable:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-table th.is-sortable::after {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-left: var(--yg-space-1);
+  border-left: var(--yg-space-1) solid transparent;
+  border-right: var(--yg-space-1) solid transparent;
+  border-bottom: var(--yg-space-1) solid var(--yg-text-disabled);
+  vertical-align: middle;
+  transition: border-bottom-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-table th.is-sortable:hover::after {
+  border-bottom-color: var(--yg-color-primary);
+}
+
+/* 数字单元格右对齐（配合 base.css 的 .yg-text-num 等宽数字） */
+.yg-table td.yg-text-num {
+  text-align: right;
+}
+
+/* 斑马纹：隔行浅底，克制使用 */
+.yg-table--stripe tbody tr:nth-child(even) {
+  background-color: var(--yg-bg-surface-sunken);
+}
+.yg-table--stripe tbody tr:nth-child(even):hover {
+  background-color: var(--yg-bg-hover);
+}
+
+/* 固定表头（配合限定高度的 __wrapper 使用） */
+.yg-table--sticky th {
+  position: sticky;
+  top: 0;
+  z-index: var(--yg-z-sticky);
+}
+
+/* 尺寸：--sm 紧凑 / --md 默认 */
+.yg-table--sm th,
+.yg-table--sm td {
+  padding: var(--yg-space-2) var(--yg-space-3);
+}
+.yg-table--md th,
+.yg-table--md td {
+  padding: var(--yg-space-3) var(--yg-space-4);
+}
+
+/* 空态 */
+.yg-table__empty {
+  padding: var(--yg-space-8) var(--yg-space-4);
+  text-align: center;
+  color: var(--yg-text-tertiary);
+}
+
+/* ==========================================================================
+   4.4.3 列表 .yg-list
+   __item（图标/主内容 + __meta 辅助信息 + __extra 右侧操作），
+   hover --yg-bg-hover；分隔线 --yg-border-subtle。
+   ========================================================================== */
+.yg-list {
+  display: flex;
+  flex-direction: column;
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  background-color: var(--yg-bg-surface);
+  overflow: hidden;
+}
+
+.yg-list__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-3) var(--yg-space-4);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-list__item + .yg-list__item {
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+
+.yg-list__item:hover {
+  background-color: var(--yg-bg-hover);
+}
+.yg-list__item:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-list__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-list__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.yg-list__meta {
+  margin-left: auto;
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+  white-space: nowrap;
+}
+
+.yg-list__extra {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   4.4.4 标签 .yg-tag
+   默认软底（sunken + 灰字）；色系 --sky/--success/--warning/--danger/--gray
+   （浅底 + 语义文字色，红仅用于危险语义）；--outline 描边版；尺寸 sm（22px）/
+   md（26px）；圆角 xs；__close 可关闭。
+   ========================================================================== */
+.yg-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  height: calc(var(--yg-control-height-sm) - calc(var(--yg-space-1) / 2)); /* 26px（md 默认） */
+  padding-inline: var(--yg-space-2);
+  border: calc(var(--yg-space-1) / 4) solid transparent;
+  border-radius: var(--yg-radius-xs);
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-snug);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* 尺寸：sm 紧凑 / md 默认 */
+.yg-tag--sm {
+  height: calc(var(--yg-control-height-sm) - var(--yg-space-1) - calc(var(--yg-space-1) / 2)); /* 22px */
+  padding-inline: var(--yg-space-1);
+}
+.yg-tag--md {
+  height: calc(var(--yg-control-height-sm) - calc(var(--yg-space-1) / 2)); /* 26px */
+  padding-inline: var(--yg-space-2);
+}
+
+/* 色系：浅底 + 语义文字色 */
+.yg-tag--sky {
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-text-link);
+}
+.yg-tag--success {
+  background-color: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+.yg-tag--warning {
+  background-color: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+.yg-tag--danger {
+  background-color: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+.yg-tag--gray {
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-secondary);
+}
+
+/* 描边版 */
+.yg-tag--outline {
+  border-color: var(--yg-border-default);
+  background-color: transparent;
+  color: var(--yg-text-secondary);
+}
+.yg-tag--sky.yg-tag--outline {
+  border-color: var(--yg-color-primary);
+  color: var(--yg-text-link);
+}
+.yg-tag--success.yg-tag--outline {
+  border-color: var(--yg-color-success);
+  color: var(--yg-text-success);
+}
+.yg-tag--warning.yg-tag--outline {
+  border-color: var(--yg-color-warning);
+  color: var(--yg-text-warning);
+}
+.yg-tag--danger.yg-tag--outline {
+  border-color: var(--yg-color-danger);
+  color: var(--yg-text-danger);
+}
+.yg-tag--gray.yg-tag--outline {
+  border-color: var(--yg-border-default);
+  color: var(--yg-text-secondary);
+}
+
+/* 关闭按钮（内容为 ×，由业务侧提供） */
+.yg-tag__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  margin-right: calc(var(--yg-space-2) * -1);
+  border-radius: var(--yg-radius-pill);
+  color: inherit;
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-tag__close:hover {
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+.yg-tag__close:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-tag__close:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+/* ==========================================================================
+   4.4.5 徽标 .yg-badge
+   默认作「覆盖容器」：包住图标/头像，__dot 为 8px 状态圆点（右上角，状态色）；
+   --standalone 为独立计数胶囊（红底白字，>99 显示 99+，由业务侧处理）。
+   ========================================================================== */
+.yg-badge {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.yg-badge__dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--yg-space-2); /* 8px */
+  height: var(--yg-space-2);
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-bg-surface);
+  border-radius: 50%;
+  background-color: var(--yg-color-danger);
+  transform: translate(50%, -50%);
+  z-index: var(--yg-z-sticky);
+}
+
+/* 独立计数胶囊 */
+.yg-badge--standalone {
+  align-items: center;
+  justify-content: center;
+  min-width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  padding-inline: var(--yg-space-1);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-color-danger);
+  color: var(--yg-color-on-danger);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-tight);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   4.4.6 头像 .yg-avatar
+   尺寸 xs 24 / sm 32 / md 40 / lg 56 / xl 72；默认圆形；--square 方形圆角 lg；
+   内容：图片 / 文字首字（天蓝软底天蓝字）/ 图标；--group 重叠排列。
+   ========================================================================== */
+.yg-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-8); /* 40px（md 默认） */
+  height: var(--yg-space-8);
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-text-link);
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  vertical-align: middle;
+  transition: box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.yg-avatar:hover {
+  box-shadow: var(--yg-shadow-sm);
+}
+.yg-avatar:active {
+  box-shadow: var(--yg-shadow-xs);
+}
+.yg-avatar:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-avatar.is-disabled {
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+
+/* 尺寸 */
+.yg-avatar--xs {
+  width: var(--yg-space-6); /* 24px */
+  height: var(--yg-space-6);
+  font-size: var(--yg-font-size-xs);
+}
+.yg-avatar--sm {
+  width: var(--yg-space-7); /* 32px */
+  height: var(--yg-space-7);
+  font-size: var(--yg-font-size-sm);
+}
+.yg-avatar--md {
+  width: var(--yg-space-8); /* 40px */
+  height: var(--yg-space-8);
+  font-size: var(--yg-font-size-md);
+}
+.yg-avatar--lg {
+  width: calc(var(--yg-space-8) + var(--yg-space-4)); /* 56px */
+  height: calc(var(--yg-space-8) + var(--yg-space-4));
+  font-size: var(--yg-font-size-lg);
+}
+.yg-avatar--xl {
+  width: calc(var(--yg-space-7) + var(--yg-space-8)); /* 72px */
+  height: calc(var(--yg-space-7) + var(--yg-space-8));
+  font-size: var(--yg-font-size-2xl);
+}
+
+/* 方形头像（G2 曲率） */
+.yg-avatar--square {
+  border-radius: var(--yg-radius-lg);
+}
+
+/* 头像组：重叠排列 */
+.yg-avatar-group {
+  display: inline-flex;
+}
+.yg-avatar-group .yg-avatar {
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-bg-surface);
+  margin-left: calc(var(--yg-space-2) * -1);
+}
+.yg-avatar-group .yg-avatar:first-child {
+  margin-left: 0;
+}
+
+/* ==========================================================================
+   4.4.7 时间线 .yg-timeline
+   __item：__dot（天蓝实心，语义色可换）+ __line 竖线 + __content（标题 + 描述）+
+   __time（弱化小字）。
+   ========================================================================== */
+.yg-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.yg-timeline__item {
+  position: relative;
+  display: flex;
+  gap: var(--yg-space-3);
+  padding-bottom: var(--yg-space-6);
+}
+.yg-timeline__item:last-child {
+  padding-bottom: 0;
+}
+
+.yg-timeline__dot {
+  flex-shrink: 0;
+  width: var(--yg-space-3); /* 12px */
+  height: var(--yg-space-3);
+  margin-top: var(--yg-space-1);
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-bg-surface);
+  border-radius: 50%;
+  background-color: var(--yg-color-primary);
+  z-index: var(--yg-z-sticky);
+}
+
+/* 竖线：从圆点向下延伸 */
+.yg-timeline__line {
+  position: absolute;
+  top: calc(var(--yg-space-3) + var(--yg-space-2));
+  bottom: 0;
+  left: calc(var(--yg-space-3) / 2 - calc(var(--yg-space-1) / 4));
+  width: calc(var(--yg-space-1) / 4); /* 1px */
+  background-color: var(--yg-border-subtle);
+}
+.yg-timeline__item:last-child .yg-timeline__line {
+  display: none;
+}
+
+.yg-timeline__content {
+  flex: 1;
+  min-width: 0;
+  padding-top: var(--yg-space-1);
+  color: var(--yg-text-primary);
+}
+
+.yg-timeline__time {
+  flex-shrink: 0;
+  padding-top: var(--yg-space-1);
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   4.4.8 树形控件 .yg-tree
+   __node：缩进 __indent + __arrow（展开旋转）+ __checkbox（可选，原生 input）+
+   __label；hover 浅底、.is-selected 天蓝浅底天蓝字、.is-expanded 展开。
+   ========================================================================== */
+.yg-tree {
+  font-size: var(--yg-font-size-md);
+}
+
+.yg-tree__node {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-2);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-primary);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-tree__node:hover {
+  background-color: var(--yg-bg-hover);
+}
+.yg-tree__node:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-tree__node:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-tree__node.is-selected {
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+
+.yg-tree__node.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 每级缩进 */
+.yg-tree__indent {
+  flex-shrink: 0;
+  width: var(--yg-space-4); /* 16px */
+}
+
+/* 展开箭头：展开时旋转 */
+.yg-tree__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  flex-shrink: 0;
+  color: var(--yg-text-tertiary);
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-tree__node.is-expanded .yg-tree__arrow {
+  transform: rotate(90deg);
+}
+
+/* 复选控件：原生 input 驱动，accent 用主色 */
+.yg-tree__checkbox {
+  flex-shrink: 0;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  margin: 0;
+  accent-color: var(--yg-color-primary);
+  cursor: pointer;
+}
+
+.yg-tree__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 子级整体缩进（子节点嵌套 .yg-tree 时） */
+.yg-tree .yg-tree {
+  padding-left: var(--yg-space-4);
+}
+
+/* ==========================================================================
+   4.4.9 折叠面板 .yg-collapse
+   __item：__header（标题 + __arrow）+ __content（grid-rows 展开动画）；.is-open；
+   变体 --card 卡片化。注意：__content 内需包裹一个子元素作为内容区。
+   ========================================================================== */
+.yg-collapse {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-2);
+}
+
+.yg-collapse__item {
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background-color: var(--yg-bg-surface);
+  overflow: hidden;
+}
+
+.yg-collapse__header {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-3) var(--yg-space-4);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-primary);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-collapse__header:hover {
+  background-color: var(--yg-bg-hover);
+}
+.yg-collapse__header:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-collapse__header:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-collapse__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  margin-left: auto;
+  color: var(--yg-text-tertiary);
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-collapse__item.is-open .yg-collapse__arrow {
+  transform: rotate(180deg);
+}
+
+/* 展开动画：grid-rows 0fr → 1fr */
+.yg-collapse__content {
+  display: grid;
+  grid-template-rows: 0fr;
+  padding-inline: var(--yg-space-4);
+  color: var(--yg-text-secondary);
+  transition: grid-template-rows var(--yg-dur-base) var(--yg-ease-out),
+    padding-block var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-collapse__content > * {
+  overflow: hidden;
+  min-height: 0;
+}
+.yg-collapse__item.is-open .yg-collapse__content {
+  grid-template-rows: 1fr;
+  padding-bottom: var(--yg-space-4);
+}
+
+/* 禁用态 */
+.yg-collapse__item.is-disabled .yg-collapse__header {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* --card：卡片化（无边框 + 轻阴影） */
+.yg-collapse--card {
+  gap: var(--yg-space-3);
+}
+.yg-collapse--card .yg-collapse__item {
+  border: none;
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-xs);
+}
+
+/* ==========================================================================
+   4.4.10 统计数值 .yg-statistic
+   __title（弱化小字）+ __value（24px 600 等宽数字，可配 __prefix/__suffix 单位）+
+   __trend（上升绿/下降红小箭头：颜色复用 base.css 的 .yg-text-success/
+   .yg-text-danger 工具类，红仅表示下降风险）。
+   ========================================================================== */
+.yg-statistic {
+  display: block;
+}
+
+.yg-statistic__title {
+  display: block;
+  margin-bottom: var(--yg-space-1);
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-statistic__value {
+  font-size: var(--yg-font-size-3xl); /* 24px */
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.yg-statistic__prefix,
+.yg-statistic__suffix {
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-regular);
+  color: var(--yg-text-tertiary);
+}
+.yg-statistic__prefix {
+  margin-right: var(--yg-space-1);
+}
+.yg-statistic__suffix {
+  margin-left: var(--yg-space-1);
+}
+
+.yg-statistic__trend {
+  display: block;
+  margin-top: var(--yg-space-1);
+  font-size: var(--yg-font-size-sm);
+}
+
+/* ==========================================================================
+   4.4.11 进度条 .yg-progress
+   线型：__rail（sunken 槽，高 6–8px，pill）+ __bar 天蓝 pill；
+   状态 --success/--warning/--danger（红仅用于失败/超限）；圆形 --circle；
+   尺寸 sm / md。进度值由业务侧设置内联变量 --yg-progress-value（0–100）。
+   ========================================================================== */
+.yg-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  width: 100%;
+}
+
+.yg-progress__rail {
+  flex: 1;
+  height: var(--yg-space-2); /* 8px（md） */
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface-sunken);
+  overflow: hidden;
+}
+
+.yg-progress__bar {
+  height: 100%;
+  width: calc(var(--yg-progress-value, 0) * 1%);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-color-primary);
+  transition: width var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-progress--success .yg-progress__bar {
+  background-color: var(--yg-color-success);
+}
+.yg-progress--warning .yg-progress__bar {
+  background-color: var(--yg-color-warning);
+}
+.yg-progress--danger .yg-progress__bar {
+  background-color: var(--yg-color-danger);
+}
+
+/* 尺寸：sm 6px / md 8px */
+.yg-progress--sm .yg-progress__rail {
+  height: calc(var(--yg-space-2) - calc(var(--yg-space-1) / 2)); /* 6px */
+}
+.yg-progress--md .yg-progress__rail {
+  height: var(--yg-space-2);
+}
+
+/* 圆形：conic-gradient 环 + 中心百分比文字（data-percent 属性提供） */
+.yg-progress--circle {
+  position: relative;
+  flex: none;
+  width: var(--yg-space-9); /* 48px（md） */
+  height: var(--yg-space-9);
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--yg-color-primary) calc(var(--yg-progress-value, 0) * 1%),
+    var(--yg-bg-surface-sunken) 0
+  );
+}
+.yg-progress--circle::before {
+  content: "";
+  position: absolute;
+  inset: var(--yg-space-1); /* 环厚 4px */
+  border-radius: 50%;
+  background-color: var(--yg-bg-surface);
+}
+.yg-progress--circle::after {
+  content: attr(data-percent);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.yg-progress--success.yg-progress--circle {
+  background: conic-gradient(
+    var(--yg-color-success) calc(var(--yg-progress-value, 0) * 1%),
+    var(--yg-bg-surface-sunken) 0
+  );
+}
+.yg-progress--warning.yg-progress--circle {
+  background: conic-gradient(
+    var(--yg-color-warning) calc(var(--yg-progress-value, 0) * 1%),
+    var(--yg-bg-surface-sunken) 0
+  );
+}
+.yg-progress--danger.yg-progress--circle {
+  background: conic-gradient(
+    var(--yg-color-danger) calc(var(--yg-progress-value, 0) * 1%),
+    var(--yg-bg-surface-sunken) 0
+  );
+}
+.yg-progress--sm.yg-progress--circle {
+  width: var(--yg-space-7); /* 32px */
+  height: var(--yg-space-7);
+}
+.yg-progress--md.yg-progress--circle {
+  width: var(--yg-space-9);
+  height: var(--yg-space-9);
+}
+
+/* ==========================================================================
+   4.4.12 空状态 .yg-empty
+   __icon（64px 天蓝浅底圆形容器 + 线性图标）+ __title + __desc + __actions。
+   ========================================================================== */
+.yg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-9) var(--yg-space-6);
+  text-align: center;
+}
+
+.yg-empty__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-10); /* 64px */
+  height: var(--yg-space-10);
+  border-radius: 50%;
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+
+.yg-empty__title {
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-primary);
+}
+
+.yg-empty__desc {
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-empty__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-top: var(--yg-space-2);
+}
+
+/* ==========================================================================
+   4.4.13 骨架屏 .yg-skeleton
+   __text/__rect/__circle：sunken 底；.is-active 时极浅渐变微光扫过。
+   ========================================================================== */
+.yg-skeleton {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-3);
+}
+
+.yg-skeleton__text,
+.yg-skeleton__rect,
+.yg-skeleton__circle {
+  background-color: var(--yg-bg-surface-sunken);
+  border-radius: var(--yg-radius-sm);
+}
+
+.yg-skeleton__text {
+  width: 100%;
+  height: var(--yg-space-4);
+}
+
+.yg-skeleton__rect {
+  width: var(--yg-space-9);
+  height: var(--yg-space-9);
+}
+
+.yg-skeleton__circle {
+  width: var(--yg-space-8);
+  height: var(--yg-space-8);
+  border-radius: 50%;
+}
+
+/* 微光扫过：极浅高光（颜色由令牌 color-mix 生成，深浅模式自适应） */
+.yg-skeleton.is-active .yg-skeleton__text,
+.yg-skeleton.is-active .yg-skeleton__rect,
+.yg-skeleton.is-active .yg-skeleton__circle {
+  background-image: linear-gradient(
+    90deg,
+    var(--yg-bg-surface-sunken) 25%,
+    color-mix(in srgb, var(--yg-bg-surface) 80%, var(--yg-bg-surface-sunken)) 50%,
+    var(--yg-bg-surface-sunken) 75%
+  );
+  background-size: 200% 100%;
+  animation: yg-skeleton-shimmer var(--yg-dur-page) var(--yg-ease-in-out) infinite;
+}
+
+@keyframes yg-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* ==========================================================================
+   4.4.14 日历 .yg-calendar
+   __header（月导航 __nav + 年月标题）+ 星期表头（网格前 7 格）+ __grid（7 列）+
+   __cell（40×40 圆角 md）；.is-today 天蓝描边、.is-selected 天蓝实心白字、
+   .is-range 天蓝浅底、.is-disabled 灰。
+   ========================================================================== */
+.yg-calendar {
+  display: inline-block;
+  padding: var(--yg-space-4);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  background-color: var(--yg-bg-surface);
+}
+
+.yg-calendar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+  margin-bottom: var(--yg-space-3);
+  font-weight: var(--yg-font-weight-semibold);
+  color: var(--yg-text-primary);
+}
+
+/* 年月标题（2026 年 10 月） */
+.yg-calendar__title {
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  color: var(--yg-text-primary);
+}
+
+/* 月导航按钮（上一月/下一月） */
+.yg-calendar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+.yg-calendar__nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-control-height-sm);
+  height: var(--yg-control-height-sm);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-calendar__nav button:hover {
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-color-primary);
+}
+.yg-calendar__nav button:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-calendar__nav button:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-calendar__nav button.is-disabled {
+  background-color: transparent;
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 日期网格：7 列 */
+.yg-calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, var(--yg-space-8));
+  gap: var(--yg-space-1);
+}
+
+/* 星期表头：网格前 7 个单元格 */
+.yg-calendar__grid > :nth-child(-n + 7) {
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  font-weight: var(--yg-font-weight-medium);
+}
+
+.yg-calendar__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-8); /* 40px */
+  height: var(--yg-space-8);
+  border: calc(var(--yg-space-1) / 4) solid transparent;
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-calendar__cell:hover {
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-color-primary);
+}
+.yg-calendar__cell:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-calendar__cell:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-calendar__cell.is-today {
+  border-color: var(--yg-color-primary);
+  color: var(--yg-color-primary);
+}
+.yg-calendar__cell.is-selected {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary);
+  color: var(--yg-color-on-primary);
+}
+.yg-calendar__cell.is-range {
+  border-color: transparent;
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+.yg-calendar__cell.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   4.4.15 描述列表 .yg-descriptions
+   __item（__label 弱化小字 + __value）；变体 --bordered 全边框表格化。
+   ========================================================================== */
+.yg-descriptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--yg-space-4) var(--yg-space-6);
+}
+
+.yg-descriptions__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+}
+
+.yg-descriptions__label {
+  font-size: var(--yg-font-size-sm);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-descriptions__value {
+  color: var(--yg-text-primary);
+}
+
+/* 全边框表格化 */
+.yg-descriptions--bordered {
+  flex-direction: column;
+  gap: 0;
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  border-radius: var(--yg-radius-lg);
+  overflow: hidden;
+}
+.yg-descriptions--bordered .yg-descriptions__item {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--yg-space-4);
+  padding: var(--yg-space-3) var(--yg-space-4);
+}
+.yg-descriptions--bordered .yg-descriptions__item + .yg-descriptions__item {
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+.yg-descriptions--bordered .yg-descriptions__label {
+  flex-shrink: 0;
+}
+.yg-descriptions--bordered .yg-descriptions__value {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ==========================================================================
+   4.4.16 轮播 .yg-carousel
+   __viewport 溢出隐藏（默认 16:9，可覆盖）+ __slide（当前 .is-active 淡入；
+   图片可用 base.css 的 .yg-g2-mask 裁切）；__dots 指示点（当前天蓝拉长）；
+   左右 __arrow 圆形图标按钮。约定：__arrow 依次放置（前一个「上一张」，
+   后一个「下一张」）；指示点当前项加 .is-active。
+   ========================================================================== */
+.yg-carousel {
+  position: relative;
+}
+
+.yg-carousel__viewport {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--yg-radius-lg);
+}
+
+.yg-carousel__slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--yg-dur-slow) var(--yg-ease-in-out);
+}
+.yg-carousel__slide.is-active {
+  opacity: 1;
+  visibility: visible;
+}
+.yg-carousel__slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 指示点：当前项天蓝拉长 */
+.yg-carousel__dots {
+  position: absolute;
+  left: 50%;
+  bottom: var(--yg-space-3);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+}
+.yg-carousel__dots > * {
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  padding: 0;
+  border: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface);
+  box-shadow: var(--yg-shadow-sm);
+  cursor: pointer;
+  transition: width var(--yg-dur-base) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-carousel__dots > *:hover {
+  background-color: var(--yg-color-primary);
+}
+.yg-carousel__dots > *:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-carousel__dots > .is-active {
+  width: var(--yg-space-4);
+  background-color: var(--yg-color-primary);
+}
+
+/* 左右箭头（圆形图标按钮） */
+.yg-carousel__arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  box-shadow: var(--yg-shadow-md);
+  cursor: pointer;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-carousel__arrow:first-of-type {
+  left: var(--yg-space-3);
+}
+.yg-carousel__arrow:last-of-type {
+  right: var(--yg-space-3);
+}
+.yg-carousel__arrow:hover {
+  color: var(--yg-color-primary);
+}
+.yg-carousel__arrow:active {
+  background-color: var(--yg-bg-surface-sunken);
+}
+.yg-carousel__arrow:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-carousel__arrow.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   4.4.17 快捷键提示 .yg-kbd
+   白底 + 边框 + 下内阴影 + 圆角 sm + 等宽字体。
+   ========================================================================== */
+.yg-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--yg-space-6);
+  height: var(--yg-space-6);
+  padding-inline: var(--yg-space-2);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-sm);
+  background-color: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font-family: var(--yg-font-mono);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-tight);
+  box-shadow: inset 0 calc(var(--yg-space-1) / -4) 0 var(--yg-border-strong); /* 下内阴影 1px */
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* ---------- 触控目标：移动端 ≥ 44px（准则 3.7） ---------- */
+@media (pointer: coarse) {
+  .yg-tree__node {
+    height: var(--yg-control-height-lg);
+  }
+  .yg-collapse__header {
+    padding-block: var(--yg-space-4);
+  }
+}
+
+/* ==========================================================================
+   G2 连续曲率渐进增强（准则 2.4）：本文件圆角组件启用 corner-shape: squircle；
+   圆形（.yg-avatar、.yg-badge__dot、.yg-timeline__dot、.yg-empty__icon、
+   .yg-skeleton__circle、.yg-progress--circle）与胶囊（.yg-badge--standalone、
+   .yg-tag__close、.yg-progress__rail/__bar、.yg-carousel__dots/__arrow）除外。
+   ========================================================================== */
+@supports (corner-shape: squircle) {
+  .yg-card,
+  .yg-list,
+  .yg-table__wrapper,
+  .yg-tag,
+  .yg-avatar--square,
+  .yg-tree__node,
+  .yg-collapse__item,
+  .yg-skeleton__text,
+  .yg-skeleton__rect,
+  .yg-calendar,
+  .yg-calendar__cell,
+  .yg-calendar__nav button,
+  .yg-descriptions--bordered,
+  .yg-carousel__viewport,
+  .yg-kbd {
+    corner-shape: squircle;
+  }
+}

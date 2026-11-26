@@ -1,0 +1,157 @@
+<script lang="ts" setup>
+import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElButton } from 'element-plus/es/components/button/index.mjs'
+import { ElSkeleton } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElSkeletonItem } from 'element-plus/es/components/skeleton/index.mjs'
+import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
+import { ElDrawer } from 'element-plus/es/components/drawer/index.mjs'
+import { toRefs, ref, watch } from 'vue'
+import type { Component as VueComponent } from 'vue'
+const props = withDefaults(
+  defineProps<{
+    size?: 'large' | 'default' | 'small'
+    popType?: 'drawer' | 'dialog'
+    mode: 'card' | 'button'
+    width?: string
+    direction?: 'rtl' | 'ltr' | 'ttb' | 'btt'
+    loading?: boolean
+    type?: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'text' | ''
+    icon?: VueComponent
+    fullscreen?: boolean
+    modal?: boolean
+    title?: string
+    center?: boolean
+    round?: boolean
+    open?: boolean
+    disabled?: boolean
+    buttonLoading?: boolean
+    wFull?: boolean
+  }>(),
+  {
+    size: 'small',
+    popType: 'dialog',
+    width: '60%',
+    direction: 'rtl',
+    type: '',
+    fullscreen: false,
+    modal: true,
+    title: undefined,
+    center: true,
+    round: true,
+    open: false,
+    disabled: false,
+    buttonLoading: false,
+    wFull: false
+  }
+)
+const emits = defineEmits<{
+  (e: 'update:open', value: boolean): void
+  (e: 'click', value: boolean): void
+}>()
+
+const {
+  size,
+  popType,
+  mode,
+  width,
+  direction,
+  loading,
+  type,
+  icon,
+  fullscreen,
+  modal,
+  title,
+  center,
+  round,
+  open,
+  buttonLoading
+} = toRefs(props)
+
+const show = ref(false)
+
+watch(
+  open,
+  () => {
+    show.value = open.value
+  },
+  { immediate: true }
+)
+
+watch(
+  show,
+  () => {
+    emits('update:open', show.value)
+  },
+  { immediate: true }
+)
+
+function startOpen() {
+  emits('click', true)
+  show.value = true
+}
+</script>
+
+<template>
+  <ElButton
+    v-if="mode === 'button' && !loading"
+    :round="round"
+    text
+    bg
+    :size="size"
+    :type="type ?? 'primary'"
+    :icon="icon"
+    @click="startOpen"
+    :disabled="disabled"
+    v-bind="$attrs"
+    v-on="$attrs"
+    :loading="buttonLoading"
+  >
+    <slot name="text" />
+  </ElButton>
+  <ElSkeleton :loading="true" animated v-else-if="mode === 'button'">
+    <template #template>
+      <ElSkeletonItem variant="text" style="width: 72px" />
+    </template>
+  </ElSkeleton>
+  <Teleport to="body" v-if="show">
+    <ElDialog
+      v-if="popType === 'dialog'"
+      v-model="show"
+      :fullscreen="fullscreen"
+      :modal="modal ? modal : true"
+      :title="title"
+      :width="width"
+      :center="center ? center : true"
+    >
+      <slot name="default" />
+
+      <template #header>
+        <slot name="header" />
+      </template>
+    </ElDialog>
+    <ElDrawer
+      v-if="popType === 'drawer'"
+      v-model="show"
+      :fullscreen="fullscreen"
+      :modal="modal ? modal : true"
+      :title="title"
+      :size="width"
+      :direction="direction ?? 'rtl'"
+    >
+      <slot name="default" />
+      <template #header>
+        <slot name="header" />
+      </template>
+    </ElDrawer>
+  </Teleport>
+  <div v-if="mode === 'card'">
+    <ElCard
+      v-if="mode === 'card'"
+      shadow="never"
+      v-loading="loading"
+      :class="[wFull ? 'w-full' : '']"
+    >
+      <slot name="default" />
+    </ElCard>
+  </div>
+</template>

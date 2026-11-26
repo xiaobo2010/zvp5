@@ -1,0 +1,559 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/components/buttons.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   义工平台 · 基础交互组件样式（buttons.css）
+   文件：css/components/buttons.css
+   内容清单：
+     1. 按钮 .yg-btn          —— 六变体（--primary/--secondary/--ghost/--text/
+                                --danger/--danger-outline）、三尺寸（--sm/默认 md/--lg）、
+                                两形状（--block/--circle）、五状态（默认/hover/active/
+                                focus-visible/is-disabled/is-loading）、
+                                子元素 __icon/__spinner
+     2. 图标按钮 .yg-icon-btn  —— 四变体（--primary/--secondary/--ghost/--danger）、
+                                三尺寸（--sm/默认 md/--lg）
+     3. 链接 .yg-link         —— 变体（默认/--neutral/--danger）、is-disabled
+     4. 按钮组 .yg-btn-group  —— 相邻边框合并、中段圆角为 0、首尾恢复
+   规则：仅引用 design-tokens.css 的 --yg-* 变量；扁平实色或描边，禁止渐变
+         立体与厚重投影，层次只靠 --yg-shadow-*；圆角统一 --yg-radius-md，
+         并在文件末尾以 @supports (corner-shape: squircle) 渐进增强为
+         G2 连续曲率（圆形按钮除外）。
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 按钮 .yg-btn
+   ========================================================================== */
+
+/* 基础（默认即次要按钮外观：白底 + 1px 边框） */
+.yg-btn,
+.yg-btn--secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--yg-space-2);
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-4);
+  font-family: var(--yg-font-sans);
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  line-height: var(--yg-line-height-snug);
+  white-space: nowrap;
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border: 1px solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+/* 悬停：边框加深 + 天蓝浅底 */
+.yg-btn:hover {
+  border-color: var(--yg-border-strong);
+  background-color: var(--yg-bg-hover);
+}
+
+/* 按下：加深浅底 */
+.yg-btn:active {
+  background-color: var(--yg-bg-active);
+  border-color: var(--yg-border-strong);
+}
+
+/* 键盘焦点环 */
+.yg-btn:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* ---- 变体 ---- */
+
+/* 主按钮：天蓝实底白字 + 轻阴影（页面唯一主操作）
+   底色走 strong 系列（sky-700 一档），保证白字对比 ≥ 4.5:1；
+   --yg-color-primary 仍是品牌天蓝，只用于图标、边框、选中态等非文字场景。 */
+.yg-btn--primary {
+  color: var(--yg-color-on-primary);
+  background-color: var(--yg-color-primary-strong);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.yg-btn--primary:hover {
+  background-color: var(--yg-color-primary-strong-hover);
+  border-color: transparent;
+}
+
+.yg-btn--primary:active {
+  background-color: var(--yg-color-primary-strong-active);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-inset);
+}
+
+/* 次要按钮：白底 + 1px 边框（即默认外观） */
+.yg-btn--secondary:hover {
+  border-color: var(--yg-border-strong);
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-btn--secondary:active {
+  background-color: var(--yg-bg-active);
+  border-color: var(--yg-border-strong);
+}
+
+/* 幽灵按钮：无底无边，悬停出浅底 */
+.yg-btn--ghost {
+  color: var(--yg-text-secondary);
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.yg-btn--ghost:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+  border-color: transparent;
+}
+
+.yg-btn--ghost:active {
+  background-color: var(--yg-bg-active);
+  border-color: transparent;
+}
+
+/* 文字按钮：主色文字，悬停下划线（行内操作）
+   常态用 --yg-text-link（sky-700），悬停/按下继续往深走，绝不变亮。 */
+.yg-btn--text {
+  color: var(--yg-text-link);
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.yg-btn--text:hover {
+  color: var(--yg-text-link-hover);
+  text-decoration: underline;
+  border-color: transparent;
+}
+
+.yg-btn--text:active {
+  color: var(--yg-text-link-active);
+  border-color: transparent;
+}
+
+/* 危险按钮：红底白字（高危破坏性操作唯一实心按钮，见准则第 5 章）
+   实底走 strong 系列（red-700 一档），保证白字对比 ≥ 4.5:1。 */
+.yg-btn--danger {
+  color: var(--yg-color-on-danger);
+  background-color: var(--yg-color-danger-strong);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.yg-btn--danger:hover {
+  background-color: var(--yg-color-danger-strong-hover);
+  border-color: transparent;
+}
+
+.yg-btn--danger:active {
+  background-color: var(--yg-color-danger-strong-active);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-inset);
+}
+
+/* 危险描边按钮：白底 + 红边框 + 红字（确认弹窗"再考虑"位） */
+.yg-btn--danger-outline {
+  color: var(--yg-text-danger);
+  background-color: var(--yg-bg-surface);
+  border-color: var(--yg-color-danger);
+}
+
+.yg-btn--danger-outline:hover {
+  background-color: var(--yg-color-danger-soft);
+  border-color: var(--yg-color-danger);
+}
+
+.yg-btn--danger-outline:active {
+  background-color: var(--yg-color-danger-soft);
+  border-color: var(--yg-color-danger);
+}
+
+/* ---- 尺寸 ---- */
+
+/* 小尺寸：28px 高 / 13px 字 */
+.yg-btn--sm {
+  height: var(--yg-control-height-sm);
+  padding-inline: var(--yg-space-3);
+  font-size: var(--yg-font-size-sm);
+}
+
+/* 大尺寸：44px 高 / 16px 字 */
+.yg-btn--lg {
+  height: var(--yg-control-height-lg);
+  padding-inline: var(--yg-space-5);
+  font-size: var(--yg-font-size-lg);
+}
+
+/* ---- 形状 ---- */
+
+/* 块级按钮：占满整行 */
+.yg-btn--block {
+  display: flex;
+  width: 100%;
+}
+
+/* 圆形（图标）按钮：正圆，不参与 G2 升级 */
+.yg-btn--circle {
+  width: var(--yg-control-height-md);
+  padding-inline: 0;
+  border-radius: 50%;
+}
+
+.yg-btn--sm.yg-btn--circle {
+  width: var(--yg-control-height-sm);
+}
+
+.yg-btn--lg.yg-btn--circle {
+  width: var(--yg-control-height-lg);
+}
+
+/* ---- 状态 ---- */
+
+/* 禁用：浅灰底 + 禁用文字，禁光标与交互
+   文字用 --yg-text-disabled-control，在浅灰底上 ≥ 3:1，看得出是禁用而不是「白字消失」。 */
+.yg-btn.is-disabled,
+.yg-btn:disabled {
+  color: var(--yg-text-disabled-control);
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: transparent;
+  box-shadow: none;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 幽灵/文字按钮禁用时保持无底 */
+.yg-btn--ghost.is-disabled,
+.yg-btn--ghost:disabled,
+.yg-btn--text.is-disabled,
+.yg-btn--text:disabled {
+  background-color: transparent;
+}
+
+/* 加载中：禁点，图标被 __spinner 替换，实心变体用按下色表示"工作中" */
+.yg-btn.is-loading {
+  cursor: progress;
+  pointer-events: none;
+}
+
+.yg-btn--primary.is-loading {
+  background-color: var(--yg-color-primary-strong-active);
+}
+
+.yg-btn--danger.is-loading {
+  background-color: var(--yg-color-danger-strong-active);
+}
+
+.yg-btn.is-loading:not(.yg-btn--primary):not(.yg-btn--danger) {
+  color: var(--yg-text-tertiary);
+}
+
+/* ---- 子元素 ---- */
+
+/* 文字前图标 */
+.yg-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-font-size-lg);
+  height: var(--yg-font-size-lg);
+  flex-shrink: 0;
+}
+
+.yg-btn--sm .yg-btn__icon {
+  width: var(--yg-font-size-md);
+  height: var(--yg-font-size-md);
+}
+
+/* 加载 spinner（加载时替换图标，跟随当前文字颜色） */
+.yg-btn__spinner {
+  display: inline-block;
+  width: var(--yg-font-size-lg);
+  height: var(--yg-font-size-lg);
+  flex-shrink: 0;
+  border: calc(var(--yg-space-1) / 2) solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: yg-btn-spin var(--yg-dur-page) linear infinite;
+}
+
+.yg-btn--sm .yg-btn__spinner {
+  width: var(--yg-font-size-md);
+  height: var(--yg-font-size-md);
+}
+
+@keyframes yg-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   2. 图标按钮 .yg-icon-btn
+   ========================================================================== */
+
+/* 默认（幽灵）：透明底灰色图标，悬停浅底 */
+.yg-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  color: var(--yg-text-tertiary);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--yg-radius-md);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-icon-btn:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-icon-btn:active {
+  background-color: var(--yg-bg-active);
+}
+
+.yg-icon-btn:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* ---- 变体 ---- */
+
+/* 主图标按钮：天蓝实底白图标（规则同主按钮，底色走 strong 系列） */
+.yg-icon-btn--primary {
+  color: var(--yg-color-on-primary);
+  background-color: var(--yg-color-primary-strong);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.yg-icon-btn--primary:hover {
+  background-color: var(--yg-color-primary-strong-hover);
+}
+
+.yg-icon-btn--primary:active {
+  background-color: var(--yg-color-primary-strong-active);
+  box-shadow: var(--yg-shadow-inset);
+}
+
+/* 次要图标按钮：白底描边（规则同次要按钮） */
+.yg-icon-btn--secondary {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-surface);
+  border-color: var(--yg-border-default);
+}
+
+.yg-icon-btn--secondary:hover {
+  border-color: var(--yg-border-strong);
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-icon-btn--secondary:active {
+  background-color: var(--yg-bg-active);
+  border-color: var(--yg-border-strong);
+}
+
+/* 幽灵图标按钮：与默认一致（透明底，悬停浅底） */
+.yg-icon-btn--ghost {
+  color: var(--yg-text-tertiary);
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.yg-icon-btn--ghost:hover {
+  color: var(--yg-text-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+/* 危险图标按钮：红底白图标（高危操作，规则同危险按钮，底色走 strong 系列） */
+.yg-icon-btn--danger {
+  color: var(--yg-color-on-danger);
+  background-color: var(--yg-color-danger-strong);
+  border-color: transparent;
+  box-shadow: var(--yg-shadow-sm);
+}
+
+.yg-icon-btn--danger:hover {
+  background-color: var(--yg-color-danger-strong-hover);
+}
+
+.yg-icon-btn--danger:active {
+  background-color: var(--yg-color-danger-strong-active);
+  box-shadow: var(--yg-shadow-inset);
+}
+
+/* ---- 尺寸 ---- */
+
+.yg-icon-btn--sm {
+  width: var(--yg-control-height-sm);
+  height: var(--yg-control-height-sm);
+}
+
+.yg-icon-btn--lg {
+  width: var(--yg-control-height-lg);
+  height: var(--yg-control-height-lg);
+}
+
+/* ---- 状态 ---- */
+
+.yg-icon-btn.is-disabled,
+.yg-icon-btn:disabled {
+  color: var(--yg-text-disabled-control);
+  background-color: transparent;
+  box-shadow: none;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   3. 链接 .yg-link
+   ========================================================================== */
+
+.yg-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-1);
+  color: var(--yg-text-link);
+  text-decoration: none;
+  border-radius: var(--yg-radius-xs);
+  cursor: pointer;
+  transition:
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-link:hover {
+  color: var(--yg-text-link-hover);
+  text-decoration: underline;
+}
+
+.yg-link:active {
+  color: var(--yg-text-link-active);
+}
+
+.yg-link:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+  outline: none;
+}
+
+/* 中性链接：继承正文文字色 */
+.yg-link--neutral {
+  color: var(--yg-text-secondary);
+}
+
+.yg-link--neutral:hover {
+  color: var(--yg-text-primary);
+}
+
+/* 危险链接：红色文字（高危行内操作，见准则 5.1）
+   悬停继续往深走（--yg-text-danger-hover），绝不变亮。 */
+.yg-link--danger {
+  color: var(--yg-text-danger);
+}
+
+.yg-link--danger:hover {
+  color: var(--yg-text-danger-hover);
+}
+
+/* 禁用 */
+.yg-link.is-disabled {
+  color: var(--yg-text-disabled-control);
+  text-decoration: none;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   4. 按钮组 .yg-btn-group
+   ========================================================================== */
+
+.yg-btn-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 组内圆角分段：中段为 0，首尾恢复 */
+.yg-btn-group .yg-btn {
+  border-radius: 0;
+}
+
+.yg-btn-group .yg-btn:first-child {
+  border-start-start-radius: var(--yg-radius-md);
+  border-end-start-radius: var(--yg-radius-md);
+}
+
+.yg-btn-group .yg-btn:last-child {
+  border-start-end-radius: var(--yg-radius-md);
+  border-end-end-radius: var(--yg-radius-md);
+}
+
+/* 相邻按钮边框合并：-1px 抵消相邻 1px 边框重叠 */
+.yg-btn-group .yg-btn + .yg-btn {
+  margin-inline-start: -1px;
+}
+
+/* ==========================================================================
+   响应式适配（≤768px）
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  /* 触控目标最小 44px：小尺寸按钮在移动端提升高度 */
+  .yg-btn--sm {
+    min-height: var(--yg-control-height-lg);
+  }
+
+  .yg-btn--sm.yg-btn--circle {
+    width: var(--yg-control-height-lg);
+  }
+
+  .yg-icon-btn--sm {
+    width: var(--yg-control-height-lg);
+    height: var(--yg-control-height-lg);
+  }
+
+  /* 按钮组允许换行，恢复各项圆角与间距 */
+  .yg-btn-group {
+    flex-wrap: wrap;
+    gap: var(--yg-space-2);
+  }
+
+  .yg-btn-group .yg-btn + .yg-btn {
+    margin-inline-start: 0;
+  }
+
+  .yg-btn-group .yg-btn {
+    border-radius: var(--yg-radius-md);
+  }
+}
+
+/* ==========================================================================
+   G2 连续曲率渐进增强（Chromium 139+；圆形按钮除外）
+   border-radius 已在组件常态规则中以 --yg-radius-* 定义，
+   此处仅启用 corner-shape: squircle 曲线形状。
+   ========================================================================== */
+
+@supports (corner-shape: squircle) {
+  .yg-btn:not(.yg-btn--circle),
+  .yg-icon-btn {
+    corner-shape: squircle;
+  }
+}

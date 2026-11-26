@@ -1,0 +1,889 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/components/navigation.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   义工平台 · 导航组件样式 navigation.css
+   文件：css/components/navigation.css
+   范围：侧边栏、菜单、顶栏、面包屑、标签页、分页、下拉菜单、步骤条（准则 4.3）
+   规则：
+   - 只引用 design-tokens.css 的 --yg-* 变量；1px/2px/3px 线宽由 --yg-space-1 推导；
+   - 侧边栏液态玻璃直接叠加 base.css 的 .yg-liquid-glass，本文件不重复玻璃配方；
+   - 下拉菜单弹层强制实色 var(--yg-bg-surface-raised)，禁止半透明与 backdrop-filter；
+   - 扁平化：层次只靠 --yg-shadow-*；交互组件覆盖 hover/active/focus-visible/disabled；
+   - 文件末尾提供 corner-shape: squircle 渐进增强（圆形与胶囊除外）。
+   ========================================================================== */
+
+/* ==========================================================================
+   4.3.1 侧边栏 .yg-sidebar
+   宽 var(--yg-sidebar-width)，收起 .is-collapsed 为 --yg-sidebar-collapsed-width
+   （仅显示图标，菜单文字由 tooltip 提示）；结构：__header（__logo + __title）、
+   __footer（头像 + 昵称 + 退出）；≤1024px 转为抽屉（.is-open 滑入 + base.css 的
+   .yg-mask 遮罩）。液态玻璃：HTML 上同时书写 .yg-sidebar 与 .yg-liquid-glass。
+   ========================================================================== */
+.yg-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--yg-sidebar-width);
+  height: 100vh;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-out);
+}
+
+/* 收起态：仅图标 */
+.yg-sidebar.is-collapsed {
+  width: var(--yg-sidebar-collapsed-width);
+}
+
+/* 品牌区：Logo + 名称 */
+.yg-sidebar__header {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  height: var(--yg-header-height);
+  padding-inline: var(--yg-space-4);
+  flex-shrink: 0;
+}
+
+.yg-sidebar__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-8);
+  height: var(--yg-space-8);
+  flex-shrink: 0;
+  border-radius: var(--yg-radius-lg);
+  background-color: var(--yg-color-primary);
+  color: var(--yg-color-on-primary);
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+}
+
+.yg-sidebar__title {
+  font-size: var(--yg-font-size-lg);
+  font-weight: var(--yg-font-weight-semibold);
+  color: var(--yg-text-primary);
+  white-space: nowrap;
+}
+
+/* 底部用户区：头像 + 昵称 + 退出 */
+.yg-sidebar__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  margin-top: auto;
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-top: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+  flex-shrink: 0;
+}
+
+/* 收起态：头部/底部居中，隐藏标题与用户区非首个子元素（约定头像/Logo 在首位） */
+.yg-sidebar.is-collapsed .yg-sidebar__header {
+  justify-content: center;
+  padding-inline: 0;
+}
+.yg-sidebar.is-collapsed .yg-sidebar__title {
+  display: none;
+}
+.yg-sidebar.is-collapsed .yg-sidebar__footer {
+  justify-content: center;
+  padding-inline: 0;
+}
+.yg-sidebar.is-collapsed .yg-sidebar__footer > :not(:first-child) {
+  display: none;
+}
+
+/* ≤1024px：侧边栏转为抽屉（遮罩元素由业务侧配合渲染 .yg-mask） */
+@media (max-width: 1024px) {
+  .yg-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: var(--yg-z-popup);
+    transform: translateX(-100%);
+    transition: transform var(--yg-dur-slow) var(--yg-ease-out);
+  }
+  .yg-sidebar.is-collapsed {
+    width: var(--yg-sidebar-width);
+  }
+  .yg-sidebar.is-open {
+    transform: translateX(0);
+    box-shadow: var(--yg-shadow-lg);
+  }
+}
+
+/* ==========================================================================
+   4.3.2 菜单 .yg-menu
+   __item 高 40px 圆角 md：__icon + __label + 可选 __badge/__arrow；
+   hover --yg-bg-hover，.is-active 天蓝浅底 + 天蓝文字 + 左侧天蓝指示条；
+   __group 分组 + __title 分组标题；__sub 子菜单（缩进展开，箭头旋转）；
+   __item--danger 危险项（红字，仅用于破坏性操作入口）。
+   ========================================================================== */
+.yg-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.yg-menu__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  height: var(--yg-space-8); /* 40px */
+  padding-inline: var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-menu__item:hover {
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+.yg-menu__item:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-menu__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-menu__item.is-active {
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+
+/* 选中指示条：左侧天蓝竖条 */
+.yg-menu__item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: calc(var(--yg-space-1) * 3 / 4); /* 3px */
+  height: 60%;
+  transform: translateY(-50%);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-color-primary);
+}
+
+.yg-menu__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.yg-menu__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+  color: var(--yg-text-tertiary);
+  transition: color var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-menu__item:hover .yg-menu__icon {
+  color: var(--yg-text-secondary);
+}
+.yg-menu__item.is-active .yg-menu__icon {
+  color: var(--yg-color-primary);
+}
+
+.yg-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yg-menu__badge {
+  flex-shrink: 0;
+  padding-inline: var(--yg-space-1);
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-snug);
+  font-variant-numeric: tabular-nums;
+}
+
+.yg-menu__arrow {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--yg-space-4);
+  height: var(--yg-space-4);
+  color: var(--yg-text-tertiary);
+  transition: transform var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-menu__item.is-expanded > .yg-menu__arrow {
+  transform: rotate(180deg);
+}
+
+/* 分组与分组标题 */
+.yg-menu__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  margin-block: var(--yg-space-2);
+}
+.yg-menu__title {
+  padding-inline: var(--yg-space-3);
+  margin-bottom: var(--yg-space-1);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* 子菜单：缩进展开（约定紧跟在 is-expanded 的父级 __item 之后） */
+.yg-menu__sub {
+  display: none;
+  flex-direction: column;
+  gap: var(--yg-space-1);
+  margin-left: var(--yg-space-6);
+  padding-left: var(--yg-space-2);
+  border-left: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+.yg-menu__item.is-expanded + .yg-menu__sub {
+  display: flex;
+}
+
+/* 危险项：红色文字（仅用于删除等破坏性操作入口） */
+.yg-menu__item--danger,
+.yg-menu__item--danger .yg-menu__icon {
+  color: var(--yg-text-danger);
+}
+.yg-menu__item--danger:hover {
+  background-color: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+/* 收起态：菜单项居中仅剩图标，隐藏文字/徽标/箭头/分组标题/子菜单 */
+.yg-sidebar.is-collapsed .yg-menu {
+  padding-inline: var(--yg-space-2);
+}
+.yg-sidebar.is-collapsed .yg-menu__item {
+  justify-content: center;
+  padding-inline: 0;
+}
+.yg-sidebar.is-collapsed .yg-menu__label,
+.yg-sidebar.is-collapsed .yg-menu__badge,
+.yg-sidebar.is-collapsed .yg-menu__arrow,
+.yg-sidebar.is-collapsed .yg-menu__title,
+.yg-sidebar.is-collapsed .yg-menu__sub {
+  display: none;
+}
+
+/* ==========================================================================
+   4.3.3 顶栏 .yg-topbar
+   高 var(--yg-header-height)，白底 + 下边框；结构：__left（折叠/面包屑）、
+   __center、__right（搜索、通知徽标、头像）；滚动后 .is-scrolled 轻微毛玻璃
+   （背景层特批，色值由令牌 color-mix 生成，深浅模式自适应）。
+   ========================================================================== */
+.yg-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-4);
+  height: var(--yg-header-height);
+  padding-inline: var(--yg-space-4);
+  background-color: var(--yg-bg-surface);
+  border-bottom: calc(var(--yg-space-1) / 4) solid var(--yg-border-subtle);
+}
+
+.yg-topbar__left,
+.yg-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-3);
+  min-width: 0;
+}
+
+.yg-topbar__center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* 滚动后：轻微毛玻璃（blur 16px = --yg-glass-blur-md - 4px） */
+.yg-topbar.is-scrolled {
+  background-color: color-mix(in srgb, var(--yg-bg-surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(calc(var(--yg-glass-blur-md) - var(--yg-space-1))) saturate(160%);
+  backdrop-filter: blur(calc(var(--yg-glass-blur-md) - var(--yg-space-1))) saturate(160%);
+}
+
+/* ==========================================================================
+   4.3.4 面包屑 .yg-breadcrumb
+   __item 以 "/" 分隔（::after）；末项 .is-current 用一级文字色，
+   其余三级文字色 + hover 天蓝。
+   ========================================================================== */
+.yg-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+  font-size: var(--yg-font-size-sm);
+}
+
+.yg-breadcrumb__item {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--yg-radius-xs);
+  color: var(--yg-text-tertiary);
+  cursor: pointer;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-breadcrumb__item::after {
+  content: "/";
+  margin-left: var(--yg-space-2);
+  color: var(--yg-text-disabled);
+}
+.yg-breadcrumb__item:last-child::after {
+  content: none;
+}
+
+.yg-breadcrumb__item:hover {
+  color: var(--yg-color-primary);
+}
+.yg-breadcrumb__item:active {
+  color: var(--yg-color-primary-active);
+}
+.yg-breadcrumb__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-breadcrumb__item.is-current {
+  color: var(--yg-text-primary);
+  font-weight: var(--yg-font-weight-medium);
+  cursor: default;
+}
+.yg-breadcrumb__item.is-current:hover {
+  color: var(--yg-text-primary);
+}
+.yg-breadcrumb__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   4.3.5 标签页 .yg-tabs
+   变体：--line（默认，2px 天蓝下划线指示）、--card（描边卡片式）、
+   --pill（胶囊，选中天蓝实心白字）；__nav + __item（hover 文字加深、
+   .is-active、.is-disabled）+ __content（200ms 淡入切换）。
+   ========================================================================== */
+.yg-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-4);
+}
+
+.yg-tabs__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  border-bottom: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+}
+
+.yg-tabs__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-tabs__item:hover {
+  color: var(--yg-text-primary);
+}
+.yg-tabs__item:active {
+  color: var(--yg-color-primary);
+}
+.yg-tabs__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-tabs__item.is-active {
+  color: var(--yg-color-primary);
+}
+
+/* 默认（--line）：下划线指示 */
+.yg-tabs__item.is-active::after {
+  content: "";
+  position: absolute;
+  left: var(--yg-space-4);
+  right: var(--yg-space-4);
+  bottom: 0;
+  height: calc(var(--yg-space-1) / 2); /* 2px */
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-color-primary);
+}
+.yg-tabs--card .yg-tabs__item.is-active::after,
+.yg-tabs--pill .yg-tabs__item.is-active::after {
+  content: none;
+}
+
+.yg-tabs__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.yg-tabs__content {
+  animation: yg-fade-in var(--yg-dur-base) var(--yg-ease-out);
+}
+
+@keyframes yg-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* --line：默认形态（显式声明，与基础样式一致，便于业务侧组合使用） */
+.yg-tabs--line .yg-tabs__nav {
+  border-bottom: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+}
+
+/* --card：描边卡片式 */
+.yg-tabs--card .yg-tabs__nav {
+  gap: var(--yg-space-2);
+  border-bottom: none;
+}
+.yg-tabs--card .yg-tabs__item {
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  background-color: var(--yg-bg-surface);
+}
+.yg-tabs--card .yg-tabs__item:hover {
+  border-color: var(--yg-border-strong);
+}
+.yg-tabs--card .yg-tabs__item.is-active {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary-soft);
+  color: var(--yg-color-primary);
+}
+
+/* --pill：胶囊分段，选中天蓝实心白字 */
+.yg-tabs--pill .yg-tabs__nav {
+  width: fit-content;
+  gap: var(--yg-space-1);
+  padding: var(--yg-space-1);
+  border-bottom: none;
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-bg-surface-sunken);
+}
+.yg-tabs--pill .yg-tabs__item {
+  border-radius: var(--yg-radius-pill);
+}
+.yg-tabs--pill .yg-tabs__item.is-active {
+  background-color: var(--yg-color-primary);
+  color: var(--yg-color-on-primary);
+}
+
+/* ==========================================================================
+   4.3.6 分页 .yg-pagination
+   __item 36×36 圆角 md，.is-active 天蓝实心白字，hover --yg-bg-hover；
+   __prev/__next 带箭头、__ellipsis 省略号、__jumper 跳转输入框；
+   尺寸 sm / md；末页 .is-disabled。
+   ========================================================================== */
+.yg-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--yg-space-2);
+}
+
+.yg-pagination__item,
+.yg-pagination__prev,
+.yg-pagination__next {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-2);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background-color: var(--yg-bg-surface);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  cursor: pointer;
+  transition: color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out),
+    border-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-pagination__item:hover,
+.yg-pagination__prev:hover,
+.yg-pagination__next:hover {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-color-primary);
+}
+.yg-pagination__item:active,
+.yg-pagination__prev:active,
+.yg-pagination__next:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-pagination__item:focus-visible,
+.yg-pagination__prev:focus-visible,
+.yg-pagination__next:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-pagination__item.is-active {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary);
+  color: var(--yg-color-on-primary);
+}
+
+.yg-pagination__item.is-disabled,
+.yg-pagination__prev.is-disabled,
+.yg-pagination__next.is-disabled {
+  border-color: var(--yg-border-default);
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.yg-pagination__ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  color: var(--yg-text-tertiary);
+}
+
+/* 跳转输入框 */
+.yg-pagination__jumper {
+  width: var(--yg-space-9);
+  height: var(--yg-control-height-md);
+  padding-inline: var(--yg-space-1);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-md);
+  background-color: var(--yg-bg-surface);
+  color: var(--yg-text-primary);
+  font-size: var(--yg-font-size-md);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--yg-dur-fast) var(--yg-ease-out),
+    box-shadow var(--yg-dur-fast) var(--yg-ease-out);
+}
+.yg-pagination__jumper:hover {
+  border-color: var(--yg-border-strong);
+}
+.yg-pagination__jumper:focus-visible {
+  border-color: var(--yg-color-primary);
+  box-shadow: var(--yg-focus-ring);
+}
+.yg-pagination__jumper:disabled {
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+}
+
+/* 尺寸：sm 紧凑 / md 默认 */
+.yg-pagination--sm .yg-pagination__item,
+.yg-pagination--sm .yg-pagination__prev,
+.yg-pagination--sm .yg-pagination__next,
+.yg-pagination--sm .yg-pagination__ellipsis {
+  min-width: var(--yg-control-height-sm);
+  height: var(--yg-control-height-sm);
+  border-radius: var(--yg-radius-sm);
+  font-size: var(--yg-font-size-sm);
+}
+.yg-pagination--sm .yg-pagination__jumper {
+  height: var(--yg-control-height-sm);
+  font-size: var(--yg-font-size-sm);
+}
+
+/* md：默认尺寸（显式声明，与基础样式一致） */
+.yg-pagination--md .yg-pagination__item,
+.yg-pagination--md .yg-pagination__prev,
+.yg-pagination--md .yg-pagination__next,
+.yg-pagination--md .yg-pagination__ellipsis {
+  min-width: var(--yg-control-height-md);
+  height: var(--yg-control-height-md);
+  border-radius: var(--yg-radius-md);
+  font-size: var(--yg-font-size-md);
+}
+.yg-pagination--md .yg-pagination__jumper {
+  height: var(--yg-control-height-md);
+  font-size: var(--yg-font-size-md);
+}
+
+/* ==========================================================================
+   4.3.7 下拉菜单 .yg-dropdown
+   触发元素任意；__menu 为弹出层：实色 var(--yg-bg-surface-raised)（禁止半透明、
+   禁止 backdrop-filter）+ --yg-shadow-md + 圆角 lg + 8px 位移淡入进出场；
+   __item（hover 浅底、.is-danger 红字、.is-disabled）；__divider 分隔线。
+   ========================================================================== */
+.yg-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.yg-dropdown__menu {
+  position: absolute;
+  top: calc(100% + var(--yg-space-2));
+  left: 0;
+  z-index: var(--yg-z-dropdown);
+  min-width: calc(var(--yg-space-8) * 4); /* 160px */
+  padding: var(--yg-space-2);
+  border: calc(var(--yg-space-1) / 4) solid var(--yg-border-default);
+  border-radius: var(--yg-radius-lg);
+  background: var(--yg-bg-surface-raised);
+  box-shadow: var(--yg-shadow-md);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(var(--yg-space-2));
+  transition: opacity var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-out),
+    visibility var(--yg-dur-base) var(--yg-ease-out);
+}
+
+.yg-dropdown.is-open .yg-dropdown__menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.yg-dropdown__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  padding: var(--yg-space-2) var(--yg-space-3);
+  border-radius: var(--yg-radius-md);
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--yg-dur-fast) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-dropdown__item:hover {
+  background-color: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+.yg-dropdown__item:active {
+  background-color: var(--yg-bg-active);
+}
+.yg-dropdown__item:focus-visible {
+  box-shadow: var(--yg-focus-ring);
+}
+
+.yg-dropdown__item.is-danger,
+.yg-dropdown__item.is-danger:hover {
+  color: var(--yg-text-danger);
+}
+.yg-dropdown__item.is-danger:hover {
+  background-color: var(--yg-color-danger-soft);
+}
+
+.yg-dropdown__item.is-disabled {
+  color: var(--yg-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.yg-dropdown__divider {
+  height: calc(var(--yg-space-1) / 4); /* 1px */
+  margin-block: var(--yg-space-2);
+  background-color: var(--yg-border-default);
+}
+
+/* ==========================================================================
+   4.3.8 步骤条 .yg-steps
+   __item：__dot（圆圈数字：完成态天蓝实心、当前态天蓝描边、等待态灰）、
+   __title + __desc；连接线已完成段天蓝；方向横向默认 / --vertical；尺寸 sm / md。
+   ========================================================================== */
+.yg-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--yg-space-2);
+}
+
+.yg-steps__item {
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "dot title line"
+    "dot desc line";
+  column-gap: var(--yg-space-2);
+  row-gap: var(--yg-space-1);
+}
+.yg-steps__item:last-child {
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
+  grid-template-areas:
+    "dot title"
+    "dot desc";
+}
+
+/* 连接线（位于条目之间，居中于圆点高度） */
+.yg-steps__item:not(:last-child)::after {
+  content: "";
+  grid-area: line;
+  align-self: center;
+  height: calc(var(--yg-space-1) / 2); /* 2px */
+  border-radius: var(--yg-radius-pill);
+  background-color: var(--yg-border-default);
+  transition: background-color var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-steps__item.is-done:not(:last-child)::after {
+  background-color: var(--yg-color-primary);
+}
+
+.yg-steps__dot {
+  grid-area: dot;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-6);
+  height: var(--yg-space-6);
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-border-default);
+  border-radius: 50%;
+  background-color: var(--yg-bg-surface-sunken);
+  color: var(--yg-text-tertiary);
+  font-size: var(--yg-font-size-sm);
+  font-weight: var(--yg-font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--yg-dur-base) var(--yg-ease-out),
+    border-color var(--yg-dur-base) var(--yg-ease-out),
+    color var(--yg-dur-base) var(--yg-ease-out);
+}
+.yg-steps__item.is-active .yg-steps__dot {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-bg-surface);
+  color: var(--yg-color-primary);
+}
+.yg-steps__item.is-done .yg-steps__dot {
+  border-color: var(--yg-color-primary);
+  background-color: var(--yg-color-primary);
+  color: var(--yg-color-on-primary);
+}
+
+.yg-steps__title {
+  grid-area: title;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-medium);
+  color: var(--yg-text-secondary);
+}
+.yg-steps__desc {
+  grid-area: desc;
+  font-size: var(--yg-font-size-xs);
+  color: var(--yg-text-tertiary);
+}
+.yg-steps__item.is-active .yg-steps__title,
+.yg-steps__item.is-done .yg-steps__title {
+  color: var(--yg-text-primary);
+}
+
+/* 竖向：连接线从圆点向下延伸 */
+.yg-steps--vertical {
+  flex-direction: column;
+  gap: 0;
+}
+.yg-steps--vertical .yg-steps__item {
+  flex: none;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "dot title"
+    "dot desc"
+    "line .";
+}
+.yg-steps--vertical .yg-steps__item:last-child {
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "dot title"
+    "dot desc";
+}
+.yg-steps--vertical .yg-steps__item:not(:last-child)::after {
+  grid-area: line;
+  justify-self: center;
+  align-self: stretch;
+  width: calc(var(--yg-space-1) / 2); /* 2px */
+  height: auto;
+  min-height: var(--yg-space-4);
+  margin-block: var(--yg-space-1);
+}
+
+/* 尺寸：sm 紧凑 / md 默认 */
+.yg-steps--sm .yg-steps__dot {
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+  font-size: var(--yg-font-size-xs);
+}
+.yg-steps--sm .yg-steps__title {
+  font-size: var(--yg-font-size-sm);
+}
+.yg-steps--md .yg-steps__dot {
+  width: var(--yg-space-6);
+  height: var(--yg-space-6);
+  font-size: var(--yg-font-size-sm);
+}
+
+/* ---------- 触控目标：移动端 ≥ 44px（准则 3.7） ---------- */
+@media (pointer: coarse) {
+  .yg-menu__item {
+    height: var(--yg-control-height-lg);
+  }
+  .yg-pagination__item,
+  .yg-pagination__prev,
+  .yg-pagination__next,
+  .yg-pagination__ellipsis {
+    min-width: var(--yg-control-height-lg);
+    height: var(--yg-control-height-lg);
+  }
+  .yg-dropdown__item {
+    padding-block: var(--yg-space-3);
+  }
+}
+
+/* ==========================================================================
+   G2 连续曲率渐进增强（准则 2.4）：本文件圆角组件启用 corner-shape: squircle；
+   圆形（.yg-steps__dot）与胶囊（.yg-menu__badge、.yg-tabs--pill 项）除外。
+   ========================================================================== */
+@supports (corner-shape: squircle) {
+  .yg-sidebar__logo,
+  .yg-menu__item,
+  .yg-breadcrumb__item,
+  .yg-tabs__item,
+  .yg-pagination__item,
+  .yg-pagination__prev,
+  .yg-pagination__next,
+  .yg-pagination__jumper,
+  .yg-dropdown__menu,
+  .yg-dropdown__item {
+    corner-shape: squircle;
+  }
+  /* 胶囊形态的标签页项恢复普通圆角形状 */
+  .yg-tabs--pill .yg-tabs__item {
+    corner-shape: auto;
+  }
+}

@@ -1,0 +1,14 @@
+/* ==========================================================================
+   义工平台 · 应用基础层 base.css
+   文件：src/assets/base.css
+   说明：字号、字体、颜色、圆角等视觉基线已由标准样式库 yg/ 统一接管，
+        本文件只保留应用自身的行为性设置，不再重复定义视觉基线。
+   ========================================================================== */
+
+body {
+  min-height: 100vh;
+  transition:
+    color var(--yg-dur-slow) var(--yg-ease-out),
+    background-color var(--yg-dur-slow) var(--yg-ease-out);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,878 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/components/feedback.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   义工平台 · 反馈与弹层组件 feedback.css
+   文件：css/components/feedback.css
+   范围：《前端设计准则》第 4.5 节（反馈组件）与第 6 章（弹出层规范）：
+         .yg-tooltip / .yg-popover / .yg-alert / .yg-message / .yg-notification /
+         .yg-modal / .yg-confirm / .yg-drawer / .yg-spinner / .yg-loading /
+         .yg-result / .yg-backtop
+   铁律（准则第 6 章）：
+   1. 所有弹出面板背景一律 var(--yg-bg-surface-raised) 实色，
+      禁止半透明、禁止 backdrop-filter（唯一例外：base.css 的 .yg-mask 遮罩）。
+   2. 深色 tooltip 按准则 4.5.1 特批使用 var(--yg-gray-950) 实色。
+   3. 层次只靠 --yg-shadow-*；圆角：弹窗/抽屉 xl、气泡 lg、tooltip/message md。
+   4. 进出场：弹窗遮罩淡入 + 面板 scale(0.96)→1 弹簧；抽屉位移滑入；
+      message 淡入上移自动消失；全部在 --yg-dur-slow 内完成。
+   5. 本文件仅允许引用 design-tokens.css 的 --yg-* 变量，禁止硬编码。
+   ========================================================================== */
+
+/* ==========================================================================
+   4.5.1 文字提示 .yg-tooltip
+   深色实底（--yg-gray-950，不透明）+ 白字 + 圆角 md + 小箭头。
+   方向：--top（默认）/ --bottom / --left / --right；出场淡入上移。
+   ========================================================================== */
+.yg-tooltip {
+  position: absolute;
+  z-index: var(--yg-z-tooltip); /* tooltip 1070：全站最高弹出层级 */
+  padding: var(--yg-space-1) var(--yg-space-2);
+  background: var(--yg-gray-950); /* 深色 tooltip 专属实色（准则 4.5.1 例外） */
+  color: var(--yg-text-inverse);
+  font-size: var(--yg-font-size-xs);
+  line-height: var(--yg-line-height-snug);
+  border-radius: var(--yg-radius-md);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-out);
+}
+
+/* 默认方向：上方（与触发元素保持 8px 间距） */
+.yg-tooltip {
+  bottom: calc(100% + var(--yg-space-2));
+  left: 50%;
+  transform: translateX(-50%) translateY(var(--yg-space-1));
+}
+
+.yg-tooltip.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 方向：上方（显式声明，与默认一致） */
+.yg-tooltip--top {
+  bottom: calc(100% + var(--yg-space-2));
+  left: 50%;
+  transform: translateX(-50%) translateY(var(--yg-space-1));
+}
+
+.yg-tooltip--top.is-visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 方向：下方 */
+.yg-tooltip--bottom {
+  top: calc(100% + var(--yg-space-2));
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%) translateY(calc(var(--yg-space-1) * -1));
+}
+
+.yg-tooltip--bottom.is-visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 方向：左侧 */
+.yg-tooltip--left {
+  right: calc(100% + var(--yg-space-2));
+  top: 50%;
+  transform: translateY(-50%) translateX(var(--yg-space-1));
+}
+
+.yg-tooltip--left.is-visible {
+  transform: translateY(-50%) translateX(0);
+}
+
+/* 方向：右侧 */
+.yg-tooltip--right {
+  left: calc(100% + var(--yg-space-2));
+  top: 50%;
+  transform: translateY(-50%) translateX(calc(var(--yg-space-1) * -1));
+}
+
+.yg-tooltip--right.is-visible {
+  transform: translateY(-50%) translateX(0);
+}
+
+/* 小箭头：旋转方块，与面板同色实底 */
+.yg-tooltip::before {
+  content: "";
+  position: absolute;
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  background: var(--yg-gray-950);
+  border-radius: var(--yg-radius-xs);
+  transform: rotate(45deg);
+}
+
+/* 默认（上方）：箭头指向下方触发元素 */
+.yg-tooltip:not(.yg-tooltip--bottom):not(.yg-tooltip--left):not(.yg-tooltip--right)::before {
+  bottom: calc(var(--yg-space-2) / -2);
+  left: 50%;
+  margin-left: calc(var(--yg-space-2) / -2);
+}
+
+.yg-tooltip--bottom::before {
+  top: calc(var(--yg-space-2) / -2);
+  left: 50%;
+  margin-left: calc(var(--yg-space-2) / -2);
+}
+
+.yg-tooltip--left::before {
+  right: calc(var(--yg-space-2) / -2);
+  top: 50%;
+  margin-top: calc(var(--yg-space-2) / -2);
+}
+
+.yg-tooltip--right::before {
+  left: calc(var(--yg-space-2) / -2);
+  top: 50%;
+  margin-top: calc(var(--yg-space-2) / -2);
+}
+
+/* ==========================================================================
+   4.5.2 气泡卡片 .yg-popover
+   白底 --yg-bg-surface-raised（不透明）+ 阴影 lg + 圆角 lg；箭头；
+   弹簧进出场。结构：__title / __content / __actions。
+   ========================================================================== */
+.yg-popover {
+  position: absolute;
+  bottom: calc(100% + var(--yg-space-2));
+  left: 50%;
+  z-index: var(--yg-z-popup);
+  width: calc(var(--yg-space-1) * 75);
+  max-width: calc(100vw - var(--yg-space-8));
+  padding: var(--yg-space-4);
+  background: var(--yg-bg-surface-raised); /* 弹出面板铁律：实色不透明 */
+  border-radius: var(--yg-radius-lg);
+  box-shadow: var(--yg-shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) scale(0.96);
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-spring),
+    visibility 0s var(--yg-dur-slow);
+}
+
+.yg-popover.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) scale(1);
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-spring),
+    visibility 0s;
+}
+
+/* 箭头（默认指向下方触发元素），与面板同色实底 */
+.yg-popover::before {
+  content: "";
+  position: absolute;
+  bottom: calc(var(--yg-space-2) / -2);
+  left: 50%;
+  margin-left: calc(var(--yg-space-2) / -2);
+  width: var(--yg-space-2);
+  height: var(--yg-space-2);
+  background: var(--yg-bg-surface-raised);
+  border-radius: var(--yg-radius-xs);
+  transform: rotate(45deg);
+}
+
+.yg-popover__title {
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+}
+
+.yg-popover__content {
+  margin-top: var(--yg-space-2);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+}
+
+.yg-popover__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--yg-space-2);
+  margin-top: var(--yg-space-3);
+}
+
+/* ==========================================================================
+   4.5.3 警告提示 .yg-alert
+   软底 + 1px 同色浅边框 + 语义文字色；--info / --success / --warning / --danger。
+   结构：__icon + __title + __desc + __close；可作页面横幅。
+   ========================================================================== */
+.yg-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--yg-space-1) var(--yg-space-3);
+  width: 100%;
+  padding: var(--yg-space-3) var(--yg-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--yg-radius-lg);
+  /* 默认外观即 info（天蓝） */
+  background: var(--yg-color-info-soft);
+  border-color: color-mix(in srgb, var(--yg-color-info) 30%, var(--yg-bg-surface));
+}
+
+.yg-alert__icon {
+  flex-shrink: 0;
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+  margin-top: var(--yg-space-1);
+  /* 图标取 --yg-text-link 而非 --yg-color-info：后者落在 sky-50 上仅 2.6:1，
+     低于图形元素 3:1 的下限；同色相加深后既保留识别色又达标。 */
+  color: var(--yg-text-link);
+}
+
+.yg-alert__title {
+  flex: 1;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  /* 标题是文字，必须 ≥4.5:1：走 --yg-text-link（sky-700，软蓝底上 5.5:1），
+     而不是识别色 --yg-color-info（sky-500 落在 sky-50 上只有 2.6:1）。 */
+  color: var(--yg-text-link);
+}
+
+.yg-alert__desc {
+  flex-basis: 100%;
+  padding-left: var(--yg-space-7); /* 与图标对齐 */
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+}
+
+.yg-alert__close {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* 变体：info（显式，与默认一致）。底色与图标跟默认同源，标题走达标文字色。 */
+.yg-alert--info {
+  background: var(--yg-color-info-soft);
+  border-color: color-mix(in srgb, var(--yg-color-info) 30%, var(--yg-bg-surface));
+}
+
+.yg-alert--info .yg-alert__title {
+  color: var(--yg-text-link);
+}
+
+/* 变体：success（绿） */
+.yg-alert--success {
+  background: var(--yg-color-success-soft);
+  border-color: color-mix(in srgb, var(--yg-color-success) 30%, var(--yg-bg-surface));
+}
+
+.yg-alert--success .yg-alert__icon,
+.yg-alert--success .yg-alert__title {
+  color: var(--yg-text-success);
+}
+
+/* 变体：warning（橙） */
+.yg-alert--warning {
+  background: var(--yg-color-warning-soft);
+  border-color: color-mix(in srgb, var(--yg-color-warning) 30%, var(--yg-bg-surface));
+}
+
+.yg-alert--warning .yg-alert__icon,
+.yg-alert--warning .yg-alert__title {
+  color: var(--yg-text-warning);
+}
+
+/* 变体：danger（红，仅用于高危警示） */
+.yg-alert--danger {
+  background: var(--yg-color-danger-soft);
+  border-color: color-mix(in srgb, var(--yg-color-danger) 30%, var(--yg-bg-surface));
+}
+
+.yg-alert--danger .yg-alert__icon,
+.yg-alert--danger .yg-alert__title {
+  color: var(--yg-text-danger);
+}
+
+/* ==========================================================================
+   4.5.4 全局消息 .yg-message
+   容器 __wrap 顶部居中；__item 白底实色 + 阴影 lg + 圆角 md + 语义图标；
+   变体 --success / --warning / --danger / --info；淡入上移，2–3s 自动消失。
+   ========================================================================== */
+.yg-message__wrap {
+  position: fixed;
+  top: var(--yg-space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--yg-z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--yg-space-2);
+  pointer-events: none; /* 容器不挡点击，条目自身可交互 */
+}
+
+.yg-message__item {
+  display: flex;
+  align-items: center;
+  gap: var(--yg-space-2);
+  min-width: calc(var(--yg-space-1) * 72);
+  padding: var(--yg-space-2) var(--yg-space-4);
+  background: var(--yg-bg-surface-raised); /* 弹出面板铁律：实色不透明 */
+  box-shadow: var(--yg-shadow-lg);
+  border-radius: var(--yg-radius-md);
+  font-size: var(--yg-font-size-md);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+  pointer-events: auto;
+  /* 进出场：淡入上移（is-open 切换，含自动消失的退场） */
+  opacity: 0;
+  transform: translateY(calc(var(--yg-space-1) * -3));
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-out);
+}
+
+.yg-message__item.is-open {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.yg-message__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--yg-text-tertiary); /* 默认中性灰 */
+}
+
+/* 图标与文字同色：语义主色压软底只有 1.7–2.6:1，达不到图形元素 3:1 要求，
+   统一改用语义文字色（与 .yg-alert 的处理一致）。 */
+.yg-message__item--info .yg-message__icon { color: var(--yg-text-link); }
+.yg-message__item--success .yg-message__icon { color: var(--yg-text-success); }
+.yg-message__item--warning .yg-message__icon { color: var(--yg-text-warning); }
+.yg-message__item--danger .yg-message__icon { color: var(--yg-text-danger); }
+
+/* ==========================================================================
+   4.5.5 通知 .yg-notification
+   右上角卡片：白底实色 + 阴影 lg + 圆角 xl；标题 + 描述 + 图标 + __close；
+   可堆叠，每条带滑入/关闭动画。结构：__item。
+   ========================================================================== */
+.yg-notification {
+  position: fixed;
+  top: var(--yg-space-6);
+  right: var(--yg-space-6);
+  z-index: var(--yg-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--yg-space-3);
+  width: calc(var(--yg-space-1) * 80);
+  max-width: calc(100vw - var(--yg-space-8));
+}
+
+.yg-notification__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--yg-space-1) var(--yg-space-3);
+  padding: var(--yg-space-4);
+  background: var(--yg-bg-surface-raised); /* 弹出面板铁律：实色不透明 */
+  box-shadow: var(--yg-shadow-lg);
+  border-radius: var(--yg-radius-xl);
+  /* 进出场：右侧滑入淡入，关闭时反向滑出 */
+  opacity: 0;
+  transform: translateX(var(--yg-space-4));
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    transform var(--yg-dur-slow) var(--yg-ease-out);
+}
+
+.yg-notification__item.is-open {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.yg-notification__icon {
+  flex-shrink: 0;
+  width: var(--yg-space-5);
+  height: var(--yg-space-5);
+  margin-top: var(--yg-space-1);
+  color: var(--yg-color-primary);
+}
+
+.yg-notification__title {
+  flex: 1;
+  font-size: var(--yg-font-size-md);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+}
+
+.yg-notification__close {
+  flex-shrink: 0;
+  margin-top: calc(var(--yg-space-1) * -1);
+}
+
+.yg-notification__desc {
+  flex-basis: 100%;
+  padding-left: var(--yg-space-7); /* 与图标对齐 */
+  font-size: var(--yg-font-size-sm);
+  line-height: var(--yg-line-height-normal);
+  color: var(--yg-text-secondary);
+}
+
+/* ==========================================================================
+   4.5.6 对话框 .yg-modal
+   遮罩（base.css .yg-mask，弹层体系唯一允许的半透明元素，置于本组件之后）
+   + __dialog 实色面板：阴影 lg + 圆角 xl，居中，宽度 sm 400 / md 520 / lg 720。
+   结构：__header（__title + __close）/ __body / __footer。
+   进出场：遮罩淡入 + 面板 scale(0.96)→1 弹簧。
+   ========================================================================== */
+.yg-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--yg-z-popup);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--yg-space-6);
+  overflow-y: auto;
+  /* 遮罩淡入由相邻 .yg-mask 完成（见文末联动规则），此处负责面板进出场 */
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    visibility 0s var(--yg-dur-slow);
+}
+
+.yg-modal.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transition:
+    opacity var(--yg-dur-slow) var(--yg-ease-out),
+    visibility 0s;
+}
+
+.yg-modal__dialog {
+  position: relative;
+  z-index: var(--yg-z-popup); /* 面板层高于遮罩层 */
+  width: calc(var(--yg-space-1) * 130); /* md 默认 520px */
+  max-width: 100%;
+  margin: auto; /* 超高内容可滚动，不裁切顶部 */
+  background: var(--yg-bg-surface-raised); /* 弹出面板铁律：实色不透明 */
+  border-radius: var(--yg-radius-xl);
+  box-shadow: var(--yg-shadow-lg);
+  transform: scale(0.96);
+  transition: transform var(--yg-dur-slow) var(--yg-ease-spring);
+}
+
+.yg-modal.is-open .yg-modal__dialog {
+  transform: scale(1);
+}
+
+/* 宽度变体 */
+.yg-modal--sm .yg-modal__dialog { width: calc(var(--yg-space-1) * 100); } /* 400px */
+.yg-modal--lg .yg-modal__dialog { width: calc(var(--yg-space-1) * 180); } /* 720px */
+
+.yg-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-4) var(--yg-space-6);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+.yg-modal__title {
+  font-size: var(--yg-font-size-xl); /* 弹窗标题 18px */
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+}
+
+.yg-modal__close {
+  flex-shrink: 0;
+  margin-right: calc(var(--yg-space-1) * -2);
+}
+
+.yg-modal__body {
+  padding: var(--yg-space-6);
+}
+
+.yg-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--yg-space-3);
+  padding: var(--yg-space-4) var(--yg-space-6);
+  border-top: 1px solid var(--yg-border-subtle);
+}
+
+/* ==========================================================================
+   4.5.7 危险确认 .yg-confirm（高危操作专属，见准则第 5 章）
+   由 .yg-modal 派生：顶部居中红色软底圆 __icon + 警示图标；__title 动词句；
+   __desc 说明后果与不可恢复；__actions 左取消（secondary）右确认（danger）。
+   ========================================================================== */
+.yg-confirm .yg-modal__dialog {
+  padding: var(--yg-space-7) var(--yg-space-6) var(--yg-space-6);
+  text-align: center;
+}
+
+.yg-confirm__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-9);
+  height: var(--yg-space-9);
+  margin-inline: auto;
+  border-radius: var(--yg-radius-pill); /* 圆形，不参与 corner-shape */
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-color-danger);
+}
+
+.yg-confirm__title {
+  margin-top: var(--yg-space-4);
+  font-size: var(--yg-font-size-xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-snug);
+  color: var(--yg-text-primary);
+}
+
+.yg-confirm__desc {
+  margin-top: var(--yg-space-2);
+  color: var(--yg-text-secondary);
+}
+
+.yg-confirm__actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--yg-space-3);
+  margin-top: var(--yg-space-6);
+}
+
+/* ==========================================================================
+   4.5.8 抽屉 .yg-drawer
+   遮罩（.yg-mask，置于本组件之后）+ 实色面板：贴边侧圆角为 0 + 阴影 lg；
+   方向 --left / --right（默认）/ --top / --bottom，位移滑入 300ms；
+   结构同 modal 三段式：__header / __body / __footer。
+   ========================================================================== */
+.yg-drawer {
+  position: fixed;
+  z-index: var(--yg-z-popup);
+  display: flex;
+  flex-direction: column;
+  background: var(--yg-bg-surface-raised); /* 弹出面板铁律：实色不透明 */
+  box-shadow: var(--yg-shadow-lg);
+  visibility: hidden;
+  transition:
+    transform var(--yg-dur-slow) var(--yg-ease-out),
+    visibility 0s var(--yg-dur-slow);
+}
+
+.yg-drawer.is-open {
+  visibility: visible;
+  transition:
+    transform var(--yg-dur-slow) var(--yg-ease-out),
+    visibility 0s;
+}
+
+/* 方向：右侧（默认） */
+.yg-drawer--right {
+  top: 0;
+  right: 0;
+  width: calc(var(--yg-space-1) * 95);
+  height: 100%;
+  border-radius: var(--yg-radius-xl) 0 0 var(--yg-radius-xl); /* 贴边侧为 0 */
+  transform: translateX(100%);
+}
+
+.yg-drawer--right.is-open { transform: translateX(0); }
+
+/* 方向：左侧 */
+.yg-drawer--left {
+  top: 0;
+  left: 0;
+  width: calc(var(--yg-space-1) * 95);
+  height: 100%;
+  border-radius: 0 var(--yg-radius-xl) var(--yg-radius-xl) 0;
+  transform: translateX(-100%);
+}
+
+.yg-drawer--left.is-open { transform: translateX(0); }
+
+/* 方向：顶部 */
+.yg-drawer--top {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(var(--yg-space-1) * 75);
+  border-radius: 0 0 var(--yg-radius-xl) var(--yg-radius-xl);
+  transform: translateY(-100%);
+}
+
+.yg-drawer--top.is-open { transform: translateY(0); }
+
+/* 方向：底部 */
+.yg-drawer--bottom {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: calc(var(--yg-space-1) * 75);
+  border-radius: var(--yg-radius-xl) var(--yg-radius-xl) 0 0;
+  transform: translateY(100%);
+}
+
+.yg-drawer--bottom.is-open { transform: translateY(0); }
+
+.yg-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--yg-space-3);
+  flex-shrink: 0;
+  padding: var(--yg-space-4) var(--yg-space-6);
+  border-bottom: 1px solid var(--yg-border-subtle);
+}
+
+.yg-drawer__body {
+  flex: 1;
+  padding: var(--yg-space-6);
+  overflow-y: auto;
+}
+
+.yg-drawer__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--yg-space-3);
+  flex-shrink: 0;
+  padding: var(--yg-space-4) var(--yg-space-6);
+  border-top: 1px solid var(--yg-border-subtle);
+}
+
+/* ==========================================================================
+   4.5.9 加载 .yg-spinner / .yg-loading
+   spinner：圆环旋转（天蓝），尺寸 sm 16 / md 24 / lg 32，--inverse 白。
+   loading：区域遮罩（实色不透明）+ spinner + 文案，--fullscreen 全屏。
+   ========================================================================== */
+.yg-spinner {
+  display: inline-block;
+  vertical-align: middle;
+  width: var(--yg-space-6); /* md 24px */
+  height: var(--yg-space-6);
+  border: calc(var(--yg-space-1) / 2) solid var(--yg-border-default);
+  border-top-color: var(--yg-color-primary);
+  border-radius: var(--yg-radius-pill); /* 圆环，不参与 corner-shape */
+  animation: yg-spin calc(var(--yg-dur-slow) + var(--yg-dur-page)) linear infinite;
+}
+
+.yg-spinner--sm {
+  width: var(--yg-space-4); /* 16px */
+  height: var(--yg-space-4);
+}
+
+.yg-spinner--lg {
+  width: var(--yg-space-7); /* 32px */
+  height: var(--yg-space-7);
+}
+
+/* 深色/彩色背景上的白色圆环 */
+.yg-spinner--inverse {
+  border-color: color-mix(in srgb, var(--yg-text-inverse) 35%, transparent);
+  border-top-color: var(--yg-text-inverse);
+}
+
+@keyframes yg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 区域加载遮罩：实色白底（不透明）+ spinner + 文案；is-loading 控制显隐 */
+.yg-loading {
+  position: absolute;
+  inset: 0;
+  z-index: var(--yg-z-popup);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--yg-bg-surface); /* 区域遮罩：实色不透明 */
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-md);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--yg-dur-base) var(--yg-ease-out),
+    visibility 0s var(--yg-dur-base);
+}
+
+.yg-loading.is-loading {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--yg-dur-base) var(--yg-ease-out),
+    visibility 0s;
+}
+
+.yg-loading .yg-spinner {
+  margin-bottom: var(--yg-space-3);
+}
+
+/* 全屏加载 */
+.yg-loading--fullscreen {
+  position: fixed;
+}
+
+/* ==========================================================================
+   4.5.10 结果页 .yg-result
+   __icon（语义色软底圆形 + 线性图标）+ __title + __subtitle + __actions；
+   变体 --success / --warning / --danger / --info；垂直居中排版。
+   ========================================================================== */
+.yg-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--yg-space-9) var(--yg-space-6);
+}
+
+.yg-result__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-10); /* 64px */
+  height: var(--yg-space-10);
+  border-radius: var(--yg-radius-pill); /* 圆形，不参与 corner-shape */
+  background: var(--yg-color-info-soft);
+  color: var(--yg-color-info);
+}
+
+.yg-result__title {
+  margin-top: var(--yg-space-4);
+  font-size: var(--yg-font-size-2xl);
+  font-weight: var(--yg-font-weight-semibold);
+  line-height: var(--yg-line-height-tight);
+  color: var(--yg-text-primary);
+}
+
+.yg-result__subtitle {
+  margin-top: var(--yg-space-2);
+  color: var(--yg-text-secondary);
+}
+
+.yg-result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--yg-space-3);
+  margin-top: var(--yg-space-6);
+}
+
+.yg-result--info .yg-result__icon {
+  background: var(--yg-color-info-soft);
+  color: var(--yg-text-link);
+}
+
+.yg-result--success .yg-result__icon {
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.yg-result--warning .yg-result__icon {
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.yg-result--danger .yg-result__icon {
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+/* ==========================================================================
+   4.5.11 回到顶部 .yg-backtop
+   右下角 40×40 圆角 md + 阴影 md；滚动出现淡入（is-visible）。
+   ========================================================================== */
+.yg-backtop {
+  position: fixed;
+  right: var(--yg-space-6);
+  bottom: var(--yg-space-6);
+  z-index: var(--yg-z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--yg-space-8); /* 40px */
+  height: var(--yg-space-8);
+  border-radius: var(--yg-radius-md);
+  background: var(--yg-bg-surface-raised);
+  color: var(--yg-text-primary);
+  box-shadow: var(--yg-shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(var(--yg-space-2));
+  transition:
+    opacity var(--yg-dur-base) var(--yg-ease-out),
+    transform var(--yg-dur-base) var(--yg-ease-out),
+    color var(--yg-dur-fast) var(--yg-ease-out),
+    background-color var(--yg-dur-fast) var(--yg-ease-out);
+}
+
+.yg-backtop.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.yg-backtop:hover {
+  color: var(--yg-color-primary);
+  background-color: var(--yg-bg-hover);
+}
+
+.yg-backtop:active {
+  background-color: var(--yg-bg-active);
+}
+
+/* ==========================================================================
+   遮罩与弹出组件的联动进出场
+   约定（与准则 4.3.1 的 ".is-open + .yg-mask" 一致）：.yg-mask 紧随
+   modal / drawer 之后作为兄弟节点，仅当弹出组件 .is-open 时淡入显示；
+   遮罩是弹出层体系中唯一允许的半透明元素（样式见 base.css）。
+   ========================================================================== */
+.yg-modal + .yg-mask,
+.yg-drawer + .yg-mask {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--yg-dur-slow) var(--yg-ease-out);
+}
+
+.yg-modal.is-open + .yg-mask,
+.yg-drawer.is-open + .yg-mask {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ==========================================================================
+   G2 连续曲率圆角渐进增强（准则 2.4）
+   支持 corner-shape 的浏览器（Chromium 139+）自动升级为超椭圆连续曲率；
+   其余浏览器回退为同尺寸普通圆角。圆形（spinner / result 图标 / confirm
+   图标）保持 border-radius 圆形，不参与。
+   ========================================================================== */
+@supports (corner-shape: squircle) {
+  .yg-tooltip,
+  .yg-popover,
+  .yg-alert,
+  .yg-message__item,
+  .yg-notification__item,
+  .yg-modal__dialog,
+  .yg-drawer,
+  .yg-backtop {
+    corner-shape: squircle; /* superellipse(2)：Apple G2 连续曲率 */
+  }
+}
