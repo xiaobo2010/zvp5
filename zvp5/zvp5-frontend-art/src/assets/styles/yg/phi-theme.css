@@ -1,0 +1,2765 @@
+/* ==========================================================================
+   本文件由 `npm run design:sync` 自动生成，请勿手工修改。
+   来源：前端约定/css/phi-theme.css
+   需要改动请编辑上述源文件后重新执行同步命令；
+   直接改本文件会在下次同步时被覆盖，造成样式库与准则漂移。
+   ========================================================================== */
+/* ==========================================================================
+   ZVMS Phigros Theme（愚人节UI）
+   作用域：.yg-phi 下覆盖普通用户端样式为 Phigros 视觉
+   删除：score/combo/RKS/判定交互/note下落/抽卡/等级游戏化/虚拟币
+   保留：真实义工业务 + 纯装饰几何元素（判定线/透视网格/扫描线/粒子）
+   字体：Bebas Neue（英文display）、Rajdhani（数字HUD）、系统UI字体（中文）
+   ========================================================================== */
+
+/* ---------- 字体 ---------- */
+@font-face {
+  font-family: 'Bebas';
+  src:
+    url('../../fonts/phi/BebasNeue-Regular.woff2') format('woff2');
+  font-display: swap;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  src:
+    url('../../fonts/phi/Rajdhani-Medium.woff2') format('woff2');
+  font-display: swap;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  src:
+    url('../../fonts/phi/Rajdhani-Bold.woff2') format('woff2');
+  font-display: swap;
+  font-weight: 700;
+}
+
+/* ---------- Phi 作用域：暗色 + 青色主色 + 锐利几何 ---------- */
+.yg-phi {
+  --yg-bg-page: #050608;
+  --yg-bg-surface: #0c0e12;
+  --yg-bg-surface-raised: #12171b;
+  --yg-bg-surface-sunken: #060709;
+  --yg-bg-hover: rgba(73, 244, 226, 0.08);
+  --yg-bg-active: rgba(73, 244, 226, 0.15);
+
+  --yg-text-primary: #f4f6f8;
+  --yg-text-secondary: #b0b8c1;
+  --yg-text-tertiary: #8d98a2;
+  --yg-text-disabled: #4a5159;
+
+  --yg-border-subtle: rgba(244, 246, 248, 0.08);
+  --yg-border-default: rgba(244, 246, 248, 0.12);
+  --yg-border-strong: rgba(244, 246, 248, 0.18);
+
+  --yg-color-primary: #49f4e2;
+  --yg-color-primary-hover: #5ef7ea;
+  --yg-color-primary-active: #38e3d1;
+  --yg-color-primary-soft: rgba(73, 244, 226, 0.12);
+  --yg-color-primary-strong: #0ca89a;
+  --yg-color-primary-strong-hover: #0d9a8e;
+  --yg-color-primary-strong-active: #0b8d82;
+
+  --yg-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --yg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.45);
+  --yg-shadow-md: 0 2px 4px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --yg-shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  --yg-focus-ring-color: #49f4e2;
+
+  --phi-cyan: #49f4e2;
+  --phi-breathe: #1de9b6;
+  --phi-breathe-strong: rgba(29, 233, 182, 0.12);
+  --phi-breathe-soft: rgba(29, 233, 182, 0.085);
+  --phi-pink: #ff4e9b;
+  --phi-display: Bebas, 'Impact', sans-serif;
+  --phi-hud: Rajdhani, 'Arial Narrow', sans-serif;
+}
+
+.yg-phi {
+  color-scheme: dark;
+  background: var(--yg-bg-page);
+  color: var(--yg-text-primary);
+}
+
+/* ---------- 背景装饰：透视网格 + 速度线 + 扫描线 ---------- */
+.yg-phi::before {
+  content: '';
+  position: fixed;
+  inset: 32% -35% -80%;
+  z-index: 0;
+  transform: rotateX(67deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
+  background-size: 54px 42px;
+  /* 两层 mask：第一层保留上下边缘渐隐，第二层是一条缓慢下移的亮带。
+     亮带收窄并提高对比，两层 intersect 后网格先变强、离开后回落。 */
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.45) 0%,
+      rgba(0, 0, 0, 0.45) 40%,
+      #000 50%,
+      rgba(0, 0, 0, 0.45) 60%,
+      rgba(0, 0, 0, 0.45) 100%
+    );
+  mask-image:
+    linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.45) 0%,
+      rgba(0, 0, 0, 0.45) 40%,
+      #000 50%,
+      rgba(0, 0, 0, 0.45) 60%,
+      rgba(0, 0, 0, 0.45) 100%
+    );
+  -webkit-mask-size: 100% 100%, 100% 300%;
+  mask-size: 100% 100%, 100% 300%;
+  -webkit-mask-position: 0 0, 50% 85%;
+  mask-position: 0 0, 50% 85%;
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  pointer-events: none;
+  animation:
+    phi-grid-float 18s cubic-bezier(0.19, 1, 0.22, 1) infinite,
+    phi-grid-sweep 10s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes phi-grid-float {
+  0%,
+  100% {
+    transform: rotateX(67deg) translateY(0);
+  }
+  50% {
+    transform: rotateX(67deg) translateY(15px);
+  }
+}
+
+/* 300% 高 mask 中，亮带中心从画面上方移到下方的两个位置。 */
+@keyframes phi-grid-sweep {
+  0% {
+    -webkit-mask-position: 0 0, 50% 85%;
+    mask-position: 0 0, 50% 85%;
+  }
+  100% {
+    -webkit-mask-position: 0 0, 50% 15%;
+    mask-position: 0 0, 50% 15%;
+  }
+}
+
+.yg-phi::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse at 50% 35%,
+    transparent 0 20%,
+    rgba(5, 6, 8, 0.2) 78%,
+    #050608 120%
+  );
+  pointer-events: none;
+}
+
+/* 速度线装饰（随滚动内容上下移动，轻微位移）。
+   挂在 .yg-layout__content 内，用负 z-index 垫在卡片背景之后。 */
+.yg-phi-velocity {
+  position: absolute;
+  width: 130px;
+  height: 1px;
+  background: var(--phi-cyan);
+  opacity: 0.18;
+  transform: rotate(-31deg);
+  pointer-events: none;
+  z-index: -1;
+  animation: phi-velocity 4s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+.yg-phi-velocity:nth-child(1) {
+  top: 27%;
+  left: 5%;
+  animation-delay: -0.4s;
+}
+
+.yg-phi-velocity:nth-child(2) {
+  top: 42%;
+  right: 5%;
+  background: var(--phi-pink);
+  animation-delay: -2s;
+}
+
+.yg-phi-velocity:nth-child(3) {
+  top: 74%;
+  left: 11%;
+  width: 70px;
+  animation-delay: -3s;
+}
+
+@keyframes phi-velocity {
+  0%,
+  100% {
+    opacity: 0.07;
+    transform: translate3d(0, 0, 0) rotate(-31deg);
+  }
+  45% {
+    opacity: 0.3;
+    transform: translate3d(18px, -9px, 0) rotate(-31deg);
+  }
+}
+
+/* 判定线装饰（水平，无交互） */
+.yg-phi-judgment {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 62%;
+  height: 2px;
+  z-index: 1;
+  background: rgba(244, 246, 248, 0.55);
+  box-shadow: 0 0 15px rgba(73, 244, 226, 0.325);
+  pointer-events: none;
+}
+
+.yg-phi-judgment::before {
+  content: '';
+  position: absolute;
+  inset: -1px 0;
+  background: var(--phi-cyan);
+  opacity: 0.2;
+  animation: phi-judgment-pulse 1.875s cubic-bezier(0.19, 1, 0.22, 1) infinite;
+}
+
+@keyframes phi-judgment-pulse {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scaleY(1);
+  }
+  48% {
+    opacity: 0.42;
+    transform: scaleY(1.08);
+  }
+}
+
+/* ---------- 导航覆盖：半透明青色玻璃 + 细线 + HUD 字体 ---------- */
+html.dark .yg-phi .yg-glass-nav--landscape {
+  background:
+    radial-gradient(120% 50% at 0% 0%, rgba(73, 244, 226, 0.1), transparent 62%),
+    linear-gradient(160deg, rgba(14, 18, 24, 0.52), rgba(6, 8, 11, 0.32));
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(28px) saturate(165%);
+  border-right-color: rgba(73, 244, 226, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(244, 246, 248, 0.1),
+    inset 1px 0 0 rgba(73, 244, 226, 0.12),
+    inset -1px 0 0 rgba(0, 0, 0, 0.45),
+    1px 0 0 rgba(0, 0, 0, 0.28),
+    0 16px 44px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.34);
+}
+
+/* 竖屏 dock：外壳透明，实体底面由 user-v2.css 的 ::before 按 --yg-* 令牌绘制 */
+html.dark .yg-phi .yg-glass-nav--portrait {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 18px 32px rgba(0, 0, 0, 0.52)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.36));
+}
+
+/* dock 玻璃：偏冷的青色反光，与横屏栏同一套光影 */
+html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  background: linear-gradient(160deg, rgba(18, 24, 28, 0.72), rgba(7, 9, 12, 0.56) 78%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 rgba(73, 244, 226, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    inset 1px 0 0 rgba(73, 244, 226, 0.1),
+    inset -1px 0 0 rgba(0, 0, 0, 0.36);
+}
+
+html.dark .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  background:
+    linear-gradient(155deg, rgba(73, 244, 226, 0.14), transparent 44%),
+    linear-gradient(90deg, transparent, rgba(244, 246, 248, 0.06) 22%, transparent 48%);
+}
+
+.yg-phi .yg-glass-nav__indicator {
+  background: rgba(73, 244, 226, 0.15);
+  box-shadow: 0 0 12px rgba(73, 244, 226, 0.3);
+}
+
+.yg-phi .yg-glass-nav__item {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .yg-glass-nav__item:hover,
+.yg-phi .yg-glass-nav__item.is-active {
+  color: var(--phi-cyan);
+}
+
+.yg-phi .yg-glass-nav__theme-icon {
+  color: var(--yg-text-tertiary);
+}
+
+/* ---------- 卡片：斜切 + 细线 + 暗底 ---------- */
+.yg-phi .yg-card {
+  background: linear-gradient(120deg, #12171b, #090a0c 62%, #101217);
+  border-color: rgba(73, 244, 226, 0.12);
+  border-radius: var(--yg-radius-md);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  position: relative;
+}
+
+.yg-phi .yg-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 78%);
+}
+
+.yg-phi .yg-card--hoverable:hover {
+  transform: translateX(4px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.65);
+}
+
+/* ---------- 首页字标：ZVMS / VOLUNTEER ---------- */
+.yg-phi-hero {
+  position: relative;
+  padding: var(--yg-space-9) var(--yg-space-6) var(--yg-space-7);
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(12, 14, 18, 0.8), rgba(6, 7, 9, 0.95));
+  border: 1px solid rgba(73, 244, 226, 0.12);
+  border-radius: var(--yg-radius-lg);
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+}
+
+.yg-phi-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(var(--phi-cyan), transparent 70%);
+}
+
+.yg-phi-title {
+  margin: 0;
+  font: 400 clamp(80px, 15vw, 160px) / 0.75 var(--phi-display);
+  color: var(--yg-text-primary);
+  letter-spacing: 0.02em;
+  text-shadow:
+    4px 0 var(--phi-pink),
+    -3px 0 var(--phi-cyan);
+  animation: phi-title-glitch 8s steps(2) infinite;
+}
+
+@keyframes phi-title-glitch {
+  0%,
+  98%,
+  100% {
+    text-shadow:
+      4px 0 var(--phi-pink),
+      -3px 0 var(--phi-cyan);
+  }
+  99% {
+    text-shadow:
+      -4px 0 var(--phi-cyan),
+      3px 0 var(--phi-pink);
+  }
+}
+
+.yg-phi-subtitle {
+  margin: var(--yg-space-3) 0 0 4px;
+  font: 500 clamp(18px, 3vw, 26px) / 1 var(--phi-hud);
+  color: var(--yg-text-secondary);
+  letter-spacing: 0.15em;
+}
+
+.yg-phi-subtitle b {
+  color: var(--phi-cyan);
+  font-weight: 700;
+}
+
+.yg-phi-meta {
+  margin: var(--yg-space-4) 0 0 4px;
+  font: 500 13px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+  letter-spacing: 0.08em;
+}
+
+/* PHI 印章装饰 */
+.yg-phi-emblem {
+  position: absolute;
+  right: 5%;
+  top: 50%;
+  width: min(28vw, 180px);
+  aspect-ratio: 1;
+  transform: translateY(-50%) rotate(45deg);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(73, 244, 226, 0.25);
+  background: linear-gradient(135deg, rgba(73, 244, 226, 0.08), rgba(5, 6, 8, 0.75));
+  animation: phi-emblem-rotate 7s ease-in-out infinite alternate;
+}
+
+.yg-phi-emblem::before,
+.yg-phi-emblem::after {
+  content: '';
+  position: absolute;
+  inset: 18%;
+  border: 1px solid rgba(73, 244, 226, 0.2);
+}
+
+.yg-phi-emblem::after {
+  inset: 32%;
+  border-color: rgba(255, 78, 155, 0.2);
+}
+
+.yg-phi-emblem span {
+  display: inline-flex;
+  align-items: baseline;
+  transform: rotate(-45deg);
+  font: 400 clamp(30px, 5vw, 54px) / 1 var(--phi-display);
+  color: var(--yg-text-primary);
+  text-shadow:
+    2px 0 var(--phi-pink),
+    -2px 0 var(--phi-cyan);
+  animation: phi-emblem-glitch 5.2s steps(2, end) infinite;
+}
+
+@keyframes phi-emblem-glitch {
+  0%,
+  76%,
+  100% {
+    transform: rotate(-45deg);
+    opacity: 1;
+    filter: none;
+    text-shadow:
+      2px 0 var(--phi-pink),
+      -2px 0 var(--phi-cyan);
+  }
+  77% {
+    transform: rotate(-44deg) translate(-3px, 1px) skewX(-5deg);
+    opacity: 0.82;
+    filter: brightness(1.5);
+    text-shadow:
+      -5px 0 var(--phi-pink),
+      4px 0 var(--phi-cyan);
+  }
+  78% {
+    transform: rotate(-46deg) translate(2px, -1px) skewX(3deg);
+    opacity: 0.72;
+    filter: contrast(1.6);
+    text-shadow:
+      4px 0 var(--phi-pink),
+      -5px 0 var(--phi-cyan);
+  }
+  79% {
+    transform: rotate(-44deg) translate(-2px, 0);
+    opacity: 1;
+    filter: none;
+    text-shadow:
+      -3px 0 var(--phi-pink),
+      3px 0 var(--phi-cyan);
+  }
+}
+
+.yg-phi-emblem span small {
+  margin-left: 2px;
+  color: var(--phi-cyan);
+  font: 700 0.36em / 1 var(--phi-hud);
+  letter-spacing: 0.04em;
+  text-shadow: none;
+}
+
+@keyframes phi-emblem-rotate {
+  from {
+    transform: translateY(-50%) rotate(38deg);
+  }
+  to {
+    transform: translateY(-50%) rotate(56deg);
+  }
+}
+
+/* ---------- 首页时长：HUD 数字 + 细线轨道 ---------- */
+.yg-phi .yg-time-card {
+  background: linear-gradient(120deg, #0e1216, #080a0d);
+  border-color: rgba(73, 244, 226, 0.1);
+}
+
+.yg-phi .yg-time-card__title {
+  font: 500 11px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+  letter-spacing: 0.12em;
+}
+
+.yg-phi .yg-time-card__value {
+  font: 700 32px / 0.9 var(--phi-hud);
+  font-variant-numeric: tabular-nums;
+  color: var(--phi-cyan);
+}
+
+.yg-phi .yg-time-card__unit {
+  margin-left: 4px;
+  font: 500 14px var(--phi-hud);
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .yg-time-card__progress {
+  height: 1px;
+  background: rgba(73, 244, 226, 0.15);
+  overflow: hidden;
+  border-radius: 0;
+}
+
+.yg-phi .yg-time-card__progress-bar {
+  height: 100%;
+  background: var(--phi-cyan);
+  box-shadow: 0 0 8px var(--phi-cyan);
+  transition: transform 1s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* ---------- 按钮：锐利 + HUD 字重 ---------- */
+.yg-phi .yg-btn,
+.yg-phi .el-button {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  border: 0;
+  border-radius: 0;
+  transition:
+    transform 180ms cubic-bezier(0.34, 1.28, 0.64, 1),
+    background-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.yg-phi .yg-btn:hover,
+.yg-phi .el-button:hover {
+  transform: translateY(-2px);
+}
+
+.yg-phi .yg-btn:active,
+.yg-phi .el-button:active {
+  transform: scale(0.97);
+}
+
+.yg-phi .yg-btn--primary,
+.yg-phi .el-button--primary {
+  background: var(--yg-color-primary-strong);
+  border: 0;
+}
+
+.yg-phi .yg-btn--primary:hover,
+.yg-phi .el-button--primary:hover {
+  background: var(--yg-color-primary-strong-hover);
+}
+
+/* ---------- 登录页：暗色分栏 + PHI 印章 ---------- */
+.yg-phi .yg-login-v2__brand {
+  background: linear-gradient(135deg, #0a0c10, #050608);
+  border-right-color: rgba(73, 244, 226, 0.12);
+  position: relative;
+}
+
+.yg-phi .yg-login-v2__brand::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 70%);
+}
+
+.yg-phi .yg-login-v2__logo {
+  border: 1px solid rgba(73, 244, 226, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.yg-phi .yg-login-v2__eyebrow {
+  font: 500 12px var(--phi-hud);
+  color: var(--phi-cyan);
+  letter-spacing: 0.12em;
+}
+
+.yg-phi .yg-login-v2__headline {
+  font-size: clamp(28px, 5vw, 36px);
+  text-shadow: 1px 0 rgba(73, 244, 226, 0.3);
+}
+
+.yg-phi .yg-login-v2__lead {
+  color: var(--yg-text-secondary);
+}
+
+.yg-phi .yg-login-v2__points li::before {
+  background: var(--phi-cyan);
+  box-shadow: 0 0 6px var(--phi-cyan);
+}
+
+.yg-phi .yg-login__card {
+  background: linear-gradient(120deg, #12171b, #0c0e12);
+  border-color: rgba(73, 244, 226, 0.15);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+.yg-phi .yg-login__card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(var(--phi-cyan), transparent 75%);
+}
+
+.yg-phi .yg-login__title {
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.yg-phi .yg-login__subtitle {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  color: var(--yg-text-tertiary);
+}
+
+/* ---------- 表格：细线 + 暗色行 ---------- */
+.yg-phi .el-table {
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-row-hover-bg-color: rgba(73, 244, 226, 0.06);
+  --el-table-border-color: rgba(244, 246, 248, 0.08);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+}
+
+.yg-phi .el-table th {
+  font-family: var(--phi-hud);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- 输入框：暗底 + 青色焦点 ---------- */
+.yg-phi .el-input__wrapper {
+  background-color: var(--yg-bg-surface-sunken);
+  border-color: var(--yg-border-default);
+  box-shadow: none;
+}
+
+.yg-phi .el-input__wrapper:hover {
+  border-color: var(--yg-border-strong);
+}
+
+.yg-phi .el-input__wrapper.is-focus {
+  border-color: var(--phi-cyan);
+  box-shadow: 0 0 0 1px var(--phi-cyan);
+}
+
+.yg-phi .el-input__inner {
+  color: var(--yg-text-primary);
+}
+
+.yg-phi .el-input__inner::placeholder {
+  color: var(--yg-text-disabled);
+}
+
+/* ---------- 标签：青色软底 ---------- */
+.yg-phi .el-tag {
+  background-color: rgba(73, 244, 226, 0.12);
+  border-color: rgba(73, 244, 226, 0.2);
+  color: var(--phi-cyan);
+}
+
+.yg-phi .el-tag.el-tag--success {
+  background-color: rgba(52, 199, 89, 0.12);
+  border-color: rgba(52, 199, 89, 0.2);
+  color: #34c759;
+}
+
+.yg-phi .el-tag.el-tag--warning {
+  background-color: rgba(255, 149, 0, 0.12);
+  border-color: rgba(255, 149, 0, 0.2);
+  color: #ff9500;
+}
+
+.yg-phi .el-tag.el-tag--danger {
+  background-color: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.2);
+  color: #ff3b30;
+}
+
+/* ---------- 顶栏：暗底 + HUD 字体 ---------- */
+.yg-phi .yg-topbar {
+  background: rgba(5, 6, 8, 0.92);
+  border-bottom-color: rgba(73, 244, 226, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.yg-phi .yg-topbar__title {
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- 减少动效：停止循环动画 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .yg-phi::before {
+    animation: none;
+    transform: rotateX(67deg);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 15%,
+      #000 75%,
+      transparent
+    );
+    mask-image: linear-gradient(to bottom, transparent, #000 15%, #000 75%, transparent);
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+    -webkit-mask-composite: source-over;
+    mask-composite: add;
+  }
+
+  .yg-phi-velocity,
+  .yg-phi-judgment,
+  .yg-phi-emblem,
+  .yg-phi-emblem span {
+    animation: none;
+  }
+
+  .yg-phi-title {
+    text-shadow:
+      4px 0 rgba(255, 78, 155, 0.5),
+      -3px 0 rgba(73, 244, 226, 0.5);
+  }
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 959px) {
+  .yg-phi-hero {
+    padding: var(--yg-space-7) var(--yg-space-5);
+  }
+
+  .yg-phi-emblem {
+    width: min(35vw, 140px);
+    right: 4%;
+  }
+}
+
+@media (max-width: 599px) {
+  .yg-phi-hero {
+    padding: var(--yg-space-6) var(--yg-space-4);
+  }
+
+  .yg-phi-title {
+    font-size: clamp(60px, 18vw, 100px);
+  }
+
+  .yg-phi-emblem {
+    width: min(40vw, 110px);
+    right: 3%;
+  }
+
+  .yg-phi-velocity {
+    display: none;
+  }
+}
+
+/* 判定线不跨页面/表单：只保留在首页 hero 内，登录品牌区一条短装饰 */
+.yg-phi .yg-phi-judgment {
+  display: none;
+}
+
+.yg-phi-hero::after {
+  content: '';
+  position: absolute;
+  right: var(--yg-space-6);
+  bottom: var(--yg-space-6);
+  left: var(--yg-space-6);
+  height: 2px;
+  background: rgba(244, 246, 248, 0.45);
+  box-shadow: 0 0 14px rgba(73, 244, 226, 0.45);
+  background-image: linear-gradient(90deg, var(--phi-cyan), transparent 72%);
+  pointer-events: none;
+}
+
+.yg-phi .yg-login-v2__brand::after {
+  content: '';
+  position: absolute;
+  right: var(--yg-space-9);
+  bottom: var(--yg-space-8);
+  left: var(--yg-space-9);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(73, 244, 226, 0.6), transparent);
+  pointer-events: none;
+}
+
+.yg-phi .yg-login-v2__brand {
+  position: relative;
+}
+
+.yg-phi-refresh {
+  position: absolute;
+  z-index: 3;
+  top: var(--yg-space-5);
+  right: var(--yg-space-5);
+}
+
+.yg-phi-welcome {
+  margin: var(--yg-space-3) 0 0 4px;
+  color: var(--yg-text-secondary);
+  font-size: var(--yg-font-size-sm);
+}
+
+@media (max-width: 599px) {
+  .yg-phi-refresh {
+    top: var(--yg-space-3);
+    right: var(--yg-space-3);
+  }
+}
+
+.yg-phi .el-card__header {
+  color: var(--yg-text-primary);
+  border-bottom-color: var(--yg-border-subtle);
+}
+
+.yg-phi .el-card {
+  color: var(--yg-text-secondary);
+}
+
+.yg-phi .gauge-time {
+  color: var(--yg-text-primary);
+  font-family: var(--phi-hud);
+  font-variant-numeric: tabular-nums;
+}
+
+.yg-phi .gauge-label {
+  color: var(--yg-text-tertiary);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+}
+
+.yg-phi .footer-item {
+  color: var(--yg-text-tertiary);
+}
+
+.yg-phi .footer-item .upper {
+  color: var(--phi-cyan);
+}
+
+.yg-phi {
+  --el-color-primary: var(--phi-cyan);
+  --el-color-primary-light-3: #2ecfbe;
+  --el-color-primary-light-5: #1fa99b;
+  --el-color-primary-dark-2: #6ef7e9;
+}
+
+/* Element 表格在暗色主题下必须显式改 token：全局 --el-table-* 是浅色值 */
+.yg-phi .el-table {
+  --el-table-bg-color: var(--yg-bg-surface);
+  --el-table-tr-bg-color: var(--yg-bg-surface);
+  --el-table-header-bg-color: var(--yg-bg-surface-sunken);
+  --el-table-footer-bg-color: var(--yg-bg-surface);
+  --el-table-border-color: var(--yg-border-subtle);
+  --el-table-header-text-color: var(--yg-text-tertiary);
+  --el-table-text-color: var(--yg-text-primary);
+  --el-table-row-hover-bg-color: var(--yg-bg-hover);
+  color: var(--yg-text-primary);
+}
+
+.yg-phi .el-table__expanded-cell {
+  background: var(--yg-bg-surface);
+}
+
+.yg-phi .el-table th.el-table__cell,
+.yg-phi .el-table td.el-table__cell {
+  background-color: transparent;
+  border-bottom-color: var(--yg-border-subtle);
+}
+
+.yg-phi .el-table .el-table__body tr:hover > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.hover-row > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.current-row > td.el-table__cell {
+  background-color: var(--yg-bg-hover);
+}
+
+/* 暗色下的状态/身份标签：保留软底，但文字改成亮色 */
+.yg-phi .yg-tag {
+  background: var(--yg-bg-surface-sunken);
+  border-color: transparent;
+  color: var(--yg-text-primary);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+}
+
+.yg-phi .yg-tag--sky {
+  color: var(--phi-cyan);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--phi-cyan) 12%, transparent);
+}
+
+.yg-phi .yg-tag--success {
+  color: var(--phi-cyan);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--phi-cyan) 12%, transparent);
+}
+
+.yg-phi .yg-tag--warning {
+  color: #f3dc62;
+  border-color: transparent;
+  background: var(--yg-color-warning-soft);
+}
+
+/* ==========================================================================
+   Phi final layer
+   - 双主题（dark / light）真实切换：html[data-theme='light'] 不是暗色蒙层
+   - 时间面板 token 接口、硬边/切角、登录/首页 HUD、Element 组件收口
+   - 导航规则保持上一段不动；本层不写 .yg-glass-nav 选择器
+   ========================================================================== */
+
+.yg-phi {
+  --phi-frame: rgba(244, 246, 248, 0.2);
+  --phi-ink: #f4f6f8;
+  --phi-ink-2: color-mix(in srgb, #f4f6f8 78%, transparent);
+  --phi-ink-3: #9aa6b0;
+  --phi-panel: #0b0e12;
+  --phi-panel-hi: #12171b;
+  /* 默认按钮在深色面板上不能只剩「黑块」：填充抬一档，再补一圈 1px 内描边。 */
+  --phi-control-fill: color-mix(in srgb, var(--phi-ink) 14%, var(--phi-panel-hi));
+  --phi-control-line: color-mix(in srgb, var(--phi-ink) 18%, transparent);
+  --phi-accent: #49f4e2;
+  --phi-accent-ink: #49f4e2;
+  --phi-accent-soft: rgba(73, 244, 226, 0.18);
+  --phi-accent-glow: rgba(73, 244, 226, 0.42);
+  --phi-line: rgba(244, 246, 248, 0.14);
+  --phi-line-strong: rgba(244, 246, 248, 0.24);
+  --phi-sunken: #070a0d;
+  --phi-grid: rgba(244, 246, 248, 0.06);
+  --phi-tick-off: rgba(244, 246, 248, 0.16);
+  --phi-warn: #ffc266;
+  --phi-scan: rgba(73, 244, 226, 0.035);
+  --phi-shadow: rgba(73, 244, 226, 0.16);
+
+  --yg-color-success-soft: rgba(52, 199, 89, 0.14);
+  --yg-color-warning-soft: rgba(255, 149, 0, 0.14);
+  --yg-color-danger-soft: rgba(255, 59, 48, 0.14);
+  --yg-text-success: #63e58b;
+  --yg-text-warning: #ffc266;
+  --yg-text-danger: #ff7b75;
+  --yg-text-link: var(--phi-accent);
+  --yg-focus-ring-inner: var(--yg-bg-surface);
+  --yg-focus-ring-color: var(--phi-accent);
+
+  --el-bg-color: var(--yg-bg-surface);
+  --el-bg-color-page: var(--yg-bg-page);
+  --el-bg-color-overlay: var(--yg-bg-surface-raised);
+  --el-fill-color: var(--yg-bg-surface-sunken);
+  --el-fill-color-light: var(--yg-bg-surface-sunken);
+  --el-fill-color-lighter: var(--yg-bg-surface-sunken);
+  --el-fill-color-blank: var(--yg-bg-surface);
+  --el-text-color-primary: var(--yg-text-primary);
+  --el-text-color-regular: var(--yg-text-secondary);
+  --el-text-color-secondary: var(--yg-text-tertiary);
+  --el-text-color-placeholder: var(--yg-text-tertiary);
+  --el-border-color: var(--yg-border-default);
+  --el-border-color-light: var(--yg-border-default);
+  --el-border-color-lighter: var(--yg-border-subtle);
+  --el-border-color-extra-light: var(--yg-border-subtle);
+  --el-border-radius-base: 0;
+  --el-border-radius-small: 0;
+  --el-border-radius-round: 0;
+  --el-card-border-radius: 0;
+  --el-dialog-border-radius: 0;
+  --el-messagebox-border-radius: 0;
+  --el-button-border-radius: 0;
+  --el-tag-border-radius: 0;
+  --el-color-primary: var(--phi-accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--phi-accent) 65%, var(--yg-bg-surface));
+  --el-color-primary-light-5: color-mix(in srgb, var(--phi-accent) 45%, var(--yg-bg-surface));
+  --el-color-primary-light-7: color-mix(in srgb, var(--phi-accent) 30%, var(--yg-bg-surface));
+  --el-color-primary-light-8: color-mix(in srgb, var(--phi-accent) 20%, var(--yg-bg-surface));
+  --el-color-primary-light-9: color-mix(in srgb, var(--phi-accent) 10%, var(--yg-bg-surface));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--phi-accent) 80%, #000);
+  --el-color-success: #34c759;
+  --el-color-warning: #ff9500;
+  --el-color-danger: #ff5c58;
+  --el-color-error: #ff5c58;
+}
+
+html[data-theme='light'] .yg-phi {
+  --yg-bg-page: #eef2f4;
+  --yg-bg-surface: #ffffff;
+  --yg-bg-surface-raised: #ffffff;
+  --yg-bg-surface-sunken: #f2f5f6;
+  --yg-bg-hover: rgba(11, 159, 147, 0.1);
+  --yg-bg-active: rgba(11, 159, 147, 0.17);
+  --yg-text-primary: #050608;
+  --yg-text-secondary: #3f4a53;
+  --yg-text-tertiary: #5b6670;
+  --yg-text-disabled: #8d969d;
+  --yg-border-subtle: rgba(5, 6, 8, 0.1);
+  --yg-border-default: rgba(5, 6, 8, 0.16);
+  --yg-border-strong: rgba(5, 6, 8, 0.28);
+  --yg-color-primary: #007a70;
+  --yg-color-primary-hover: #00685f;
+  --yg-color-primary-active: #00564f;
+  --yg-color-primary-soft: rgba(11, 159, 147, 0.1);
+  --yg-color-primary-strong: #00685f;
+  --yg-color-primary-strong-hover: #00564f;
+  --yg-color-primary-strong-active: #00443e;
+  --yg-color-success-soft: #e7f7ec;
+  --yg-color-warning-soft: #fff2d8;
+  --yg-color-danger-soft: #ffe8e6;
+  --yg-text-success: #1e7e34;
+  --yg-text-warning: #9a5a00;
+  --yg-text-danger: #b3261e;
+  --yg-text-link: #007a70;
+  --yg-focus-ring-inner: #ffffff;
+  --yg-focus-ring-color: #007a70;
+
+  --phi-frame: rgba(5, 6, 8, 0.22);
+  --phi-ink: #050608;
+  --phi-ink-2: color-mix(in srgb, #050608 78%, transparent);
+  --phi-ink-3: #5b6670;
+  --phi-panel: #ffffff;
+  --phi-panel-hi: #f2f5f6;
+  --phi-control-fill: color-mix(in srgb, var(--phi-ink) 7%, var(--phi-panel-hi));
+  --phi-control-line: transparent;
+  --phi-accent: #007a70;
+  --phi-accent-ink: #007a70;
+  --phi-accent-soft: rgba(11, 159, 147, 0.13);
+  --phi-accent-glow: rgba(11, 159, 147, 0.34);
+  --phi-breathe: #008b73;
+  --phi-breathe-strong: rgba(0, 139, 115, 0.075);
+  --phi-breathe-soft: rgba(0, 139, 115, 0.055);
+  --phi-line: rgba(5, 6, 8, 0.16);
+  --phi-line-strong: rgba(5, 6, 8, 0.24);
+  --phi-sunken: #f7f9fa;
+  --phi-grid: rgba(5, 6, 8, 0.05);
+  --phi-tick-off: rgba(5, 6, 8, 0.14);
+  --phi-warn: #9a5a00;
+  --phi-scan: rgba(5, 6, 8, 0.035);
+  --phi-shadow: rgba(5, 6, 8, 0.2);
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #eef2f4;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color: #f2f5f6;
+  --el-fill-color-light: #f2f5f6;
+  --el-fill-color-lighter: #f2f5f6;
+  --el-fill-color-blank: #ffffff;
+  --el-text-color-primary: #050608;
+  --el-text-color-regular: #3f4a53;
+  --el-text-color-secondary: #5b6670;
+  --el-text-color-placeholder: #5b6670;
+  --el-border-color: rgba(5, 6, 8, 0.16);
+  --el-border-color-light: rgba(5, 6, 8, 0.12);
+  --el-border-color-lighter: rgba(5, 6, 8, 0.1);
+  --el-border-color-extra-light: rgba(5, 6, 8, 0.08);
+  --el-color-primary: #007a70;
+  --el-color-primary-light-3: color-mix(in srgb, #007a70 65%, #fff);
+  --el-color-primary-light-5: color-mix(in srgb, #007a70 45%, #fff);
+  --el-color-primary-light-7: color-mix(in srgb, #007a70 30%, #fff);
+  --el-color-primary-light-8: color-mix(in srgb, #007a70 20%, #fff);
+  --el-color-primary-light-9: color-mix(in srgb, #007a70 10%, #fff);
+  --el-color-primary-dark-2: #00564f;
+  --el-color-success: #1e7e34;
+  --el-color-warning: #9a5a00;
+  --el-color-danger: #b3261e;
+  --el-color-error: #b3261e;
+  color-scheme: light;
+}
+
+.yg-phi {
+  color-scheme: dark;
+}
+
+html[data-theme='light'] .yg-phi {
+  color-scheme: light;
+}
+
+/* 背景层：暗色近黑网格；浅色白/灰纸面 + 青色细网格 */
+html[data-theme='light'] .yg-phi {
+  background: var(--yg-bg-page);
+}
+
+html[data-theme='light'] .yg-phi::before {
+  background-image:
+    linear-gradient(var(--phi-breathe-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--phi-breathe-soft) 1px, transparent 1px);
+}
+
+html[data-theme='light'] .yg-phi::after {
+  background: radial-gradient(
+    ellipse at 50% 32%,
+    transparent 0 24%,
+    rgba(238, 242, 244, 0.22) 76%,
+    #eef2f4 118%
+  );
+}
+
+/* 首页：更硬的 HUD 框，新增 rail 读数 */
+.yg-phi .yg-phi-hero {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel) 62%);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 22px) 0,
+    100% 22px,
+    100% 100%,
+    22px 100%,
+    0 calc(100% - 22px)
+  );
+}
+
+.yg-phi .yg-phi-hero::before {
+  width: 4px;
+  background: linear-gradient(var(--phi-accent), transparent 72%);
+}
+
+.yg-phi .yg-phi-hero__rail {
+  position: absolute;
+  z-index: 2;
+  top: var(--yg-space-4);
+  right: var(--yg-space-5);
+  left: var(--yg-space-5);
+  display: flex;
+  justify-content: space-between;
+  color: var(--phi-ink-3);
+  font: 500 10px / 1.2 var(--phi-hud);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.yg-phi .yg-phi-title {
+  color: var(--phi-ink);
+  text-shadow:
+    4px 0 var(--phi-pink),
+    -3px 0 var(--phi-accent);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-title {
+  text-shadow:
+    3px 0 rgba(217, 54, 114, 0.2),
+    -3px 0 rgba(11, 159, 147, 0.25);
+}
+
+.yg-phi .yg-phi-subtitle,
+.yg-phi .yg-phi-meta {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-phi-subtitle b {
+  color: var(--phi-accent);
+}
+
+.yg-phi .yg-phi-emblem {
+  border-color: var(--phi-frame);
+  background: linear-gradient(
+    135deg,
+    var(--phi-accent-soft),
+    color-mix(in srgb, var(--phi-panel) 78%, transparent)
+  );
+}
+
+.yg-phi .yg-phi-emblem::before,
+.yg-phi .yg-phi-emblem::after {
+  border-color: var(--phi-frame);
+}
+
+.yg-phi .yg-phi-emblem span {
+  color: var(--phi-ink);
+  text-shadow:
+    2px 0 var(--phi-pink),
+    -2px 0 var(--phi-accent);
+}
+
+.yg-phi .yg-phi-identity {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+  background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel) 58%);
+}
+
+.yg-phi .yg-home-identity__name {
+  color: var(--phi-ink);
+}
+
+.yg-phi .yg-home-identity__meta,
+.yg-phi .yg-home-identity__action {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-phi-card-code {
+  color: var(--phi-ink-3);
+  font: 500 10px var(--phi-hud);
+  letter-spacing: 0.12em;
+}
+
+/* 登录：品牌大 watermark + 直角面板；覆盖 SFC 的圆角/浅色品牌底 */
+.yg-phi .yg-login-v2 .yg-login-v2__brand {
+  position: relative;
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--phi-panel-hi) 88%, transparent),
+      color-mix(in srgb, var(--phi-panel) 82%, transparent)
+    );
+  border-right-color: var(--phi-frame);
+  border-radius: 0;
+  overflow: hidden;
+}
+
+/* 品牌区：NERV tactical plate 装饰边框 */
+.yg-phi .yg-login-v2 .yg-login-v2__brand::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--phi-accent) 0%,
+    var(--phi-accent) 30%,
+    transparent 30%,
+    transparent 35%,
+    var(--phi-pink) 35%,
+    var(--phi-pink) 65%,
+    transparent 65%
+  );
+  opacity: 0.6;
+  z-index: 3;
+}
+
+/* 品牌区：hazard stripe 装饰（NERV 风格） */
+.yg-phi .yg-login-v2 .yg-login-v2__brand::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 78, 155, 0.12) 0px,
+    rgba(255, 78, 155, 0.12) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+  z-index: 3;
+}
+
+/* 认证卡：precision instrument 风格，多层边框 + 扫描线 + 锐利切角 */
+.yg-phi .yg-login-v2 .yg-login__card {
+  position: relative;
+  border-radius: 0;
+  border: 2px solid var(--phi-frame);
+  background:
+    linear-gradient(135deg, var(--phi-panel-hi), var(--phi-panel));
+  box-shadow:
+    inset 0 1px 0 rgba(73, 244, 226, 0.1),
+    inset 0 -1px 0 rgba(255, 78, 155, 0.08),
+    7px 7px 0 var(--phi-shadow),
+    0 24px 80px rgba(0, 0, 0, 0.28);
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+}
+
+/* 认证卡：内部扫描线纹理（微妙，不影响可读性） */
+.yg-phi .yg-login-v2 .yg-login__card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    rgba(73, 244, 226, 0.015) 1px,
+    transparent 2px,
+    transparent 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 认证卡：cyan/magenta 分离边缘（Cyberpunk 风格） */
+.yg-phi .yg-login-v2 .yg-login__card::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  bottom: -1px;
+  background: linear-gradient(
+    135deg,
+    rgba(73, 244, 226, 0.2) 0%,
+    transparent 20%,
+    transparent 80%,
+    rgba(255, 78, 155, 0.15) 100%
+  );
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.4;
+}
+
+/* 确保表单内容在装饰层之上 */
+.yg-phi .yg-login-v2 .yg-login__card > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* 角落支架装饰（NERV instrument corners） */
+.yg-phi .yg-login-v2 .yg-login__card-shell .yg-phi-login-tag {
+  /* tag 是卡片的兄弟节点，脱离卡片的 clip-path 裁切范围，才能跨坐在顶边上 */
+  z-index: 3;
+  animation: phi-login-tag-in 460ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
+}
+
+.yg-phi .yg-login-v2 .yg-login__title,
+.yg-phi .yg-login-v2 .yg-login__brand-name {
+  color: var(--phi-ink);
+}
+
+.yg-phi .yg-login-v2 .yg-login__subtitle,
+.yg-phi .yg-login-v2 .yg-login-v2__lead,
+.yg-phi .yg-login-v2 .yg-login-v2__points {
+  color: var(--phi-ink-3);
+}
+
+/* 超大 ZVMS watermark：Phigros 风格，带微妙发光 */
+.yg-phi .yg-phi-login-mark {
+  position: absolute;
+  z-index: 0;
+  right: -0.08em;
+  bottom: -0.2em;
+  color: color-mix(in srgb, var(--phi-ink) 5%, transparent);
+  font: 400 clamp(130px, 22vw, 330px) / 0.72 var(--phi-display);
+  letter-spacing: -0.03em;
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 0 40px rgba(73, 244, 226, 0.08);
+}
+
+/* HUD rail：NERV 风格 monospaced 标签 */
+.yg-phi .yg-phi-login-rail {
+  position: absolute;
+  z-index: 2;
+  top: var(--yg-space-5);
+  right: var(--yg-space-6);
+  left: var(--yg-space-6);
+  display: flex;
+  justify-content: space-between;
+  color: var(--phi-ink-3);
+  font: 500 10px var(--phi-hud);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.yg-phi .yg-phi-login-rail span {
+  position: relative;
+  padding-left: 12px;
+}
+
+/* rail label 前缀点（tactical HUD） */
+.yg-phi .yg-phi-login-rail span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  background: var(--phi-accent);
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: 0 0 8px rgba(73, 244, 226, 0.4);
+}
+
+/* AUTH tag：跨坐在卡片顶边上的锐利切角标签 + 霓虹发光
+   - 定位挂在卡片外壳上：卡片自身是 clip-path 容器，标头留在卡片里会被裁掉
+   - 切角改到右上，与卡片本体的右上切角同向呼应 */
+.yg-phi .yg-phi-login-tag {
+  position: absolute;
+  top: -12px;
+  right: 28px;
+  padding: 4px 9px 3px;
+  background: var(--phi-accent);
+  color: #041311;
+  font: 700 10px var(--phi-hud);
+  letter-spacing: 0.14em;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  box-shadow:
+    0 0 12px rgba(73, 244, 226, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-tag {
+  color: #fff;
+}
+
+/* 登录页：light theme 变体（冷白/ink/teal，blueprint风格） */
+html[data-theme='light'] .yg-phi .yg-login-v2__brand {
+  background:
+    linear-gradient(var(--phi-scan) 1px, transparent 1px) 0 0 / 100% 4px,
+    linear-gradient(135deg, rgba(250, 253, 254, 0.9), rgba(238, 246, 248, 0.82));
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2__brand::before {
+  background: linear-gradient(
+    90deg,
+    var(--phi-accent) 0%,
+    var(--phi-accent) 30%,
+    transparent 30%,
+    transparent 35%,
+    #d63384 35%,
+    #d63384 65%,
+    transparent 65%
+  );
+  opacity: 0.5;
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2__brand::after {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(214, 51, 132, 0.08) 0px,
+    rgba(214, 51, 132, 0.08) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2 .yg-login__card {
+  border-color: rgba(5, 6, 8, 0.28);
+  background: linear-gradient(135deg, #ffffff, #f7fbfc);
+  box-shadow:
+    inset 0 1px 0 rgba(11, 159, 147, 0.1),
+    inset 0 -1px 0 rgba(214, 51, 132, 0.08),
+    8px 8px 0 rgba(5, 6, 8, 0.12),
+    0 24px 60px rgba(5, 6, 8, 0.16);
+}
+
+html[data-theme='light'] .yg-phi .yg-login-v2 .yg-login__card::after {
+  background: linear-gradient(
+    135deg,
+    rgba(11, 159, 147, 0.12) 0%,
+    transparent 20%,
+    transparent 80%,
+    rgba(214, 51, 132, 0.1) 100%
+  );
+  opacity: 0.6;
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-mark {
+  text-shadow: 0 0 30px rgba(11, 159, 147, 0.06);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-rail span::before {
+  background: var(--phi-accent);
+  box-shadow: 0 0 6px rgba(11, 159, 147, 0.3);
+}
+
+html[data-theme='light'] .yg-phi .yg-phi-login-tag {
+  box-shadow:
+    0 0 10px rgba(11, 159, 147, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* 概览瓦片：沿用硬边语言，切角与卡片同族，圆角全部抹平 */
+.yg-phi .yg-tile {
+  /* 组件里用的 p-4/p-3 是 px 语义的工具类（4px/未定义），这里统一给足呼吸位 */
+  padding: var(--yg-space-4);
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: var(--phi-sunken);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+/* 进度条：轨道与填充都改成硬边，避免在硬边卡片里出现胶囊圆头 */
+.yg-phi .el-progress-bar__outer,
+.yg-phi .el-progress-bar__inner {
+  border-radius: 0;
+}
+
+/* 卡片/按钮/输入：统一硬边；不复用 --yg-radius，避免影响导航 */
+.yg-phi .yg-card,
+.yg-phi .el-card {
+  border-radius: 0;
+  border-color: var(--phi-frame);
+}
+
+.yg-phi .yg-card {
+  box-shadow: 5px 5px 0 var(--phi-shadow);
+}
+
+.yg-phi .el-card {
+  background: var(--phi-panel);
+  color: var(--phi-ink);
+  box-shadow: 5px 5px 0 var(--phi-shadow);
+  /* 右/下多留 5px：clip-path 会裁掉自身阴影，把阴影带包进裁剪区阴影才留得住 */
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    calc(100% + 5px) calc(14px + 5px),
+    calc(100% + 5px) calc(100% + 5px),
+    0 calc(100% + 5px)
+  );
+}
+
+.yg-phi .el-card__header {
+  color: var(--phi-ink);
+  border-bottom-color: var(--phi-line);
+}
+
+.yg-phi .el-card__body {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .yg-btn,
+.yg-phi .el-button {
+  border: 0;
+  border-radius: 0;
+  font-family: var(--phi-hud);
+  letter-spacing: 0.05em;
+}
+
+/* 默认按钮：软填充 + 1px 内描边 + 右上切角；hover 才出现左侧强调边。
+   深色下填充由 --phi-control-fill 抬到 14%，避免与近黑面板糊在一起。 */
+.yg-phi .yg-btn,
+.yg-phi .el-button {
+  color: var(--phi-ink);
+  background: var(--phi-control-fill);
+  box-shadow: inset 0 0 0 1px var(--phi-control-line);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+}
+
+.yg-phi .yg-btn:hover,
+.yg-phi .el-button:hover {
+  color: var(--phi-accent);
+  background: var(--phi-accent-soft);
+  box-shadow: inset 2px 0 0 var(--phi-accent);
+}
+
+/* 主按钮：实色强调填充，无框 */
+.yg-phi .el-button--primary,
+.yg-phi .yg-btn--primary {
+  color: #041311;
+  background: var(--phi-accent);
+  border: 0;
+  box-shadow: none;
+}
+
+.yg-phi .el-button--primary:hover,
+.yg-phi .yg-btn--primary:hover {
+  color: #041311;
+  background: color-mix(in srgb, var(--phi-accent) 86%, #fff);
+  box-shadow: none;
+}
+
+html[data-theme='light'] .yg-phi .el-button--primary,
+html[data-theme='light'] .yg-phi .yg-btn--primary {
+  color: #fff;
+}
+
+html[data-theme='light'] .yg-phi .el-button--primary:hover,
+html[data-theme='light'] .yg-phi .yg-btn--primary:hover {
+  color: #fff;
+}
+
+/* 危险按钮：软危险填充 + 危险文字，不用描边 */
+.yg-phi .el-button--danger,
+.yg-phi .yg-btn--danger {
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+  border: 0;
+  box-shadow: none;
+}
+
+.yg-phi .el-button--danger:hover,
+.yg-phi .yg-btn--danger:hover {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 70%, var(--el-color-danger) 30%);
+  box-shadow: inset 2px 0 0 var(--el-color-danger);
+}
+
+/* 文字 / 链接按钮：完全透明，只做颜色和下划线反馈。
+   深色底上原来的 ink-3 偏暗，14px 按钮字几乎看不出来；文字按钮用比
+   正文次级更亮的 ink-2，和真正不可点的占位/说明文字拉开。 */
+.yg-phi .el-button.is-text,
+.yg-phi .el-button.is-link,
+.yg-phi .yg-btn--text,
+.yg-phi .yg-btn--ghost {
+  color: var(--phi-ink-2);
+  background: transparent;
+  clip-path: none;
+  box-shadow: none;
+}
+
+.yg-phi .el-button.is-text:hover,
+.yg-phi .el-button.is-link:hover,
+.yg-phi .yg-btn--text:hover,
+.yg-phi .yg-btn--ghost:hover {
+  color: var(--phi-accent);
+  background: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 0.24em;
+}
+
+.yg-phi .el-button--danger.is-text,
+.yg-phi .el-button--danger.is-link {
+  color: var(--yg-text-danger);
+  background: transparent;
+}
+
+.yg-phi .el-button--danger.is-text:hover,
+.yg-phi .el-button--danger.is-link:hover {
+  color: var(--yg-text-danger);
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 带底色的语义标签（ZButtonTag 的 text + bg）：
+   `.is-text` 会用中性 ink 抹掉类型色，导致「有效/审核中」以及
+   校内/校外/社会实践落成同一种灰。这里只对 is-has-bg 的按钮恢复
+   各自的软底与文字色，不影响普通文字按钮。 */
+.yg-phi .el-button--primary.is-text.is-has-bg {
+  color: var(--yg-color-primary);
+  background: var(--yg-color-primary-soft);
+}
+
+.yg-phi .el-button--success.is-text.is-has-bg {
+  color: var(--yg-text-success);
+  background: var(--yg-color-success-soft);
+}
+
+.yg-phi .el-button--warning.is-text.is-has-bg {
+  color: var(--yg-text-warning);
+  background: var(--yg-color-warning-soft);
+}
+
+.yg-phi .el-button--danger.is-text.is-has-bg {
+  color: var(--yg-text-danger);
+  background: var(--yg-color-danger-soft);
+}
+
+.yg-phi .el-button--info.is-text.is-has-bg {
+  color: var(--yg-text-secondary);
+  background: var(--yg-bg-surface-sunken);
+}
+
+.yg-phi .el-button--primary.is-text.is-has-bg:hover {
+  color: var(--yg-color-primary);
+  background: color-mix(in srgb, var(--yg-color-primary-soft) 72%, var(--yg-color-primary) 28%);
+}
+
+.yg-phi .el-button--success.is-text.is-has-bg:hover {
+  color: var(--yg-text-success);
+  background: color-mix(in srgb, var(--yg-color-success-soft) 72%, var(--yg-color-success) 28%);
+}
+
+.yg-phi .el-button--warning.is-text.is-has-bg:hover {
+  color: var(--yg-text-warning);
+  background: color-mix(in srgb, var(--yg-color-warning-soft) 72%, var(--yg-color-warning) 28%);
+}
+
+.yg-phi .el-button--danger.is-text.is-has-bg:hover {
+  color: var(--yg-text-danger);
+  background: color-mix(in srgb, var(--yg-color-danger-soft) 72%, var(--yg-color-danger) 28%);
+}
+
+.yg-phi .el-button--info.is-text.is-has-bg:hover {
+  color: var(--yg-text-primary);
+  background: var(--yg-bg-surface-sunken);
+}
+
+/* 键盘焦点保留可见轮廓；clip-path 会裁 box-shadow，所以用 outline */
+.yg-phi .yg-btn:focus-visible,
+.yg-phi .el-button:focus-visible {
+  outline: 2px solid var(--phi-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.yg-phi .el-input__wrapper,
+.yg-phi .el-select__wrapper,
+.yg-phi .el-textarea__inner {
+  border-radius: 0;
+  background: var(--phi-panel-hi);
+  border: 1px solid var(--phi-frame);
+  box-shadow: none;
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-input__wrapper.is-focus,
+.yg-phi .el-select__wrapper.is-focused,
+.yg-phi .el-textarea__inner:focus {
+  border-color: var(--phi-accent);
+  box-shadow: 0 0 0 1px var(--phi-accent);
+}
+
+.yg-phi .el-input__inner,
+.yg-phi .el-textarea__inner {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-input__inner::placeholder,
+.yg-phi .el-textarea__inner::placeholder {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-switch {
+  --el-switch-on-color: var(--phi-accent);
+  --el-switch-off-color: color-mix(in srgb, var(--phi-ink-3) 34%, var(--phi-panel-hi));
+  --el-switch-border-color: transparent;
+}
+
+/* 无描边开关：不规则切角轨道（大切角 + 小切角错位），选中只多一道内侧窄高光 */
+.yg-phi .el-switch__core {
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(
+    8px 0,
+    calc(100% - 3px) 0,
+    100% 3px,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    3px 100%,
+    0 calc(100% - 3px),
+    0 8px
+  );
+  box-shadow: none;
+  transition:
+    background-color 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.yg-phi .el-switch.is-checked .el-switch__core {
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, #fff 34%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 26%, transparent);
+}
+
+html[data-theme='light'] .yg-phi .el-switch.is-checked .el-switch__core {
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, #000 14%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 22%, transparent);
+}
+
+/* Element 的滑块位移走 left，不是 transform；只写 transform 会让位移瞬移。 */
+.yg-phi .el-switch__action {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(
+    5px 0,
+    calc(100% - 1px) 0,
+    100% 1px,
+    100% calc(100% - 5px),
+    calc(100% - 5px) 100%,
+    1px 100%,
+    0 calc(100% - 1px),
+    0 5px
+  );
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  will-change: transform;
+  transition: all 340ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* 打开时滑块表面掠一道青色反光：状态一变就重播，关掉时不残留 */
+.yg-phi .el-switch__action::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    color-mix(in srgb, var(--phi-accent) 62%, transparent) 48%,
+    transparent 74%
+  );
+  transform: translateX(-140%);
+  opacity: 0;
+}
+
+.yg-phi .el-switch.is-checked .el-switch__action::after {
+  animation: phi-switch-glint 520ms cubic-bezier(0.42, 0, 0.2, 1) 60ms both;
+}
+
+@keyframes phi-switch-glint {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  28% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+
+.yg-phi .el-tag {
+  border: 0;
+  border-radius: 0;
+  background: var(--phi-accent-soft);
+  color: var(--phi-accent);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
+}
+
+.yg-phi .el-tag.el-tag--success {
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.yg-phi .el-tag.el-tag--warning {
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.yg-phi .el-tag.el-tag--danger,
+.yg-phi .el-tag.el-tag--error {
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+.yg-phi .yg-tag--success {
+  background: var(--yg-color-success-soft);
+  color: var(--yg-text-success);
+}
+
+.yg-phi .yg-tag--warning {
+  background: var(--yg-color-warning-soft);
+  color: var(--yg-text-warning);
+}
+
+.yg-phi .yg-tag--danger {
+  background: var(--yg-color-danger-soft);
+  color: var(--yg-text-danger);
+}
+
+.yg-phi .el-table {
+  --el-table-bg-color: var(--phi-panel);
+  --el-table-tr-bg-color: var(--phi-panel);
+  --el-table-header-bg-color: var(--phi-panel-hi);
+  --el-table-footer-bg-color: var(--phi-panel);
+  --el-table-border-color: var(--phi-line);
+  --el-table-header-text-color: var(--phi-ink-3);
+  --el-table-text-color: var(--phi-ink);
+  --el-table-row-hover-bg-color: var(--phi-accent-soft);
+  --el-table-current-row-bg-color: var(--phi-accent-soft);
+  --el-fill-color-lighter: var(--phi-panel-hi);
+}
+
+.yg-phi .el-table th.el-table__cell {
+  font-family: var(--phi-hud);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.yg-phi .el-table tr,
+.yg-phi .el-table td.el-table__cell,
+.yg-phi .el-table th.el-table__cell {
+  background-color: var(--phi-panel);
+  border-bottom-color: var(--phi-line);
+}
+
+.yg-phi .el-table .el-table__body tr:hover > td.el-table__cell,
+.yg-phi .el-table .el-table__body tr.hover-row > td.el-table__cell {
+  background-color: var(--phi-accent-soft);
+}
+
+/* ElPagination：去掉方块页码底，选中页只留文字强调 + 底部细标记 */
+.yg-phi .el-pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-text-color: var(--phi-ink);
+  --el-pagination-button-color: var(--phi-ink);
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-hover-color: var(--phi-accent);
+}
+
+.yg-phi .el-pagination button,
+.yg-phi .el-pagination .el-pager li,
+.yg-phi .el-pagination .btn-prev,
+.yg-phi .el-pagination .btn-next {
+  border-radius: 0;
+  background: transparent;
+}
+
+.yg-phi .el-pagination .el-pager li:hover {
+  color: var(--phi-accent);
+}
+
+.yg-phi .el-pagination .el-pager li,
+.yg-phi .el-pagination.is-background .el-pager li {
+  background: transparent;
+}
+
+.yg-phi .el-pager li.is-active,
+.yg-phi .el-pagination.is-background .el-pager li.is-active {
+  color: var(--phi-accent);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--phi-accent);
+  clip-path: none;
+}
+
+/* ElSegmented：透明分组 + 底部细线；选中项只留文字强调和底部标记 */
+.yg-phi .el-segmented {
+  --el-segmented-bg-color: transparent;
+  --el-segmented-item-selected-bg-color: transparent;
+  --el-segmented-item-selected-color: var(--phi-accent);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-active-bg-color: color-mix(in srgb, var(--phi-accent) 18%, transparent);
+  --el-segmented-color: var(--phi-ink-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--phi-line);
+}
+
+.yg-phi .el-segmented__item {
+  border-radius: 0;
+}
+
+.yg-phi .el-segmented__item-selected {
+  border-radius: 0;
+  background: linear-gradient(var(--phi-accent), var(--phi-accent)) left bottom / 100% 3px no-repeat;
+  box-shadow: none;
+  clip-path: none;
+}
+
+.yg-phi .el-skeleton {
+  --el-skeleton-color: var(--phi-panel-hi);
+  --el-skeleton-to-color: var(--phi-accent-soft);
+}
+
+.yg-phi .el-empty {
+  --el-empty-fill-color-0: var(--phi-panel);
+  --el-empty-fill-color-1: var(--phi-panel-hi);
+  --el-empty-fill-color-2: var(--phi-panel-hi);
+  --el-empty-fill-color-3: var(--phi-line);
+  --el-empty-fill-color-4: var(--phi-panel-hi);
+  --el-empty-fill-color-5: var(--phi-panel);
+  --el-empty-fill-color-6: var(--phi-panel-hi);
+  --el-empty-fill-color-7: var(--phi-panel);
+  --el-empty-fill-color-8: var(--phi-panel-hi);
+  --el-empty-fill-color-9: var(--phi-panel);
+}
+
+.yg-phi .el-empty__description p {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-alert {
+  border-radius: 0;
+  border: 1px solid var(--phi-frame);
+  background: var(--phi-panel-hi);
+}
+
+.yg-phi .el-alert__title,
+.yg-phi .el-alert__description {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-collapse,
+.yg-phi .el-collapse-item__header,
+.yg-phi .el-collapse-item__wrap,
+.yg-phi .el-collapse-item__content {
+  border-radius: 0;
+  border-color: var(--phi-line);
+  background: transparent;
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-collapse-item__header:hover {
+  color: var(--phi-accent);
+}
+
+.yg-phi .el-descriptions__label,
+.yg-phi .el-descriptions__content {
+  color: var(--phi-ink-3);
+  border-color: var(--phi-line);
+  background: transparent;
+}
+
+.yg-phi .el-page-header__title,
+.yg-phi .el-page-header__content {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-result__title p {
+  color: var(--phi-ink);
+}
+
+.yg-phi .el-divider {
+  border-color: var(--phi-line);
+}
+
+.yg-phi .el-drawer {
+  border-radius: 0;
+  background: var(--phi-panel);
+  color: var(--phi-ink);
+}
+
+/* 顶栏：保留导航不动，只处理页面顶栏 */
+.yg-phi .yg-topbar {
+  background: color-mix(in srgb, var(--phi-panel) 88%, transparent);
+  border-bottom-color: var(--phi-frame);
+}
+
+html[data-theme='light'] .yg-phi .yg-topbar {
+  background: color-mix(in srgb, #fff 86%, transparent);
+}
+
+/* 动效：线性/弹簧混合；不碰导航 */
+.yg-phi .yg-phi-hero {
+  animation: phi-final-cut 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-phi-hero__rail {
+  animation: phi-final-rail 480ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
+
+.yg-phi .yg-card,
+.yg-phi .el-card {
+  animation: phi-final-cut 430ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-home-identity {
+  animation-delay: 70ms;
+}
+
+.yg-phi .yg-phi-login-mark {
+  animation: phi-final-mark 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes phi-final-cut {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+    clip-path: polygon(0 0, 0 0, 0 0, 0 100%, 0 100%, 0 100%);
+  }
+}
+
+@keyframes phi-final-rail {
+  from {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0);
+  }
+}
+
+@keyframes phi-final-mark {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0) skewX(-4deg);
+  }
+}
+
+/* 登录页专用：品牌内容区与认证卡的入场编排（<= 600ms） */
+.yg-phi .yg-login-v2__brand-inner {
+  animation: phi-login-brand-in 480ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both;
+}
+
+.yg-phi .yg-login-v2 .yg-login__card {
+  animation: phi-login-card-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.yg-phi .yg-phi-login-rail {
+  animation: phi-final-rail 480ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
+
+@keyframes phi-login-brand-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-20px, 0, 0);
+  }
+}
+
+@keyframes phi-login-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(20px, 0, 0);
+    clip-path: polygon(0 0, 0 0, 0 20px, 0 100%, 0 100%);
+  }
+}
+
+/* AUTH tag 独立入场：卡片本体有 clip-path 动画，标头在外壳里，需自己跟上节奏 */
+@keyframes phi-login-tag-in {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+}
+
+/* ==========================================================================
+   列表出场：含表格的卡片统一成义工列表那套「斜向擦入 + 逐行错峰」
+   - 只在卡片/表格重新挂载时播放：切换页签时换的是列表本身，页头与页签保持常驻。
+   - 弹层 teleport 到 body，不在 .yg-phi 下，弹窗里的表格不会被这套规则命中。
+   - 浏览器不支持 :has() 时整条规则被丢弃，自动回落到上面的通用卡片动画。
+   ========================================================================== */
+
+.yg-phi .el-card:has(.el-table) {
+  animation: phi-list-reveal-card 440ms cubic-bezier(0.19, 1, 0.22, 1) 120ms backwards;
+}
+
+.yg-phi .yg-card:has(.el-table) {
+  animation: phi-list-reveal 440ms cubic-bezier(0.19, 1, 0.22, 1) 120ms backwards;
+}
+
+.yg-phi .el-table__body tr.el-table__row > td.el-table__cell {
+  animation: phi-list-row-in 360ms cubic-bezier(0.19, 1, 0.22, 1) backwards;
+  animation-delay: var(--phi-row-delay, 0ms);
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(2) {
+  --phi-row-delay: 30ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(3) {
+  --phi-row-delay: 60ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(4) {
+  --phi-row-delay: 90ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(5) {
+  --phi-row-delay: 120ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(6) {
+  --phi-row-delay: 150ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(7) {
+  --phi-row-delay: 175ms;
+}
+
+.yg-phi .el-table__body tr.el-table__row:nth-of-type(n + 8) {
+  --phi-row-delay: 200ms;
+}
+
+/* 从左上角斜向拉开：起始多边形压到卡片外，避免切角处露出直边 */
+@keyframes phi-list-reveal {
+  from {
+    opacity: 0;
+    clip-path: polygon(
+      -12px -12px,
+      -12px -12px,
+      -52px calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(
+      -12px -12px,
+      calc(100% + 52px) -12px,
+      calc(100% + 12px) calc(100% + 12px),
+      -52px calc(100% + 12px)
+    );
+  }
+}
+
+/* el-card 自带右上切角：收束形状与静态切角完全重合，动画结束不会跳一下 */
+@keyframes phi-list-reveal-card {
+  from {
+    opacity: 0;
+    clip-path: polygon(
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px,
+      -12px -12px
+    );
+  }
+  to {
+    opacity: 1;
+    clip-path: polygon(
+      0 0,
+      calc(100% - 14px) 0,
+      100% 14px,
+      calc(100% + 5px) calc(14px + 5px),
+      calc(100% + 5px) calc(100% + 5px),
+      0 calc(100% + 5px)
+    );
+  }
+}
+
+/* 单元格只擦自身：tr 上做位移会打断 sticky 固定列 */
+@keyframes phi-list-row-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* ==========================================================================
+   大框流光边
+   - 暗边保留 1px 打底，再叠一圈低频巡边的青色流光：不是闪烁，是缓慢绕场
+   - 用 conic-gradient + @property 旋转角度，遮罩只留 1px 边框，不影响内容
+   - 不支持遮罩合成的浏览器整条规则丢弃，保持原来的暗边
+   ========================================================================== */
+
+@property --phi-edge-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.yg-phi .el-card,
+.yg-phi .yg-card,
+.yg-phi .phi-time__panel {
+  position: relative;
+}
+
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .yg-phi .el-card::after,
+  .yg-phi .yg-card::after,
+  .yg-phi .phi-time__panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--phi-edge-angle),
+      transparent 0deg 292deg,
+      color-mix(in srgb, var(--phi-accent) 26%, transparent) 310deg,
+      var(--phi-accent) 326deg,
+      color-mix(in srgb, var(--phi-accent) 26%, transparent) 342deg,
+      transparent 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: phi-edge-flow 7.6s linear infinite;
+    /* 每个框由壳层写入随机相位，避免所有框同步扫边 */
+    animation-delay: var(--phi-edge-delay, 0ms);
+  }
+
+  /* Pause offscreen 流光 (set by JS) */
+  .yg-phi .el-card[data-phi-edge-idle]::after,
+  .yg-phi .yg-card[data-phi-edge-idle]::after,
+  .yg-phi .phi-time__panel[data-phi-edge-idle]::after {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes phi-edge-flow {
+  to {
+    --phi-edge-angle: 360deg;
+  }
+}
+
+/* Low-GPU mode: freeze all continuous decorative animations, preserve static frame */
+html[data-low-gpu] .yg-phi::before {
+  animation: none;
+  transform: rotateX(67deg);
+  -webkit-mask-position: 0 0, 50% 85%;
+  mask-position: 0 0, 50% 85%;
+}
+
+html[data-low-gpu] .yg-phi-velocity {
+  animation: none;
+  opacity: 0.18;
+  transform: rotate(-31deg);
+}
+
+html[data-low-gpu] .yg-phi-judgment::before {
+  animation: none;
+  opacity: 0.2;
+  transform: scaleY(1);
+}
+
+html[data-low-gpu] .yg-phi .el-card::after,
+html[data-low-gpu] .yg-phi .yg-card::after,
+html[data-low-gpu] .yg-phi .phi-time__panel::after {
+  animation: none;
+}
+
+html[data-low-gpu] .yg-phi .el-segmented__item-selected::after {
+  animation: none;
+  display: none;
+}
+
+html[data-low-gpu] .yg-phi .el-switch__action::after {
+  animation: none;
+  display: none;
+}
+
+html[data-low-gpu] .yg-phi-title {
+  animation: none;
+}
+
+html[data-low-gpu] .yg-phi-emblem {
+  animation: none;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+html[data-low-gpu] .yg-phi-emblem span {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-phi .yg-phi-hero,
+  .yg-phi .yg-phi-hero__rail,
+  .yg-phi .yg-card,
+  .yg-phi .el-card,
+  .yg-phi .el-table__body tr.el-table__row > td.el-table__cell,
+  .yg-phi .yg-phi-login-mark,
+  .yg-phi .yg-phi-title,
+  .yg-phi .yg-phi-emblem,
+  .yg-phi .yg-phi-emblem span,
+  .yg-phi .el-switch__core,
+  .yg-phi .el-switch__action,
+  .yg-phi .el-segmented__item-selected {
+    animation: none;
+    transition: none;
+  }
+
+  .yg-phi .yg-phi-judgment::before {
+    animation: none;
+  }
+
+  .yg-phi .el-switch__action::after,
+  .yg-phi .el-segmented__item-selected::after {
+    display: none;
+  }
+
+  .yg-phi .el-card::after,
+  .yg-phi .yg-card::after,
+  .yg-phi .phi-time__panel::after {
+    animation: none;
+  }
+}
+
+/* 移动端 hero：印章退到文字后，避免盖住 ZVMS；rail 只保留左侧读数 */
+.yg-phi .yg-phi-emblem {
+  z-index: 0;
+}
+
+.yg-phi .yg-phi-title,
+.yg-phi .yg-phi-subtitle,
+.yg-phi .yg-phi-meta,
+.yg-phi .yg-phi-welcome {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 599px) {
+  .yg-phi .yg-phi-hero__rail {
+    top: 10px;
+    right: var(--yg-space-4);
+    left: var(--yg-space-4);
+    font-size: 9px;
+  }
+
+  .yg-phi .yg-phi-hero__rail span:last-child {
+    display: none;
+  }
+
+  .yg-phi .yg-phi-emblem {
+    width: min(28vw, 92px);
+    right: 12px;
+    top: 42%;
+    opacity: 0.62;
+  }
+
+  .yg-phi .yg-phi-title {
+    font-size: clamp(58px, 18vw, 96px);
+  }
+}
+
+/* 浅色模式导航：nav 也随浅色变亮；半透明白云材质 + 更轻的光影 */
+html[data-theme='light'] .yg-phi .yg-glass-nav--landscape {
+  background:
+    radial-gradient(120% 55% at 0% 0%, rgba(255, 255, 255, 0.55), transparent 62%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.6), rgba(242, 247, 248, 0.34));
+  border-right-color: rgba(5, 6, 8, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 1px 0 0 rgba(255, 255, 255, 0.5),
+    inset -1px 0 0 rgba(5, 6, 8, 0.06),
+    1px 0 0 rgba(5, 6, 8, 0.07),
+    0 10px 30px rgba(5, 6, 8, 0.08),
+    0 2px 6px rgba(5, 6, 8, 0.05);
+}
+
+/* 浅色 dock：保持亮面，阴影比暗色更轻 */
+html[data-theme='light'] .yg-phi .yg-glass-nav--portrait {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 10px 20px rgba(15, 23, 42, 0.14))
+    drop-shadow(0 1px 2px rgba(15, 23, 42, 0.08));
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::before {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, #ffffff 80%, transparent),
+    color-mix(in srgb, #eef2f4 58%, transparent) 78%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(5, 6, 8, 0.06),
+    inset 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset -1px 0 0 rgba(255, 255, 255, 0.42);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav--v2.yg-glass-nav--portrait::after {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.42), transparent 44%),
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2) 22%, transparent 48%);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__indicator {
+  background: rgba(11, 159, 147, 0.12);
+  box-shadow: 0 3px 10px rgba(11, 159, 147, 0.16);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item {
+  color: #5b6670;
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item:hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__item.is-active {
+  color: var(--phi-accent);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__divider {
+  background: rgba(5, 6, 8, 0.12);
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon {
+  color: #5b6670;
+}
+
+html[data-theme='light'] .yg-phi .yg-glass-nav__theme-icon:hover {
+  color: var(--phi-accent);
+}
+
+/* ==========================================================================
+   后台三区统一层：AI 网关 / 服务器管理 / 平台管理
+   - 三处共用「页头 + 分区导航 + 面板」同一套外壳节奏
+   - 只作用于 .yg-phi，不改变其它页面的既有观感
+   ========================================================================== */
+
+/* 页头：HUD 字体 + 青色悬停，与普通用户端页头同源 */
+.yg-phi .el-page-header__back {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .el-page-header__back:hover {
+  color: var(--phi-accent);
+}
+
+.yg-phi .el-page-header__content,
+.yg-phi .el-page-header__title {
+  color: var(--phi-ink);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.06em;
+}
+
+/* 紧凑页头（<1024 / 竖屏）：三区共用同一规格 */
+.yg-phi .ai-head__back,
+.yg-phi .server-head__back,
+.yg-phi .manage-head__back {
+  color: var(--phi-ink-3);
+}
+
+.yg-phi .ai-head__title,
+.yg-phi .server-head__title,
+.yg-phi .manage-head__title {
+  color: var(--phi-ink);
+  font-family: var(--phi-hud);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* 桌面分段控件：硬边 + 切角选中块，替掉 Element 默认的圆角胶囊。
+   暗色用 html[data-theme='dark'] 抬高优先级：body.yg-phi-portals 的
+   下划线分段样式会命中页内控件，必须压过它。 */
+html[data-theme='dark'] .yg-phi .el-segmented {
+  --el-segmented-bg-color: var(--phi-panel);
+  --el-segmented-color: var(--phi-ink-3);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-hover-color: var(--phi-ink);
+  --el-segmented-item-selected-bg-color: var(--phi-accent);
+  --el-segmented-item-selected-color: #041311;
+  --el-segmented-item-selected-disabled-bg-color: var(--phi-accent);
+  padding: 3px;
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: linear-gradient(120deg, var(--phi-panel-hi), var(--phi-panel));
+  box-shadow: inset 0 1px 0 rgba(244, 246, 248, 0.06);
+  /* 外框不再是被裁掉的矩形：大切角 + 小切角，和滑块的几何语言对齐 */
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    10px 100%,
+    0 calc(100% - 10px),
+    0 4px
+  );
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item {
+  border-radius: 0;
+  color: var(--phi-ink-3);
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item:not(.is-disabled):hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item.is-selected {
+  color: #041311;
+}
+
+html[data-theme='dark'] .yg-phi .el-segmented__item-selected {
+  border-radius: 0;
+  /* 不再是纯色块：斜向金属渐变 + 上下窄高光，滑块看起来像一片被打磨过的金属 */
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, var(--phi-accent) 72%, #ffffff) 0%,
+      var(--phi-accent) 32%,
+      color-mix(in srgb, var(--phi-accent) 88%, #04110f) 68%,
+      color-mix(in srgb, var(--phi-accent) 90%, #ffffff) 100%
+    );
+  clip-path: polygon(
+    0 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% 100%,
+    7px 100%,
+    0 calc(100% - 7px)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 0 14px rgba(73, 244, 226, 0.26);
+  /* 位移和宽度用同一套回弹曲线，换页签时滑块先窜出去再落位 */
+  transition:
+    transform 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    width 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    background-color 320ms var(--yg-ease-out),
+    box-shadow 320ms var(--yg-ease-out);
+}
+
+/* 紧凑胶囊导航：同一块玻璃材质 + 同一组切角。
+   body.yg-phi-portals 前缀用于压过各 SFC 的 scoped 胶囊圆角。 */
+body.yg-phi-portals .yg-phi .ai-tabs,
+body.yg-phi-portals .yg-phi .server-tabs,
+body.yg-phi-portals .yg-phi .manage-tabs {
+  padding: 4px;
+  border: 1px solid var(--phi-line);
+  border-radius: 0;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--phi-panel-hi) 72%, transparent),
+    color-mix(in srgb, var(--phi-panel) 82%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(244, 246, 248, 0.07),
+    0 8px 22px rgba(0, 0, 0, 0.32);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill,
+body.yg-phi-portals .yg-phi .server-tabs__pill,
+body.yg-phi-portals .yg-phi .manage-tabs__item {
+  border-radius: 0;
+  color: var(--phi-ink-3);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill:hover,
+body.yg-phi-portals .yg-phi .server-tabs__pill:hover,
+body.yg-phi-portals .yg-phi .manage-tabs__item:hover {
+  color: var(--phi-ink);
+  background: var(--phi-accent-soft);
+}
+
+body.yg-phi-portals .yg-phi .ai-tabs__pill.is-active,
+body.yg-phi-portals .yg-phi .server-tabs__pill.is-active,
+body.yg-phi-portals .yg-phi .manage-tabs__item.is-active {
+  color: var(--phi-accent);
+  background: var(--phi-accent-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--phi-accent) 36%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+/* 分段控件里的图标/文字：三区同字号、同列间距 */
+.yg-phi .ai-tabs__seg-item,
+.yg-phi .server-tabs__seg-item,
+.yg-phi .manage-tabs__seg-item {
+  font-family: var(--phi-hud);
+  letter-spacing: 0.04em;
+}
+
+/* 浅色模式卡片：白纸底 + 青色切角，后台三区与用户端同一材质 */
+html[data-theme='light'] .yg-phi .yg-card {
+  background: linear-gradient(120deg, #ffffff, #f8fbfc 62%, #f2f5f6);
+  border-color: rgba(5, 6, 8, 0.12);
+}
+
+html[data-theme='light'] .yg-phi .yg-card::before {
+  background: linear-gradient(var(--phi-accent), transparent 78%);
+}
+
+/* 浅色模式的分段控件：青底白字，边界靠细线而不是阴影 */
+html[data-theme='light'] .yg-phi .el-segmented {
+  --el-segmented-bg-color: #ffffff;
+  --el-segmented-color: var(--phi-ink-3);
+  --el-segmented-item-hover-bg-color: var(--phi-accent-soft);
+  --el-segmented-item-hover-color: var(--phi-ink);
+  --el-segmented-item-selected-bg-color: var(--phi-accent);
+  --el-segmented-item-selected-color: #ffffff;
+  --el-segmented-item-selected-disabled-bg-color: var(--phi-accent);
+  background: linear-gradient(120deg, #ffffff, var(--phi-panel-hi));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    10px 100%,
+    0 calc(100% - 10px),
+    0 4px
+  );
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item {
+  color: var(--phi-ink-3);
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item:not(.is-disabled):hover {
+  color: var(--phi-ink);
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item.is-selected,
+html[data-theme='light'] .yg-phi .el-segmented__item-selected {
+  color: #ffffff;
+}
+
+html[data-theme='light'] .yg-phi .el-segmented__item-selected {
+  /* 浅色：同一束斜向高光，但压暗端更浅，避免青底显脏 */
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, var(--phi-accent) 76%, #ffffff) 0%,
+      var(--phi-accent) 40%,
+      color-mix(in srgb, var(--phi-accent) 88%, #03110f) 100%
+    );
+  clip-path: polygon(
+    0 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% 100%,
+    7px 100%,
+    0 calc(100% - 7px)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
+    0 0 10px rgba(11, 159, 147, 0.22);
+  transition:
+    transform 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    width 440ms cubic-bezier(0.22, 1.22, 0.3, 1),
+    background-color 320ms var(--yg-ease-out),
+    box-shadow 320ms var(--yg-ease-out);
+}
+
+/* 滑块表面周期性掠光：低频、窄带，只做“金属反光”层次的细节动效 */
+.yg-phi .el-segmented__item-selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 22%,
+    rgba(255, 255, 255, 0.42) 46%,
+    rgba(255, 255, 255, 0.18) 54%,
+    transparent 74%
+  );
+  transform: translateX(-140%);
+  animation: phi-seg-glint 5200ms cubic-bezier(0.55, 0, 0.25, 1) 900ms infinite;
+}
+
+@keyframes phi-seg-glint {
+  0% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.9;
+  }
+  34% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+
+html[data-theme='light'] .yg-phi .ai-tabs,
+html[data-theme='light'] .yg-phi .server-tabs,
+html[data-theme='light'] .yg-phi .manage-tabs {
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, #ffffff 82%, transparent),
+    color-mix(in srgb, #eef2f4 76%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 18px rgba(5, 6, 8, 0.1);
+}

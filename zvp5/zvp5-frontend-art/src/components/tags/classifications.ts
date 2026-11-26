@@ -1,0 +1,91 @@
+import type { Component } from 'vue'
+import type {
+  ActivityType,
+  SpecialActivityClassification,
+  ActivityMode,
+  ActivityStatus,
+  MemberActivityStatus,
+  CreateActivityType
+} from '@/../types'
+import type { Activity } from '@/../types/v2'
+import { Vacation, School, CityGate, Star, Data, Other, Merge } from '@icon-park/vue-next'
+import { memberActivityStatuses } from '@/icons/status'
+import { Trophy, Upload, User } from '@element-plus/icons-vue'
+import { LucideWorkflow } from '@/icons'
+
+interface IconAndColor {
+  icon: Component
+  color: 'primary' | 'success' | 'warning' | 'danger' | 'info'
+  /** 标签自定义色系（目前仅义工模式使用），由 ZButtonTag 的 tone 透传 */
+  tone?: 'cyan' | 'violet' | 'magenta'
+}
+
+type set = 'mode' | 'status' | 'type' | 'member' | 'create'
+type typing =
+  | ActivityMode
+  | ActivityStatus
+  | ActivityType
+  | SpecialActivityClassification
+  | MemberActivityStatus
+  | CreateActivityType
+  | ''
+
+export default {
+  mode: {
+    'on-campus': {
+      icon: School,
+      color: 'primary',
+      tone: 'cyan'
+    },
+    'off-campus': {
+      icon: CityGate,
+      color: 'success',
+      tone: 'violet'
+    },
+    'social-practice': {
+      icon: Vacation,
+      color: 'warning',
+      tone: 'magenta'
+    },
+    hybrid: {
+      icon: Star,
+      // 红色只用于高危操作；混合模式用中性灰（准则第 5 章）
+      color: 'info'
+    }
+  } as Record<Activity['type'], IconAndColor>,
+  status: {
+    effective: memberActivityStatuses.effective
+  } as Record<ActivityStatus, IconAndColor>,
+  type: {
+    specified: {
+      color: 'primary',
+      icon: School
+    },
+    social: {
+      color: 'success',
+      icon: CityGate
+    },
+    scale: {
+      color: 'warning',
+      icon: Vacation
+    },
+    special: {
+      // 红色只用于高危操作；特殊类型用中性灰（准则第 5 章）
+      color: 'info',
+      icon: Star
+    }
+  } as Record<ActivityType, IconAndColor>,
+  create: {
+    normal: {
+      color: 'primary',
+      icon: LucideWorkflow
+    },
+    upload: {
+      color: 'warning',
+      icon: Upload
+    },
+  } as Record<CreateActivityType, IconAndColor>,
+  member: memberActivityStatuses as Record<MemberActivityStatus, IconAndColor>
+} as Record<set, Record<typing, IconAndColor>>
+
+export { type typing as TypeSet, type set as Set }

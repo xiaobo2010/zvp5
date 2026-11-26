@@ -1,0 +1,458 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  extractDelta,
+  extractReasoningDelta,
+  extractStreamError,
+  parseSseChunk,
+  streamChatCompletion
+} from './stream'
+import { abortAllAiRuns, activeAiRunCount, registerAiAbort } from './activeRuns'
+import { AiRequestError } from './errors'
+
+const { storeMock } = vi.hoisted(() => ({
+  storeMock: {
+    isLogin: true,
+    bannedNoticeAt: 0,
+    banReason: '',
+    banUntil: 0
+  }
+}))
+
+vi.mock('@/stores/user', () => ({ useUserStore: () => storeMock }))
+
+describe('SSE 帧解析', () => {
+  it('解析单帧并保留空缓冲', () => {
+    const state = parseSseChunk('', 'data: {"choices":[]}\n\n')
+    expect(state.events).toEqual(['{"choices":[]}'])
+    expect(state.buffer).toBe('')
+    expect(state.done).toBe(false)
+  })
+
+  it('把被切断的帧留在缓冲里，等下一段再拼', () => {
+    const first = parseSseChunk('', 'data: {"a":')
+    expect(first.events).toEqual([])
+    expect(first.buffer).toBe('data: {"a":')
+
+    const second = parseSseChunk(first.buffer, '1}\n\n')
+    expect(second.events).toEqual(['{"a":1}'])
+    expect(second.buffer).toBe('')
+  })
+
+  it('一次解析多帧连发', () => {
+    const state = parseSseChunk('', 'data: one\n\ndata: two\n\ndata: three\n\n')
+    expect(state.events).toEqual(['one', 'two', 'three'])
+    expect(state.done).toBe(false)
+  })
+
+  it('遇到 [DONE] 就停并清空缓冲', () => {
+    const state = parseSseChunk('', 'data: one\n\ndata: [DONE]\n\ndata: after\n\n')
+    expect(state.events).toEqual(['one'])
+    expect(state.done).toBe(true)
+    expect(state.buffer).toBe('')
+  })
+
+  it('忽略非 data 行与注释', () => {
+    const state = parseSseChunk('', ': keep-alive\nevent: message\nid: 7\ndata: payload\n\n')
+    expect(state.events).toEqual(['payload'])
+  })
+
+  it('只留残留缓冲，不吐事件', () => {
+    const state = parseSseChunk('', 'data: partial')
+    expect(state.events).toEqual([])
+    expect(state.buffer).toBe('data: partial')
+  })
+
+  it('兼容 CRLF 分帧', () => {
+    const state = parseSseChunk('', 'data: one\r\n\r\ndata: two\r\n\r\n')
+    expect(state.events).toEqual(['one', 'two'])
+  })
+})
+
+describe('增量文本提取', () => {
+  it('取 delta.content', () => {
+    expect(extractDelta('{"choices":[{"delta":{"content":"你好"}}]}')).toBe('你好')
+  })
+
+  it('取 message.content', () => {
+    expect(extractDelta('{"choices":[{"message":{"content":"答案"}}]}')).toBe('答案')
+  })
+
+  it('形状不认识或 JSON 坏了就当没有内容', () => {
+    expect(extractDelta('not json')).toBe('')
+    expect(extractDelta('{"choices":[]}')).toBe('')
+    expect(extractDelta('{}')).toBe('')
+  })
+})
+
+describe('思考增量提取', () => {
+  it('取 delta.reasoning_content', () => {
+    expect(extractReasoningDelta('{"choices":[{"delta":{"reasoning_content":"先查用户"}}]}')).toBe(
+      '先查用户'
+    )
+  })
+
+  it('同一帧里思考与正文各自可读', () => {
+    const frame = '{"choices":[{"delta":{"reasoning_content":"想一下","content":"答案"}}]}'
+    expect(extractReasoningDelta(frame)).toBe('想一下')
+    expect(extractDelta(frame)).toBe('答案')
+  })
+
+  it('没有 reasoning_content / 类型不对 / 坏帧都返回 undefined（不报错）', () => {
+    expect(extractReasoningDelta('{"choices":[{"delta":{"content":"答案"}}]}')).toBeUndefined()
+    expect(extractReasoningDelta('{"choices":[{"delta":{"reasoning_content":123}}]}')).toBeUndefined()
+    expect(extractReasoningDelta('{"choices":[]}')).toBeUndefined()
+    expect(extractReasoningDelta('not json')).toBeUndefined()
+  })
+})
+
+describe('流内错误帧', () => {
+  it('取出 {error: {code, message}}', () => {
+    expect(extractStreamError('{"error":{"code":"AI_TIMEOUT","message":"上游超时"}}')).toEqual({
+      code: 'AI_TIMEOUT',
+      message: '上游超时'
+    })
+  })
+
+  it('没有码时归到通用上游错误', () => {
+    expect(extractStreamError('{"error":{"message":"炸了"}}')).toEqual({
+      code: 'AI_UPSTREAM_ERROR',
+      message: '炸了'
+    })
+  })
+
+  it('普通增量帧 / 坏 JSON / 空 error 都不是错误帧', () => {
+    expect(extractStreamError('{"choices":[{"delta":{"content":"x"}}]}')).toBeNull()
+    expect(extractStreamError('not json')).toBeNull()
+    expect(extractStreamError('{"error":{}}')).toBeNull()
+  })
+})
+
+/** 最小 fetch 替身：只实现 stream.ts 用到的那几个字段。 */
+function fakeResponse(chunks: Array<string | Uint8Array>, requestId = 'req-1') {
+  let index = 0
+  const reader = {
+    async read() {
+      if (index >= chunks.length) {
+        return { done: true, value: undefined }
+      }
+      const item = chunks[index++]
+      return {
+        done: false,
+        value: typeof item === 'string' ? new TextEncoder().encode(item) : item
+      }
+    },
+    releaseLock() {}
+  }
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => (name === 'X-AI-Request-Id' ? requestId : null) },
+    body: { getReader: () => reader }
+  }
+}
+
+function stubFetch(response: unknown): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => response)
+  )
+}
+
+async function run(chunks: Array<string | Uint8Array>) {
+  stubFetch(fakeResponse(chunks))
+  return streamChatCompletion({
+    model: 'gpt-x',
+    messages: [{ role: 'user', content: 'hi' }]
+  })
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('审计场景头', () => {
+  it('传了 scene 就带上 X-AI-Scene（后端落 AI_CALL_LOGS.PURPOSE）', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      scene: 'markdown-assistant'
+    })
+
+    const init = (vi.mocked(fetch).mock.calls[0]![1] ?? {}) as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-AI-Scene']).toBe('markdown-assistant')
+    // 原有头不能因此丢失。
+    expect(headers['Content-Type']).toBe('application/json')
+    // 场景只走头，不进请求体（上游不认识这个字段）。
+    expect(String(init.body)).not.toContain('markdown-assistant')
+  })
+
+  it('没传 scene 就不带这个头', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+
+    const init = (vi.mocked(fetch).mock.calls[0]![1] ?? {}) as RequestInit
+    const headers = (init.headers ?? {}) as Record<string, string>
+    expect(headers['X-AI-Scene']).toBeUndefined()
+  })
+})
+
+describe('streamChatCompletion 收尾判定', () => {
+  it('思考增量单独累计，正文不受影响', async () => {
+    const thoughts: string[] = []
+    stubFetch(
+      fakeResponse([
+        'data: {"choices":[{"delta":{"reasoning_content":"先看"}}]}\n\n',
+        'data: {"choices":[{"delta":{"reasoning_content":"用户"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"结论"}}]}\n\n',
+        'data: [DONE]\n\n'
+      ])
+    )
+    const out = await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      onReasoningDelta: (delta) => thoughts.push(delta)
+    })
+
+    expect(out.reasoning).toBe('先看用户')
+    expect(out.text).toBe('结论')
+    expect(thoughts).toEqual(['先看', '用户'])
+  })
+
+  it('没有思考内容的流：reasoning 是空串，不报错', async () => {
+    const out = await run(['data: {"choices":[{"delta":{"content":"好"}}]}\n\n', 'data: [DONE]\n\n'])
+
+    expect(out.reasoning).toBe('')
+    expect(out.text).toBe('好')
+  })
+
+  it('收到 error 帧：保留已生成文本，error 有值且不算截断', async () => {
+    const out = await run([
+      'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
+      'data: {"error":{"code":"AI_UPSTREAM_REJECTED","message":"上游拒绝"}}\n\n',
+      'data: [DONE]\n\n'
+    ])
+    expect(out.text).toBe('你好')
+    expect(out.error).toEqual({ code: 'AI_UPSTREAM_REJECTED', message: '上游拒绝' })
+    expect(out.interrupted).toBe(false)
+    expect(out.done).toBe(false)
+  })
+
+  it('尾帧 [DONE] 后没有空行直接断流，也算正常结束', async () => {
+    const out = await run(['data: {"choices":[{"delta":{"content":"好"}}]}\n\n', 'data: [DONE]'])
+    expect(out.text).toBe('好')
+    expect(out.done).toBe(true)
+    expect(out.interrupted).toBe(false)
+    expect(out.error).toBeNull()
+  })
+
+  it('多字节字符被切成两段也能拼回来（收尾冲刷解码器）', async () => {
+    const bytes = new TextEncoder().encode(
+      'data: {"choices":[{"delta":{"content":"你好"}}]}\n\ndata: [DONE]\n\n'
+    )
+    // 切在「你」的第二、三个字节之间。
+    const cut = bytes.indexOf(0xe5) + 1
+    const out = await run([bytes.slice(0, cut), bytes.slice(cut)])
+    expect(out.text).toBe('你好')
+    expect(out.done).toBe(true)
+  })
+
+  it('200 但空 body：明确失败，不报「截断」', async () => {
+    stubFetch({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: null
+    })
+    const out = await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    expect(out.error).toEqual({ code: 'AI_UPSTREAM_ERROR', message: '' })
+    expect(out.interrupted).toBe(false)
+  })
+
+  it('没收到 [DONE] 也没收到 error：仍是截断', async () => {
+    const out = await run(['data: {"choices":[{"delta":{"content":"半"}}]}\n\n'])
+    expect(out.text).toBe('半')
+    expect(out.done).toBe(false)
+    expect(out.interrupted).toBe(true)
+    expect(out.error).toBeNull()
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   全局中止（封禁）：按「用户取消」收尾，不当网络错误
+   --------------------------------------------------------------------------- */
+
+function abortError(): DOMException {
+  return new DOMException('aborted', 'AbortError')
+}
+
+/** 一个会跟随 signal 中止的 fetch 替身：连接还没建立就中止。 */
+function pendingFetch() {
+  return vi.fn(
+    (_url: string, init: RequestInit = {}) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal as AbortSignal | undefined
+        if (!signal) {
+          return
+        }
+        if (signal.aborted) {
+          reject(abortError())
+          return
+        }
+        signal.addEventListener('abort', () => reject(abortError()), { once: true })
+      })
+  )
+}
+
+/** 发了一帧正文之后挂住，直到 signal 中止才 reject 的响应。 */
+function abortableResponse(signal: AbortSignal) {
+  const encoder = new TextEncoder()
+  let sent = false
+  const reader = {
+    read() {
+      if (!sent) {
+        sent = true
+        return Promise.resolve({
+          done: false,
+          value: encoder.encode('data: {"choices":[{"delta":{"content":"半"}}]}\n\n')
+        })
+      }
+      return new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(abortError())
+          return
+        }
+        signal.addEventListener('abort', () => reject(abortError()), { once: true })
+      })
+    },
+    releaseLock() {}
+  }
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: { getReader: () => reader }
+  }
+}
+
+describe('全局中止', () => {
+  it('连接建立前被中止：抛 AbortError，不当成网络错误', async () => {
+    vi.stubGlobal('fetch', pendingFetch())
+
+    const pending = streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    // 请求已发出、还挂在 fetch 上。
+    await Promise.resolve()
+    expect(activeAiRunCount()).toBe(1)
+
+    abortAllAiRuns('banned')
+
+    const error = await pending.catch((caught) => caught)
+    expect((error as Error).name).toBe('AbortError')
+    expect(error).not.toBeInstanceOf(AiRequestError)
+    // 收尾时注销：登记表不残留。
+    expect(activeAiRunCount()).toBe(0)
+  })
+
+  it('流到一半被中止：已收到的增量保留，收尾仍是 AbortError 且不登记残留', async () => {
+    const deltas: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit = {}) =>
+        abortableResponse(init.signal as AbortSignal)
+      )
+    )
+
+    const pending = streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }],
+      onDelta: (delta) => deltas.push(delta)
+    })
+    await vi.waitFor(() => expect(deltas).toEqual(['半']))
+
+    abortAllAiRuns()
+
+    const error = await pending.catch((caught) => caught)
+    expect((error as Error).name).toBe('AbortError')
+    expect(error).not.toBeInstanceOf(AiRequestError)
+    expect(activeAiRunCount()).toBe(0)
+  })
+
+  it('正常结束后不再持有中止登记：封禁不会去中止已完成的流', async () => {
+    stubFetch(fakeResponse(['data: [DONE]\n\n']))
+
+    const out = await streamChatCompletion({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+
+    expect(out.done).toBe(true)
+    expect(activeAiRunCount()).toBe(0)
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   流内封禁帧：响应头已是 200，拦截器看不见，走与 axios 相同的封禁扇出
+   --------------------------------------------------------------------------- */
+
+describe('流内 USER_BANNED 帧', () => {
+  it('命中同一套扇出：写 ban 状态并中止（含自身），错误帧照旧返回', async () => {
+    storeMock.isLogin = true
+    storeMock.bannedNoticeAt = 0
+    storeMock.banReason = ''
+    storeMock.banUntil = 0
+
+    // 额外登记一个中止点：证明封禁扇出真的喊了 abortAllAiRuns('banned')。
+    const onAbort = vi.fn()
+    const release = registerAiAbort(onAbort)
+
+    try {
+      const out = await run([
+        'data: {"choices":[{"delta":{"content":"你不"}}]}\n\n',
+        'data: {"error":{"code":"USER_BANNED","message":"账号已被封禁"}}\n\n'
+      ])
+
+      // 已收到的正文保留，错误码原样交给上层。
+      expect(out.text).toBe('你不')
+      expect(out.error).toEqual({ code: 'USER_BANNED', message: '账号已被封禁' })
+      expect(onAbort).toHaveBeenCalledWith('banned')
+      expect(storeMock.bannedNoticeAt).toBeGreaterThan(0)
+      // 封禁帧不带 ban 头时回落「空原因 + 永久」。
+      expect(storeMock.banReason).toBe('')
+      expect(storeMock.banUntil).toBe(0)
+    } finally {
+      release()
+    }
+  })
+
+  it('重复命中不重置倒计时（幂等）', async () => {
+    storeMock.bannedNoticeAt = 222
+
+    await run([
+      'data: {"error":{"code":"USER_BANNED","message":"还是封禁"}}\n\n',
+      'data: {"error":{"code":"USER_BANNED","message":"重复"}}\n\n'
+    ])
+
+    expect(storeMock.bannedNoticeAt).toBe(222)
+  })
+
+  it('非封禁错误帧不触发扇出', async () => {
+    storeMock.bannedNoticeAt = 0
+
+    await run(['data: {"error":{"code":"AI_UPSTREAM_REJECTED","message":"上游拒绝"}}\n\n'])
+
+    expect(storeMock.bannedNoticeAt).toBe(0)
+    expect(storeMock.banReason).toBe('')
+  })
+})

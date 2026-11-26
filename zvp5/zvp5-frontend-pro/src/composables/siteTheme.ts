@@ -24,6 +24,10 @@ const standaloneThemes: SiteTheme[] = [
     description: '经典 Phi 设计：暗色棱角、青色判定线与现有导航',
   },
   {
+    id: 'art', label: 'Art', status: 'experimental', base: '/themes/art/',
+    description: '艺术展画：全屏画作随义工进度逐像素显影',
+  },
+  {
     id: PRO_THEME_ID, label: 'Canary Pro', status: 'stable', base: '/themes/canary-pro/',
     description: 'Pro 工作台：独立左侧导航、液态玻璃卡片与工作台布局',
   },
