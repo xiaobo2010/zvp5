@@ -111,6 +111,13 @@ def test_body_and_switch_read_from_settings(monkeypatch) -> None:
 # 中间件实测
 # ---------------------------------------------------------------------------
 
+def test_default_body_is_neutral_and_switch_is_on(client) -> None:
+    response = client.get("/.env", headers=DIRSEARCH)
+
+    assert response.status_code == 200
+    assert response.text == "Not Found"
+
+
 def test_anonymous_scanner_gets_200_and_editable_body(monkeypatch, client) -> None:
     _enable(monkeypatch)
 
