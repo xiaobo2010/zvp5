@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+import app_setup
 import main
 from services import scanner_decoy
 from util.cert import jwt_encode
@@ -20,6 +23,14 @@ DIRSEARCH = {"User-Agent": "dirsearch/0.4.3"}
 class _NullLog:
     def __init__(self, **_kwargs) -> None:
         pass
+
+    async def insert_log(self) -> None:
+        return None
+
+
+class _CaptureLog:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
 
     async def insert_log(self) -> None:
         return None
@@ -136,6 +147,44 @@ def test_api_prefixed_scanner_path_matches(monkeypatch, client) -> None:
 
     assert response.status_code == 200
     assert response.text == "api decoy"
+
+
+def test_old_shield_path_pattern_is_converted_to_decoy(monkeypatch, client) -> None:
+    """``SEC_PATTERN`` 命中但字典没有的路径，也走诱饵而不是 418。"""
+    _enable(monkeypatch, "pattern decoy")
+
+    response = client.get("/api/system/legacy.sql", headers=MOZ)
+
+    assert response.status_code == 200
+    assert response.text == "pattern decoy"
+
+
+def test_decoy_hit_is_written_to_security_log(monkeypatch, client) -> None:
+    _enable(monkeypatch, "logged decoy")
+    captured: list[_CaptureLog] = []
+    monkeypatch.setattr(app_setup, "_spawn_security_audit", captured.append)
+    monkeypatch.setattr(main, "ZVMSLog", _CaptureLog)
+
+    response = client.get(
+        "/.env?probe=1",
+        headers={**DIRSEARCH, "Referer": "https://zvp.example/"},
+    )
+
+    assert response.status_code == 200
+    assert len(captured) == 1
+    log = captured[0].kwargs
+    payload = json.loads(log["data"])
+    assert payload["reason"] == "scanner_decoy"
+    assert payload["path"] == "/.env"
+    assert payload["query"] == "probe=1"
+    assert payload["method"] == "GET"
+    assert payload["referer"] == "https://zvp.example/"
+    assert "authorization" not in {key.lower() for key in payload["headers"]}
+    assert "dirsearch/0.4.3" in payload["headers"].values()
+    assert log["type"] == "security_alert"
+    assert log["level"] == "warning"
+    assert log["client_ip"]
+    assert log["user_agent"] == "dirsearch/0.4.3"
 
 
 def test_pro_referer_is_not_decoyed(monkeypatch, client) -> None:

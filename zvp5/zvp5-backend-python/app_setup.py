@@ -197,17 +197,71 @@ async def security_headers_middleware(request: Request, call_next):
 SHIELD_BLOCKED_MESSAGE = "您的请求被服务器判定为非法访问。已经记录您的IP和UA数据，管理员将进行安全追责。"
 
 
+def _decoy_audit_payload(
+    request: Request, *, reason: str, match: str | None
+) -> dict:
+    """诱捕日志只记请求侧证据，不把 Authorization/Cookie 写进日志。"""
+    headers: dict[str, str] = {}
+    for name, value in request.headers.items():
+        if name.lower() in {"authorization", "cookie", "set-cookie", "proxy-authorization"}:
+            continue
+        if len(headers) >= 32:
+            break
+        headers[name] = value[:512]
+    return {
+        "reason": reason,
+        "match": match,
+        "path": request.url.path,
+        "query": request.url.query,
+        "method": request.method,
+        "referer": request.headers.get("Referer"),
+        "origin": request.headers.get("Origin"),
+        "xff": request.headers.get("X-Forwarded-For"),
+        "content_type": request.headers.get("Content-Type"),
+        "content_length": request.headers.get("Content-Length"),
+        "accept": request.headers.get("Accept"),
+        "accept_language": request.headers.get("Accept-Language"),
+        "headers": headers,
+    }
+
+
+def _audit_scanner_decoy(
+    request: Request, *, reason: str, match: str | None = None
+) -> None:
+    """把命中诱饵的请求写进安全日志（后台写，不拖响应）。"""
+    try:
+        log_class = bindings.get("ZVMSLog", ZVMSLog)
+        _spawn_security_audit(
+            log_class(
+                url=request.url.path,
+                user="",
+                data=json.dumps(
+                    _decoy_audit_payload(request, reason=reason, match=match),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                timestamp=datetime.now().timestamp(),
+                type="security_alert",
+                level="warning",
+                xuehai_id=xuehai_id_from(request),
+                client_ip=client_ip_from(request),
+                user_agent=user_agent_from(request),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - 日志失败不能影响诱饵响应
+        _logger.warning("scanner decoy audit failed: %s", type(exc).__name__)
+
+
 async def shield_middleware(request: Request, call_next):
     """非浏览器 UA / 可疑路径 / 非法方法 → 418，并异步落后台审计。
 
     最外层先看「未登录目录扫描诱饵」：命中字典的匿名 GET/HEAD 直接回 200，
-    不进入 418 分支。诱饵只作用于 canary 根站，Pro 的 ``/themes/`` 请求放过。
+    不进入 418 分支。旧盾牌的 ``SEC_PATTERN`` 触发条件也并入诱饵：匿名 GET/HEAD
+    命中可疑路径时同样回 200 并记安全日志；UA / 方法检查仍保留 418 兜底。
+    诱饵只作用于 canary 根站，Pro 的 ``/themes/`` 请求放过。
 
     审计用的日志类走 :mod:`bindings` 取（测试在 ``main.ZVMSLog`` 上打桩）。
     """
-
-    if scanner_decoy.should_decoy(request):
-        return scanner_decoy.decoy_response()
 
     pattern_hit = SEC_PATTERN.search(request.url.path)
     bad_ua = (
@@ -215,6 +269,19 @@ async def shield_middleware(request: Request, call_next):
         and not request.url.path.startswith(AI_OPENAI_PREFIX)
     )
     bad_method = str(request.method).upper() not in allowed_methods
+    if scanner_decoy.should_decoy(request, shield_hit=bool(pattern_hit)):
+        reason = (
+            "scanner_decoy"
+            if scanner_decoy.is_scanner_path(request.url.path)
+            else "path_pattern"
+        )
+        _audit_scanner_decoy(
+            request,
+            reason=reason,
+            match=pattern_hit.group(0)[:64] if pattern_hit else None,
+        )
+        return scanner_decoy.decoy_response()
+
     if pattern_hit or bad_ua or bad_method:
         payload = {
             "reason": (

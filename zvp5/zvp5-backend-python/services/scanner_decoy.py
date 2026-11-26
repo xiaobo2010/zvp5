@@ -297,16 +297,22 @@ def is_canary_request(request: Request) -> bool:
     return True
 
 
-def should_decoy(request: Request) -> bool:
-    """命中即返回诱饵；所有条件都满足才生效。"""
+def should_decoy(request: Request, *, shield_hit: bool = False) -> bool:
+    """命中即返回诱饵；所有条件都满足才生效。
+
+    ``shield_hit`` 给旧盾牌中间件用：``SEC_PATTERN`` 命中时不再单独回 418。
+    公开入口/静态资源仍由白名单挡掉；UA / 方法检查仍由盾牌保留兜底。
+    """
     if request.method.upper() not in {"GET", "HEAD"}:
         return False
     if not _enabled():
         return False
     if not is_canary_request(request):
         return False
-    # 先做便宜的字典比对，再验 token：正常请求不应为每次鉴权多付一次 HMAC。
-    if not is_scanner_path(request.url.path):
+    # 先做便宜的白名单/字典比对，再验 token：正常请求不应为每次鉴权多付一次 HMAC。
+    if is_allowlisted(request.url.path):
+        return False
+    if not shield_hit and not is_scanner_path(request.url.path):
         return False
     return not is_authenticated(request)
 
