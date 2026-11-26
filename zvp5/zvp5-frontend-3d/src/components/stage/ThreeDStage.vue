@@ -771,8 +771,12 @@ function resetViewport() {
   // Reset zoom
   sceneScale.value = 1
 
+  // Snap every dragged card back to its layout position
+  cardOffsets.value = {}
+  draggingCard.value = null
+
   // Show feedback
-  actionMessage.value = '视角已复位'
+  actionMessage.value = '视角与卡片已复位'
   setTimeout(() => {
     actionMessage.value = ''
   }, 2200)
