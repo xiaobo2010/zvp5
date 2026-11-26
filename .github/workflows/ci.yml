@@ -86,7 +86,9 @@ jobs:
         with:
           node-version-file: ${{ env.NODE_VERSION_FILE }}
           cache: pnpm
-          cache-dependency-path: zvp5/zvp5-frontend/pnpm-lock.yaml
+          cache-dependency-path: |
+            zvp5/zvp5-frontend/pnpm-lock.yaml
+            zvp5/zvp5-frontend-art/pnpm-lock.yaml
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Run unit tests
@@ -97,6 +99,20 @@ jobs:
         run: pnpm run type-check
       - name: Production build
         run: pnpm run build
+      - name: Install Art theme dependencies
+        working-directory: zvp5/zvp5-frontend-art
+        run: pnpm install --frozen-lockfile
+      - name: Check Art theme
+        working-directory: zvp5/zvp5-frontend-art
+        run: |
+          pnpm exec vitest run src/utils/artHome.spec.ts
+          pnpm run lint
+          pnpm run type-check
+      - name: Build Art theme
+        working-directory: zvp5/zvp5-frontend-art
+        run: |
+          pnpm run design:sync
+          pnpm exec vite build --base=/themes/art/
       - name: Upload frontend build
         uses: actions/upload-artifact@v7
         with:
