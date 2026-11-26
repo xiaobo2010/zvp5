@@ -1126,6 +1126,8 @@ const logsQueryDraft = ref('')
 const logsLoading = ref(false)
 const logsError = ref('')
 const logsLoaded = ref(false)
+// 列表里的详情默认只显示两行；点开某条后不截断，完整展示 log.data。
+const expandedLogId = ref<string | null>(null)
 let logsSeq = 0
 
 const logsPages = computed(() => totalPages(logsTotal.value, LOG_PAGE_SIZE))
@@ -1186,6 +1188,10 @@ function logPerformer(log: AdminLog): string {
   if (log.user_id) return log.user_id
   if (log.user) return shortOid(log.user)
   return '未登录'
+}
+
+function toggleLogDetail(log: AdminLog) {
+  expandedLogId.value = expandedLogId.value === log._id ? null : log._id
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2424,7 +2430,13 @@ watch(activeTab, ensureTab, { immediate: true })
                 </BubbleFeedback>
                 <p v-if="!logs.length" class="empty-inline">没有匹配的日志。</p>
                 <ul v-else class="row-list" :class="{ 'is-loading': logsLoading }">
-                  <li v-for="log in logs" :key="log._id" class="row row--stacked">
+                  <li
+                    v-for="log in logs"
+                    :key="log._id"
+                    class="row row--stacked log-row"
+                    :class="{ 'is-expanded': expandedLogId === log._id }"
+                    @click="toggleLogDetail(log)"
+                  >
                     <div class="row__main">
                       <span class="row__title">
                         {{ log.type || '未分类日志' }}
@@ -2438,7 +2450,19 @@ watch(activeTab, ensureTab, { immediate: true })
                       <span v-if="log.data" class="row__detail" :title="log.data">
                         {{ log.data }}
                       </span>
+                      <span v-if="expandedLogId === log._id && log.url" class="row__detail log-row__url">
+                        URL：{{ log.url }}
+                      </span>
                     </div>
+                    <button
+                      type="button"
+                      class="ghost-button ghost-button--small"
+                      :aria-expanded="expandedLogId === log._id"
+                      :aria-label="`${expandedLogId === log._id ? '收起' : '查看'}日志详情`"
+                      @click.stop="toggleLogDetail(log)"
+                    >
+                      {{ expandedLogId === log._id ? '收起' : '详情' }}
+                    </button>
                   </li>
                 </ul>
                 <div class="pager" :key="logsPage">
@@ -3644,6 +3668,32 @@ select.input:focus-visible {
   font-size: var(--font-size-caption);
   color: var(--color-text-tertiary);
   line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+/* 日志行：默认两行摘要，点开后不再截断，完整展示 data（可换行/滚动）。 */
+.log-row {
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-smooth);
+}
+
+.log-row:hover {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.log-row.is-expanded {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.log-row.is-expanded .row__detail {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: pre-wrap;
+}
+
+.log-row__url {
+  color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 
