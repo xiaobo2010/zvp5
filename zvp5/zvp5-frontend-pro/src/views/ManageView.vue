@@ -912,8 +912,16 @@ const settingsSaveError = ref('')
 const settingsSaveNotice = ref('')
 const settingDrafts = ref<Record<string, SettingDraft>>({})
 
+// 扫描器诱饵只属于 canary 根站；Pro 管理台不展示这一组，避免两边各改一份。
+const SETTINGS_HIDDEN_GROUPS = new Set(['security'])
+const visibleSettings = computed(() =>
+  (settings.value?.items ?? []).filter(
+    (item) => !SETTINGS_HIDDEN_GROUPS.has(item.group || 'other')
+  )
+)
+
 const settingGroups = computed(() => {
-  const items = settings.value?.items ?? []
+  const items = visibleSettings.value
   const buckets = new Map<string, AdminSettingItem[]>()
   for (const item of items) {
     const group = item.group || 'other'
@@ -938,16 +946,15 @@ const settingGroups = computed(() => {
 })
 
 const editableSettingCount = computed(() =>
-  (settings.value?.items ?? []).filter((item) => isSettingEditable(item)).length
+  visibleSettings.value.filter((item) => isSettingEditable(item)).length
 )
 
 const readOnlySettingCount = computed(() =>
-  (settings.value?.items ?? []).filter((item) => !isSettingEditable(item)).length
+  visibleSettings.value.filter((item) => !isSettingEditable(item)).length
 )
 
 const settingChangedCount = computed(() =>
-  (settings.value?.items ?? []).filter((item) => isSettingEditable(item) && isSettingDirty(item))
-    .length
+  visibleSettings.value.filter((item) => isSettingEditable(item) && isSettingDirty(item)).length
 )
 
 function isSettingEditable(item: AdminSettingItem): boolean {
