@@ -558,8 +558,11 @@ jobs:
           check_url "$PROD_FRONTEND_HEALTH_URL"
           # 入口页 200 不等于可用：还要真正拉回 index 里引用的一条入口资源，
           # 防「HTML 与资源 origin 版本错位」这类健康盲区。
+          # 服务器对不带 ``Accept: text/html`` 的根路径请求会返回扫描诱饵正文
+          # （200 + text/plain），部署校验必须显式声明要 HTML，否则误判缺入口资源。
           entry_asset="$(curl -fsS --retry 3 --retry-delay 2 \
             -A 'Mozilla/5.0 (compatible; ZVP5-Deploy/1.0)' \
+            -H 'Accept: text/html' \
             "$PROD_FRONTEND_HEALTH_URL" | grep -oE 'https://[^" ]+assets/index-[^" ]+\.js' | head -1 || true)"
           [[ -n "$entry_asset" ]] || {
             echo "no entry asset URL found in $PROD_FRONTEND_HEALTH_URL" >&2
