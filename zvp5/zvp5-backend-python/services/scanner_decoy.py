@@ -305,9 +305,10 @@ def should_decoy(request: Request) -> bool:
         return False
     if not is_canary_request(request):
         return False
-    if is_authenticated(request):
+    # 先做便宜的字典比对，再验 token：正常请求不应为每次鉴权多付一次 HMAC。
+    if not is_scanner_path(request.url.path):
         return False
-    return is_scanner_path(request.url.path)
+    return not is_authenticated(request)
 
 
 def decoy_response() -> PlainTextResponse:
