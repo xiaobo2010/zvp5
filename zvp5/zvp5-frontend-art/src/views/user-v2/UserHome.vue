@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useStorage } from '@vueuse/core'
 import { RouterLink } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ART_PIECES, getArtPiece, getArtProgress, revealRgb, stableHash } from '@/utils/artHome'
@@ -8,7 +9,7 @@ import type { ArtProgress } from '@/utils/artHome'
 const user = useUserStore()
 const canvas = ref<HTMLCanvasElement | null>(null)
 const imageFailed = ref(false)
-const fullFrame = ref(false)
+const fullFrame = useStorage('zv.art.full-frame', false)
 const busy = ref(false)
 const status = ref('')
 const seed = computed(() => (user.isLogin ? stableHash(user._id || String(user.id)) : 20261125))
@@ -164,7 +165,7 @@ onBeforeUnmount(() => {
       </p>
     </aside>
     <footer class="art-controls">
-      <button type="button" class="art-control" @click="fullFrame = !fullFrame">
+      <button type="button" class="art-control" :aria-pressed="fullFrame" @click="fullFrame = !fullFrame">
         {{ fullFrame ? '铺满画面' : '看全幅' }}
       </button>
       <button
