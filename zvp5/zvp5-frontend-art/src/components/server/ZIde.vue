@@ -7,7 +7,7 @@ import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { Check, Close, Document, EditPen, MagicStick, Sort, View } from '@element-plus/icons-vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/editor/editor.all.js'
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import editorWorkerUrl from 'monaco-editor/esm/vs/editor/editor.worker?worker&url'
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
 import 'monaco-editor/esm/vs/basic-languages/python/python.contribution'
 import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution'
@@ -89,7 +89,8 @@ const LANGUAGE_LABELS: Record<string, string> = {
 // worker 只走 editor 自带的那一个(语法高亮出自 basic-languages,不需要语言服务 worker)。
 // CSP 是 script-src 'self':?worker 在生产构建里产出同源 js 资产,不是 blob/inline。
 ;(globalThis as unknown as { MonacoEnvironment: { getWorker: () => Worker } }).MonacoEnvironment = {
-  getWorker: () => new EditorWorker()
+  // Both production machines receive the same dist. Worker construction requires the page origin.
+  getWorker: () => new Worker(new URL(editorWorkerUrl, window.location.href).pathname)
 }
 
 // monaco 0.52 的 basic-languages 里没有 json(那是 language service 的地盘),

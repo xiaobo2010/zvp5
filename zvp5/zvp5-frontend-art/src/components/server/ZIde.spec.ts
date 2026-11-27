@@ -68,16 +68,7 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api', () => ({
 
 vi.mock('monaco-editor/esm/vs/editor/editor.all.js', () => ({}))
 
-vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({
-  default: class EditorWorkerStub {
-    postMessage() {
-      return undefined
-    }
-    terminate() {
-      return undefined
-    }
-  }
-}))
+vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker&url', () => ({ default: '/assets/editor.worker.js' }))
 
 vi.mock('monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution', () => ({}))
 vi.mock('monaco-editor/esm/vs/basic-languages/python/python.contribution', () => ({}))

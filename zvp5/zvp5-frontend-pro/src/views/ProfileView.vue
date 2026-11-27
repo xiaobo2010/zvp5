@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { themePageBase } from '../composables/themePageBase'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -20,7 +21,7 @@ import AppearanceSettings from '@/components/AppearanceSettings.vue'
 import BubbleFeedback from '@/components/BubbleFeedback.vue'
 
 const router = useRouter()
-const themePickerUrl = import.meta.env.BASE_URL === '/'
+const themePickerUrl = themePageBase === '/'
   ? 'https://canary.xiaobopisces.top/themes/canary-pro/?choose-theme'
   : '?choose-theme'
 

@@ -1,3 +1,4 @@
+import { themePageBase } from './themePageBase'
 import { API_BASE } from '@/api/http'
 
 const THEME_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -127,7 +128,7 @@ export async function loadSiteThemes(signal: AbortSignal): Promise<SiteTheme[]> 
 }
 
 export function currentSiteTheme(themes: SiteTheme[]): string {
-  const base = import.meta.env.BASE_URL
+  const base = themePageBase
   // A standalone Pro build also uses '/', which belongs to Canary on the shared host.
   return themes.find((theme) => theme.base !== '/' && theme.base === base)?.id ?? PRO_THEME_ID
 }
@@ -139,7 +140,7 @@ export function siteThemeDestination(theme: SiteTheme): string {
 }
 
 export function switchesSiteOrigin(): boolean {
-  return import.meta.env.BASE_URL === '/' && window.location.origin !== CANARY_ORIGIN
+  return themePageBase === '/' && window.location.origin !== CANARY_ORIGIN
 }
 
 export function readSiteTheme(): string | null {

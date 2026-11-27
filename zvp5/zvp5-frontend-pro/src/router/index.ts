@@ -1,9 +1,10 @@
+import { themePageBase } from '../composables/themePageBase'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { isLoggedIn } from '@/api/canary'
 import { hasAnyRole } from '@/api/permissions'
 
 const router = createRouter({
-  history: createWebHashHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(themePageBase),
   routes: [
     {
       path: '/',

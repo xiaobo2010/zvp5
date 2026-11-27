@@ -38,12 +38,12 @@ export function resolveRouterBase(pageBase: string | undefined): string {
   const pathname = new URL(raw).pathname || '/'
   return pathname.endsWith('/') ? pathname : `${pathname}/`
 }
-const assetBase = import.meta.env.BASE_URL
+const themeBase = import.meta.env.VITE_THEME_PAGE_BASE || import.meta.env.BASE_URL
 const router = createRouter({
   history:
-    assetBase === '/'
+    themeBase === '/'
       ? createWebHistory(resolveRouterBase(import.meta.env.VITE_PAGE_BASE))
-      : createWebHashHistory(assetBase),
+      : createWebHashHistory(themeBase),
   routes: [
     {
       path: '/',

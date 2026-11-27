@@ -389,19 +389,7 @@ jobs:
         run: |
           set -euo pipefail
           node zvp5/deployment/build-theme-apps.mjs
-          # 清单里每个非默认主题都必须真的产出了 index.html，避免构建器
-          # 静默跳过某个主题后生产仍指向一个 404 目录。
-          node - <<'NODE'
-          const fs = require('node:fs')
-          const path = require('node:path')
-          const root = 'zvp5/zvp5-frontend/dist'
-          const manifest = JSON.parse(fs.readFileSync(path.join(root, 'themes.json'), 'utf8'))
-          for (const theme of manifest.themes) {
-            if (theme.id === manifest.default) continue
-            const entry = path.join(root, theme.base.replace(/^\//, ''), 'index.html')
-            if (!fs.existsSync(entry)) throw new Error(`missing theme entry: ${entry}`)
-          }
-          NODE
+          node .github/scripts/verify-theme-delivery.mjs
 
       - name: Package deployment artifacts
         shell: bash
@@ -585,6 +573,7 @@ jobs:
             exit 1
           }
           check_url "$entry_asset"
+          node .github/scripts/verify-theme-delivery.mjs --live
           check_url "$API_HEALTH_URL"
           check_url "$RACE_API_HEALTH_URL"
 
