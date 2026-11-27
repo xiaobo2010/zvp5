@@ -94,7 +94,6 @@ watch(
 )
 onMounted(() => {
   alive = true
-  document.documentElement.classList.add('art-home-route')
   loadArtwork()
   if (user.isLogin)
     void user.getUserActivityTime().catch(() => {
@@ -104,7 +103,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   alive = false
   sequence++
-  document.documentElement.classList.remove('art-home-route')
   if (picture) {
     picture.onload = null
     picture.onerror = null
@@ -123,7 +121,6 @@ onBeforeUnmount(() => {
         :aria-label="`义工完成情况画作；${progress.map((item) => `${item.label}${percent(item.ratio)}`).join('，')}`"
       />
       <div v-if="imageFailed" class="art-stage__fallback">画作暂时无法显示</div>
-      <div class="art-stage__shade" aria-hidden="true"></div>
     </div>
     <header class="art-topline">
       <RouterLink class="art-wordmark" to="/" aria-label="Art 首页">ZV <i>·</i> ART</RouterLink>

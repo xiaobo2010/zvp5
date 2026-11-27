@@ -458,6 +458,7 @@ watch([width, height], ([w, h]) => {
 })
 
 // Phi 主题：整个应用（普通用户端 + 后台三个管理区）统一挂 .yg-phi 类
+const isArtHome = computed(() => route.name === 'home' || route.name === 'user')
 const isPhiRoute = computed(() => {
   const path = route.path
   return (
@@ -640,7 +641,8 @@ onUnmounted(() => {
           :lock-scroll="false"
           @ack="finalizeBan"
         />
-        <div :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
+        <RouterView v-if="isArtHome" />
+        <div v-else :class="['yg-layout', 'yg-layout--app', { 'yg-phi': isPhiRoute }]">
           <UserNav v-if="userStore.isLogin && route.path !== '/' && route.path !== '/user'" />
           <div class="yg-layout__main">
             <main :class="['yg-layout__content', { 'is-portrait': verticalMode && userStore.isLogin }]">
