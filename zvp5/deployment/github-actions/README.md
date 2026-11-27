@@ -181,4 +181,6 @@ bash ./test-deploy-wrapper.sh
 
 ### 生产主题静态分发
 
-**警告：** `production` 和 `production-auto` 的 `PROD_STATIC_BASE` 应保持 `https://zvpapi.xiaobopisces.top/`。改成 `/` 或页面域会让资源回流页面服务器。`PROD_API_BASE=/api` 是独立的同源 API 配置。子主题 HTML 和 hash 路由挂在页面域 `/themes/<id>/`，编译资源走静态域已有 CORS 的 `/assets/themes/<id>/`。两个主机必须部署同一份产物。发布流程检查入口脚本的域、版本、MIME 和 CORS，失败时进入回滚。
+**警告：** `production` 和 `production-auto` 的 `PROD_STATIC_BASE` 应保持 `https://zvpapi.xiaobopisces.top/`。改成 `/` 或页面域会让资源回流页面服务器。`PROD_API_BASE=/api` 是独立的同源 API 配置。子主题 HTML 和 hash 路由挂在页面域 `/themes/<id>/`，编译资源走静态域已有 CORS 的 `/assets/themes/<id>/`。两个主机必须部署同一份产物。发布流程检查主题入口与深链接、入口脚本的域、版本、MIME 和 CORS，失败时进入回滚。
+
+主题深链接（如 `/themes/art/me`）由 nginx 捕获主题 id 后回落到该主题自己的 `index.html`；不要改成根站 `/index.html`。主题构建器会删除子主题 Service Worker，Monaco worker 在运行时改用页面源 `/assets/themes/<id>/...` 路径，满足 `worker-src 'self'`。这两处是刻意的同源约束，不能跟随静态域 CDN 化。
