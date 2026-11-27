@@ -13,8 +13,8 @@
  *
  * 环境变量（CI 的 preview job 已按根应用注入）：
  *   VITE_API_BASE          必需，正式 API 基址，会写进子应用 index.html 的 meta
- *   VITE_API_RACE_BASE     可选，默认同 VITE_API_BASE
- *   VITE_API_CONTENT_BASE  可选，默认同 VITE_API_BASE
+ *   VITE_API_RACE_BASE     可选，未设置或不是绝对 HTTPS URL 时不透传（同源由主题自行推导）
+ *   VITE_API_CONTENT_BASE  可选，未设置或不是绝对 HTTPS URL 时不透传（同源由主题自行推导）
  *
  * 用法：
  *   node zvp5/deployment/build-theme-apps.mjs              # 完整构建
@@ -309,11 +309,29 @@ function main() {
     fail('VITE_API_BASE is required')
   }
   const apiBase = apiBaseRaw.replace(/\/+$/, '')
-  const buildEnv = {
-    ...process.env,
-    VITE_API_BASE: apiBase,
-    VITE_API_RACE_BASE: process.env.VITE_API_RACE_BASE || apiBaseRaw,
-    VITE_API_CONTENT_BASE: process.env.VITE_API_CONTENT_BASE || apiBaseRaw
+  const buildEnv = { ...process.env, VITE_API_BASE: apiBase }
+
+  // 子应用对这两个基址的校验比根应用严：一旦出现在环境里就必须是绝对 HTTPS URL。
+  // 生产是同源部署（VITE_API_BASE=/api），把相对基址当默认值塞进去会让主题构建
+  // 直接报 "must be an absolute URL"。留空时主题运行时按页面源推导（pageOrigin +
+  // /api），同源语义不变；只有真的是绝对地址才透传给子应用。
+  for (const name of ['VITE_API_RACE_BASE', 'VITE_API_CONTENT_BASE']) {
+    const configured = (process.env[name] || '').trim()
+    const candidate = configured || apiBase
+    let absolute = false
+    if (candidate) {
+      try {
+        absolute = new URL(candidate).protocol === 'https:'
+      } catch {
+        absolute = false
+      }
+    }
+    if (absolute) {
+      buildEnv[name] = candidate
+    } else {
+      // 继承来的相对值也必须删掉，否则子应用仍会读到它并报错。
+      delete buildEnv[name]
+    }
   }
 
   finalizeApp(manifest.themes.find((theme) => theme.id === manifest.default), apiBase)
