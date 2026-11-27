@@ -1,3 +1,8 @@
+/* The shared Phi layout draws a fixed vignette on every inner route, pale in light mode. */
+.yg-layout.yg-phi::after {
+  content: none;
+}
+
 .art-home {
   --art-ink: #f5f0e7;
   --art-muted: rgb(245 240 231 / 68%);

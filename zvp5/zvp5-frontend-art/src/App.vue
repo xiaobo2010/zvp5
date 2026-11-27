@@ -462,7 +462,6 @@ const isArtHome = computed(() => route.name === 'home' || route.name === 'user')
 const isPhiRoute = computed(() => {
   const path = route.path
   return (
-    path === '/user' ||
     path.startsWith('/user/') ||
     path.startsWith('/activities') ||
     path.startsWith('/activity/') ||
@@ -530,6 +529,8 @@ watch(
   isPhiRoute,
   (value) => {
     document.body.classList.toggle('yg-phi-portals', value)
+    if (value) startPhiEdgePhase()
+    else stopPhiEdgePhase()
   },
   { immediate: true }
 )
@@ -538,8 +539,6 @@ onUnmounted(() => {
   document.body.classList.remove('yg-phi-portals')
   stopPhiEdgePhase()
 })
-
-onMounted(startPhiEdgePhase)
 
 const locales: Record<
   (typeof locale)['value'],
