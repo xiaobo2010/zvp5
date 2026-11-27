@@ -29,6 +29,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -214,7 +215,7 @@ function finalizeApp(theme, apiBase) {
   }
 
   for (const name of readdirSync(target)) {
-    if (name === 'sw.js' || name === 'sw.js.map' || name.startsWith('workbox-')) {
+    if (theme.base !== '/' && (name === 'sw.js' || name === 'sw.js.map' || name.startsWith('workbox-'))) {
       rmSync(path.join(target, name), { force: true })
     }
   }
@@ -404,10 +405,15 @@ function main() {
         })
       }
 
-      // 主题子应用不需要类型检查/PWA 重新生成；base 决定它挂在同域的哪个路径。
-      run(theme.build.command[0], [...theme.build.command.slice(1), `--base=${theme.base}`], {
+      // Serve compiled files under the static host's existing CORS-enabled /assets/ location.
+      // Keep navigation on the page origin, including when Vite emits absolute CDN URLs.
+      const staticBase = buildEnv.VITE_STATIC_BASE || '/'
+      const split = staticBase !== '/'
+      const staticDir = `assets/themes/${theme.id}/`
+      const assetBase = split ? new URL(staticDir, staticBase).href : theme.base
+      run(theme.build.command[0], [...theme.build.command.slice(1), `--base=${assetBase}`], {
         cwd: sourceDir,
-        env: buildEnv
+        env: { ...buildEnv, VITE_THEME_PAGE_BASE: theme.base }
       })
 
       const builtDist = path.join(sourceDir, 'dist')
@@ -419,6 +425,13 @@ function main() {
       mkdirSync(path.dirname(target), { recursive: true })
       cpSync(builtDist, target, { recursive: true })
       finalizeApp(theme, apiBase)
+      if (split) {
+        const delivery = path.join(MAIN_DIST, staticDir)
+        mkdirSync(delivery, { recursive: true })
+        for (const name of readdirSync(target)) {
+          if (name !== 'index.html') renameSync(path.join(target, name), path.join(delivery, name))
+        }
+      }
       log(`${theme.id} ready at ${path.relative(REPO_ROOT, target)}`)
     }
 

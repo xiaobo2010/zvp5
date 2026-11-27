@@ -1,3 +1,4 @@
+import { themePageBase } from './composables/themePageBase'
 import { createApp } from 'vue'
 
 import App from './App.vue'
@@ -5,7 +6,7 @@ import router from './router'
 import './styles/base.css'
 
 // 静态托管只有根站回落时，旧 history 深链接改写到当前子应用的 hash 路由。
-const base = import.meta.env.BASE_URL
+const base = themePageBase
 const prefix = base === '/' ? '' : base.replace(/\/$/, '')
 const rest = window.location.pathname.startsWith(`${prefix}/`)
   ? window.location.pathname.slice(prefix.length + 1)

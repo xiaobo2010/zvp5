@@ -178,3 +178,7 @@ The test uses temporary directories and fake `systemctl`/`curl` commands:
 ```bash
 bash ./test-deploy-wrapper.sh
 ```
+
+### 生产主题静态分发
+
+**警告：** `production` 和 `production-auto` 的 `PROD_STATIC_BASE` 应保持 `https://zvpapi.xiaobopisces.top/`。改成 `/` 或页面域会让资源回流页面服务器。`PROD_API_BASE=/api` 是独立的同源 API 配置。子主题 HTML 和 hash 路由挂在页面域 `/themes/<id>/`，编译资源走静态域已有 CORS 的 `/assets/themes/<id>/`。两个主机必须部署同一份产物。发布流程检查入口脚本的域、版本、MIME 和 CORS，失败时进入回滚。
