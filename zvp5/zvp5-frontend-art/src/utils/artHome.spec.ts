@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { ART_PIECES, artChannelRatios, getArtPiece, getArtProgress, revealRgb, stableHash } from './artHome'
+import {
+  ART_PIECES,
+  artChannelRatios,
+  getArtPiece,
+  getArtProgress,
+  artPixelOrder,
+  createArtFrame,
+  stableHash
+} from './artHome'
 
 describe('Art home assets and reveal', () => {
   it('assigns the same image to the same account', () => {
@@ -56,9 +64,47 @@ describe('Art home assets and reveal', () => {
       { key: 'off' as const, label: 'off', value: 1, target: 1, ratio: 1 },
       { key: 'social' as const, label: 'social', value: 0, target: 1, ratio: 0 }
     ]
-    const first = revealRgb(source, 2, 1, progress, stableHash('account'))
-    const second = revealRgb(source, 2, 1, progress, stableHash('account'))
+    const first = createArtFrame(
+      source,
+      artPixelOrder(2, 1, stableHash('account')),
+      progress
+    ).pixels
+    const second = createArtFrame(
+      source,
+      artPixelOrder(2, 1, stableHash('account')),
+      progress
+    ).pixels
     expect([...first]).toEqual([...second])
     expect([...first]).toEqual([20, 40, 60, 255, 100, 120, 250, 255])
+  })
+  it('keeps the exact number of altered pixels even at the handover and across cycles', () => {
+    const order = artPixelOrder(41, 47, 123)
+    const source = new Uint8ClampedArray(order.length * 4).fill(250)
+    const frame = createArtFrame(
+      source,
+      order,
+      getArtProgress({ onCampus: 12, offCampus: 7, socialPractice: 8 })
+    )
+    const count = () =>
+      order.reduce(
+        (n, i) =>
+          n +
+          Number(
+            frame.pixels[i * 4] !== 250 ||
+              frame.pixels[i * 4 + 1] !== 250 ||
+              frame.pixels[i * 4 + 2] !== 250
+          ),
+        0
+      )
+    const initial = count()
+    const before = frame.pixels.slice()
+    for (let i = 0; i < 3; i++) {
+      const tick = frame.beginBreath()!
+      for (const phase of [0, 0.25, 0.49, 0.5, 0.51, 0.75, 1]) {
+        tick(phase)
+        expect(count()).toBe(initial)
+      }
+    }
+    expect(frame.pixels).not.toEqual(before)
   })
 })

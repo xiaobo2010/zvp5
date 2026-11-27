@@ -3,13 +3,21 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { RouterLink } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { ART_PIECES, getArtPiece, getArtProgress, revealRgb, stableHash } from '@/utils/artHome'
+import {
+  ART_PIECES,
+  getArtPiece,
+  getArtProgress,
+  artPixelOrder,
+  createArtFrame,
+  stableHash
+} from '@/utils/artHome'
 import type { ArtProgress } from '@/utils/artHome'
 
 const user = useUserStore()
 const canvas = ref<HTMLCanvasElement | null>(null)
 const imageFailed = ref(false)
 const fullFrame = useStorage('zv.art.full-frame', false)
+const breathing = useStorage('zv.art.breathing', false)
 const busy = ref(false)
 const status = ref('')
 const seed = computed(() => (user.isLogin ? stableHash(user._id || String(user.id)) : 20261125))
@@ -34,39 +42,89 @@ const totalHours = computed(() =>
   ).toLocaleString('zh-CN', { maximumFractionDigits: 1 })
 )
 let picture: HTMLImageElement | null = null
+let source: ImageData | null = null
+let frame: ReturnType<typeof createArtFrame> | null = null
+let displayed: ImageData | null = null
 let sequence = 0
 let alive = false
+let timer = 0
+let raf = 0
+let animatePair: ((phase: number) => void) | null = null
 
-function render() {
-  const target = canvas.value
-  const ctx = target?.getContext('2d', { willReadFrequently: true })
-  if (!target || !ctx || !picture || !picture.complete) return
-  const width = Math.min(768, picture.naturalWidth)
-  const height = Math.max(1, Math.round((picture.naturalHeight * width) / picture.naturalWidth))
-  target.width = width
-  target.height = height
-  ctx.imageSmoothingEnabled = false
-  ctx.drawImage(picture, 0, 0, width, height)
-  try {
-    const source = ctx.getImageData(0, 0, width, height).data
-    const data = revealRgb(source, width, height, progress.value, seed.value)
-    ctx.putImageData(new ImageData(data, width, height), 0, 0)
-    imageFailed.value = false
-  } catch {
-    imageFailed.value = true
+function draw() {
+  if (displayed) canvas.value?.getContext('2d')?.putImageData(displayed, 0, 0)
+}
+function stopBreath() {
+  clearTimeout(timer)
+  cancelAnimationFrame(raf)
+  if (animatePair) {
+    animatePair(1)
+    animatePair = null
+    draw()
   }
+}
+function scheduleBreath() {
+  stopBreath()
+  if (!alive || !breathing.value || document.hidden || !frame) return
+  timer = window.setTimeout(
+    () => {
+      animatePair = frame?.beginBreath() ?? null
+      if (!animatePair) return
+      const start = performance.now()
+      let lastDraw = -Infinity
+      function tick(now: number) {
+        if (!animatePair) return
+        const phase = Math.min(1, (now - start) / 1800)
+        if (now - lastDraw >= 50 || phase === 1) {
+          animatePair(phase)
+          draw()
+          lastDraw = now
+        }
+        if (phase < 1) raf = requestAnimationFrame(tick)
+        else {
+          animatePair = null
+          scheduleBreath()
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    },
+    4500 + Math.random() * 3500
+  )
+}
+function render() {
+  stopBreath()
+  if (!source) return
+  const order = artPixelOrder(source.width, source.height, seed.value)
+  frame = createArtFrame(source.data, order, progress.value)
+  displayed = new ImageData(frame.pixels, source.width, source.height)
+  draw()
+  scheduleBreath()
 }
 function loadArtwork() {
   const ticket = ++sequence
-  if (picture) {
-    picture.onload = null
-    picture.onerror = null
-  }
+  stopBreath()
+  source = frame = displayed = null
+  if (picture) picture.onload = picture.onerror = null
   const image = new Image()
   picture = image
+  image.crossOrigin = 'anonymous'
   image.decoding = 'async'
   image.onload = () => {
-    if (alive && ticket === sequence) render()
+    const target = canvas.value
+    const ctx = target?.getContext('2d')
+    if (!alive || ticket !== sequence || !target || !ctx) return
+    // Bound both axes on tablets, including narrow portrait originals.
+    const scale = Math.min(1, 768 / Math.max(image.naturalWidth, image.naturalHeight))
+    target.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    target.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    ctx.drawImage(image, 0, 0, target.width, target.height)
+    try {
+      source = ctx.getImageData(0, 0, target.width, target.height)
+      imageFailed.value = false
+      render()
+    } catch {
+      imageFailed.value = true
+    }
   }
   image.onerror = () => {
     if (ticket === sequence) imageFailed.value = true
@@ -86,15 +144,12 @@ async function refresh() {
     busy.value = false
   }
 }
-watch(
-  [() => artwork.value.src, progress, seed],
-  () => {
-    if (alive) loadArtwork()
-  },
-  { deep: true }
-)
+watch(() => artwork.value.src, loadArtwork)
+watch([progress, seed], render)
+watch(breathing, scheduleBreath)
 onMounted(() => {
   alive = true
+  document.addEventListener('visibilitychange', scheduleBreath)
   loadArtwork()
   if (user.isLogin)
     void user.getUserActivityTime().catch(() => {
@@ -103,6 +158,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   alive = false
+  document.removeEventListener('visibilitychange', scheduleBreath)
+  stopBreath()
   sequence++
   if (picture) {
     picture.onload = null
@@ -165,8 +222,21 @@ onBeforeUnmount(() => {
       </p>
     </aside>
     <footer class="art-controls">
-      <button type="button" class="art-control" :aria-pressed="fullFrame" @click="fullFrame = !fullFrame">
+      <button
+        type="button"
+        class="art-control"
+        :aria-pressed="fullFrame"
+        @click="fullFrame = !fullFrame"
+      >
         {{ fullFrame ? '铺满画面' : '看全幅' }}
+      </button>
+      <button
+        type="button"
+        class="art-control"
+        :aria-pressed="breathing"
+        @click="breathing = !breathing"
+      >
+        呼吸{{ breathing ? '：开' : '：关' }}
       </button>
       <button
         v-if="user.isLogin"

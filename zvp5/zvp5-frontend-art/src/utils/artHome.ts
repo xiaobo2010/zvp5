@@ -87,53 +87,88 @@ export function artChannelRatios(progress: ArtProgress[]): number[] {
   return progress.map(({ ratio }) => ratio + 0.2 * mean * (1 - ratio))
 }
 
-// Deterministic, hard-edged RGB reveal. Each pixel/channel is either painted or unpainted.
-export function revealRgb(
-  source: Uint8ClampedArray,
-  width: number,
-  height: number,
-  progress: ArtProgress[],
-  seed: number
-): Uint8ClampedArray {
-  const output = new Uint8ClampedArray(width * height * 4)
-  output.fill(255)
-  const ranks = new Uint32Array(width * height)
-  for (let i = 0; i < ranks.length; i++) ranks[i] = i
+// Store positions in reveal order. Consecutive ordinals form small paper tiles.
+export function artPixelOrder(width: number, height: number, seed: number): Uint32Array {
+  const tile = 4
+  const cols = Math.ceil(width / tile)
+  const blocks = Uint32Array.from({ length: cols * Math.ceil(height / tile) }, (_, i) => i)
   let state = seed >>> 0
-  const random = () => {
+  for (let i = blocks.length - 1; i > 0; i--) {
     state = (state + 0x6d2b79f5) >>> 0
     let value = state
     value = Math.imul(value ^ (value >>> 15), value | 1)
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
-    return (value ^ (value >>> 14)) >>> 0
-  }
-  // Shuffle 4px blocks, then reveal every pixel inside a block in row-major order.
-  const tile = 4
-  const blocks: number[] = []
-  for (let y = 0; y < height; y += tile)
-    for (let x = 0; x < width; x += tile) blocks.push(y * width + x)
-  for (let i = blocks.length - 1; i > 0; i--) {
-    const j = random() % (i + 1)
+    const j = ((value ^ (value >>> 14)) >>> 0) % (i + 1)
     ;[blocks[i], blocks[j]] = [blocks[j]!, blocks[i]!]
   }
-  let ordinal = 0
-  for (const origin of blocks) {
-    const x0 = origin % width
-    const y0 = Math.floor(origin / width)
-    for (let y = y0; y < Math.min(height, y0 + tile); y++)
-      for (let x = x0; x < Math.min(width, x0 + tile); x++) ranks[y * width + x] = ordinal++
+  const order = new Uint32Array(width * height)
+  let next = 0
+  for (const block of blocks) {
+    const x0 = (block % cols) * tile
+    const y0 = Math.floor(block / cols) * tile
+    for (let y = y0; y < Math.min(y0 + tile, height); y++)
+      for (let x = x0; x < Math.min(x0 + tile, width); x++) order[next++] = y * width + x
   }
-  const total = width * height
-  // Crisp paper tone for pixels that have not been revealed yet.
-  const ratios = artChannelRatios(progress)
-  const unpainted = 250
-  for (let i = 0; i < total; i++) {
-    const offset = i * 4
-    const rank = ranks[i]! / total
-    for (let channel = 0; channel < 3; channel++) {
-      output[offset + channel] = rank < ratios[channel]! ? source[offset + channel]! : unpainted
+  return order
+}
+
+export function createArtFrame(
+  source: Uint8ClampedArray,
+  order: Uint32Array,
+  progress: ArtProgress[]
+) {
+  const pixels = new Uint8ClampedArray(source)
+  const cutoffs = artChannelRatios(progress).map((ratio) => Math.ceil(ratio * order.length))
+  const normal = Math.min(...cutoffs)
+  function paint(pixel: number, ordinal: number, strength: number) {
+    const start = pixel * 4
+    for (let c = 0; c < 3; c++) {
+      const original = source[start + c]!
+      // Keep even near-paper source pixels distinct while this mask owns them.
+      const delta = original === 250 ? -1 : 250 - original
+      pixels[start + c] =
+        ordinal < cutoffs[c]! || strength === 0
+          ? original
+          : original + Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) * strength))
     }
-    output[offset + 3] = 255
   }
-  return output
+  for (let i = normal; i < order.length; i++) paint(order[i]!, i, 1)
+
+  function beginBreath(random = Math.random) {
+    const count = Math.min(normal, order.length - normal, Math.ceil(order.length * 0.012))
+    if (!count) return null
+    // Sample short runs so neighbouring pixels move together. The sets exclude overlaps.
+    function sample(start: number, length: number) {
+      const positions = new Set<number>()
+      // In a very small pool use a circular walk instead of repeated random retries.
+      while (positions.size < count) {
+        const first = Math.floor(random() * length)
+        for (let j = 0; j < length && positions.size < count; j++) {
+          const pos = start + ((first + j) % length)
+          if (!positions.has(pos)) {
+            positions.add(pos)
+            if (j >= 15) break
+          }
+        }
+      }
+      return [...positions]
+    }
+    const clear = sample(0, normal)
+    const masked = sample(normal, order.length - normal)
+    return (phase: number) => {
+      // Fade towards the source, hand the mask over at its faintest, then fade back.
+      // Exactly one pixel in each pair is abnormal on every displayed frame.
+      const handover = phase >= 0.5
+      const distance = Math.abs(2 * phase - 1)
+      const strength = Math.max(Number.EPSILON, distance * distance * (3 - 2 * distance))
+      for (let i = 0; i < count; i++) {
+        const a = clear[i]!,
+          b = masked[i]!
+        paint(order[a]!, b, handover ? strength : 0)
+        paint(order[b]!, b, handover ? 0 : strength)
+        if (phase === 1) [order[a], order[b]] = [order[b]!, order[a]!]
+      }
+    }
+  }
+  return { pixels, beginBreath }
 }
