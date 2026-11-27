@@ -13,12 +13,13 @@
 .art-stage {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  /* Size the replaced canvas against the viewport, independent of its intrinsic aspect ratio. */
   overflow: hidden;
   background: #171814;
 }
 .art-stage__canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -32,6 +33,9 @@
   opacity: 0;
 }
 .art-stage__fallback {
+  inset: 0;
+  display: grid;
+  place-content: center;
   position: absolute;
   color: var(--art-muted);
   font-size: 14px;
