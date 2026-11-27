@@ -81,6 +81,12 @@ export function getArtProgress(time: {
   ]
 }
 
+// Only the painting gets a lift. The progress panel keeps the actual hour ratios.
+export function artChannelRatios(progress: ArtProgress[]): number[] {
+  const mean = progress.reduce((sum, item) => sum + item.ratio, 0) / 3
+  return progress.map(({ ratio }) => ratio + 0.2 * mean * (1 - ratio))
+}
+
 // Deterministic, hard-edged RGB reveal. Each pixel/channel is either painted or unpainted.
 export function revealRgb(
   source: Uint8ClampedArray,
@@ -119,13 +125,13 @@ export function revealRgb(
   }
   const total = width * height
   // Crisp paper tone for pixels that have not been revealed yet.
+  const ratios = artChannelRatios(progress)
   const unpainted = 250
   for (let i = 0; i < total; i++) {
     const offset = i * 4
     const rank = ranks[i]! / total
     for (let channel = 0; channel < 3; channel++) {
-      const item = progress[channel]!
-      output[offset + channel] = rank < item.ratio ? source[offset + channel]! : unpainted
+      output[offset + channel] = rank < ratios[channel]! ? source[offset + channel]! : unpainted
     }
     output[offset + 3] = 255
   }
