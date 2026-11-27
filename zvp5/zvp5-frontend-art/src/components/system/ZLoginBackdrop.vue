@@ -26,8 +26,6 @@ interface Palette {
   cyan: string
   pink: string
   warm: string
-  vignette: string
-  vignetteAlpha: number
   ring: string
   line: string
   glowCyan: number
@@ -48,8 +46,6 @@ function paletteFor(theme: BackdropTheme): Palette {
       cyan: '#007a70',
       pink: '#c2185b',
       warm: '#b45309',
-      vignette: '#d7e4e7',
-      vignetteAlpha: 0.62,
       ring: 'rgba(0, 122, 112, 0.16)',
       line: 'rgba(5, 6, 8, 0.14)',
       glowCyan: 0.11,
@@ -66,8 +62,6 @@ function paletteFor(theme: BackdropTheme): Palette {
     cyan: '#49f4e2',
     pink: '#ff4e9b',
     warm: '#ff7a3c',
-    vignette: '#020304',
-    vignetteAlpha: 0.9,
     ring: 'rgba(73, 244, 226, 0.14)',
     line: 'rgba(73, 244, 226, 0.16)',
     glowCyan: 0.14,
@@ -106,11 +100,6 @@ function buildBackdrop(theme: BackdropTheme): string {
       <stop offset="0.58" stop-color="${c.bg2}"/>
       <stop offset="1" stop-color="${c.bg1}"/>
     </linearGradient>
-    <radialGradient id="vignette" cx="50%" cy="44%" r="72%">
-      <stop offset="0" stop-color="${c.vignette}" stop-opacity="0"/>
-      <stop offset="0.64" stop-color="${c.vignette}" stop-opacity="0"/>
-      <stop offset="1" stop-color="${c.vignette}" stop-opacity="${c.vignetteAlpha}"/>
-    </radialGradient>
     <radialGradient id="glowCyan" cx="50%" cy="50%" r="50%">
       <stop offset="0" stop-color="${c.cyan}" stop-opacity="${c.glowCyan}"/>
       <stop offset="1" stop-color="${c.cyan}" stop-opacity="0"/>
@@ -144,7 +133,6 @@ function buildBackdrop(theme: BackdropTheme): string {
   <circle cx="240" cy="780" r="420" fill="url(#glowPink)"/>
   <rect width="1440" height="900" fill="url(#grid)"/>
   <rect width="1440" height="900" fill="url(#scan)"/>
-  <rect width="1440" height="900" fill="url(#vignette)"/>
 
   <g fill="none" stroke="${c.ring}" stroke-width="1.2">
     <circle cx="${cx}" cy="${cy}" r="${r}"/>
