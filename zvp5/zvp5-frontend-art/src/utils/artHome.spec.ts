@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ART_PIECES, getArtPiece, getArtProgress, revealRgb, stableHash } from './artHome'
+import { ART_PIECES, artChannelRatios, getArtPiece, getArtProgress, revealRgb, stableHash } from './artHome'
 
 describe('Art home assets and reveal', () => {
   it('assigns the same image to the same account', () => {
@@ -32,6 +32,23 @@ describe('Art home assets and reveal', () => {
     ).toEqual([1, 1, 1])
   })
 
+  it('lifts every intermediate channel conservatively and preserves both endpoints', () => {
+    for (const onCampus of [0, 2, 12, 25, 32]) {
+      for (const offCampus of [0, 8, 15, 17]) {
+        for (const socialPractice of [0, 8, 18]) {
+          const progress = getArtProgress({ onCampus, offCampus, socialPractice })
+          const lifted = artChannelRatios(progress)
+          progress.forEach(({ ratio }, i) => {
+            expect(lifted[i]).toBeGreaterThanOrEqual(ratio)
+            expect(lifted[i]! - ratio).toBeLessThanOrEqual(2 / 15 + 1e-10)
+            expect(lifted[i] === 1).toBe(ratio === 1)
+          })
+          if (!onCampus && !offCampus && !socialPractice) expect(lifted).toEqual([0, 0, 0])
+        }
+      }
+    }
+  })
+
   it('reveals RGB channels as crisp pixels without partial blending', () => {
     const source = new Uint8ClampedArray([20, 40, 60, 255, 100, 120, 140, 255])
     const progress = [
@@ -42,6 +59,6 @@ describe('Art home assets and reveal', () => {
     const first = revealRgb(source, 2, 1, progress, stableHash('account'))
     const second = revealRgb(source, 2, 1, progress, stableHash('account'))
     expect([...first]).toEqual([...second])
-    expect([...first]).toEqual([20, 40, 250, 255, 250, 120, 250, 255])
+    expect([...first]).toEqual([20, 40, 60, 255, 100, 120, 250, 255])
   })
 })
