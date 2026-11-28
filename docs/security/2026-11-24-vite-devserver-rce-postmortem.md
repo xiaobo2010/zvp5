@@ -297,8 +297,9 @@ SSH/TLS 一度无响应。`Restart=on-failure` 让 node 不断重启，攻击者
 - [ ] 上线端口/进程/文件完整性监控：**出现 dev server 监听即告警**；
 - [ ] 收敛提权链：`www-data → sudo systemctl start <backup>.service` 这类规则换成独立账号，
       或把解释器移出可写目录；
-- [ ] 若前端为双 origin 回源（CDN 同时回两台），CI 的 frontend 角色必须覆盖两台，
-      或收敛到单一回源，否则发布会造成版本分裂。
+- [ ] CDN 多 origin 时，发布流程必须把前端包送到**每一个** origin。本项目 CI 已覆盖：
+      frontend 包同时上传到前端源站和后端机（`zvp.` 的 HTML 由后端机本地 `frontend-dist` 提供），
+      发布后应校验各 origin 的 `assets/index-*.js` 哈希一致。
 
 ### P2
 
