@@ -261,7 +261,9 @@ prepare_backend_venv() {
   PREPARED_VENV="$new_venv"
   run_service_command "$BACKEND_DIR/.venv/bin/python" -m venv --clear "$new_venv"
   run_service_command "$new_venv/bin/pip" install \
-    --disable-pip-version-check --no-input -r "$staging/requirements.txt"
+    --disable-pip-version-check --no-input \
+    --timeout 60 --retries 3 --prefer-binary \
+    -r "$staging/requirements.txt"
 }
 
 activate_backend_venv() {
