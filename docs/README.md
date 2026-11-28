@@ -10,6 +10,7 @@
 | `docs/history/LEGACY_CODE_NOTES.md` | 旧平台（Python+Redis+MongoDB）开发笔记归档 |
 | `docs/history/UPSTREAM_FRONTEND_TECH_REPORT.md` | 上游 zvms4-frontend 技术报告快照（MongoDB 时代） |
 | `docs/contributing/ONBOARDING_INTERVIEW.md` | 新人能力自省 / 面谈题库 |
+| `docs/security/2026-11-24-vite-devserver-rce-postmortem.md` | 2026-11 公开复盘：Vite dev server 以 root 暴露导致主机失陷（已脱敏） |
 | `../zvp5/docs/README.md` | 设计、契约、运维文档索引 |
 | `../zvp5/README.md` | 平台源码目录说明 |
 | `../zvp5/deployment/README.md` | 部署配置索引（systemd / nginx / GitHub Actions / 预览 Worker） |

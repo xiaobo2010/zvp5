@@ -2,6 +2,8 @@
 
 本仓库是公开仓库（public）。请在提交 Issue 前先读本页。
 
+历次安全事件复盘见 [`docs/security/`](docs/security/)。
+
 ## 一、报告漏洞
 
 **不要用公开 Issue、讨论区或 PR 报告漏洞。**
