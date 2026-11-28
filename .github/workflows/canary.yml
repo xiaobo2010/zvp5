@@ -22,9 +22,9 @@ on:
     # 白名单在目录改名、产物挪位、或分支结构与 main 不一致时会**静默漏掉**
     # 部署——2026-11-15 canary 因为只认 zvp5/zvp5-frontend/** 而三周没更新，
     # 看起来像「CI 自动部署没生效」。
+    # 只忽略 Markdown：`**/*.txt` 会把 requirements.txt 一起吃掉（同 ci.yml 的坑）。
     paths-ignore:
       - "**/*.md"
-      - "**/*.txt"
   workflow_dispatch:
 
 permissions:

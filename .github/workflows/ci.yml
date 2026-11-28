@@ -5,11 +5,12 @@ on:
   push:
     branches:
       - main
-    # 纯文档提交不跑门禁：私有库按 job 时长计费，一次全量约 20 分钟。
+    # 纯文档提交不跑门禁：一次全量约 20 分钟。只忽略 Markdown，别再按
+    # `**/*.txt` 一刀切 —— requirements.txt / services/scanner_paths.txt 是
+    # 真实输入，曾被这条规则连带跳过（依赖升级合进 main 后没跑门禁）。
     # release 事件不受影响，发版照样走完整门禁。
     paths-ignore:
       - "**/*.md"
-      - "**/*.txt"
       # 纯参考归档：不参与构建、不被导入，改它不该跑全部门禁。
       - "reference/**"
   release:
