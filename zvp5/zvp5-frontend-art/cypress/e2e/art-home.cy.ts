@@ -21,9 +21,16 @@ describe('Art volunteer canvas landing', () => {
     const checkFrame = (width: number, height: number) => {
       cy.get('.art-stage__canvas').should(($el) => {
         const el = $el[0]!
+        expect(el.width).to.be.greaterThan(0)
+        expect(el.height).to.be.greaterThan(0)
         const rect = el.getBoundingClientRect()
-        expect([rect.x, rect.y, rect.width, rect.height]).to.deep.equal([0, 0, width, height])
-        expect(getComputedStyle(el).objectFit).to.equal('contain')
+        const scale = Math.min(width / el.width, height / el.height)
+        const expectedWidth = el.width * scale
+        const expectedHeight = el.height * scale
+        expect(rect.width).to.be.closeTo(expectedWidth, 1)
+        expect(rect.height).to.be.closeTo(expectedHeight, 1)
+        expect(rect.x).to.be.closeTo((width - expectedWidth) / 2, 1)
+        expect(rect.y).to.be.closeTo((height - expectedHeight) / 2, 1)
       })
     }
     checkFrame(1024, 768)
