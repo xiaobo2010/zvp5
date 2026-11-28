@@ -59,22 +59,15 @@ on rollback. Frontend files are owned by `www:www` by default; override with
 
 ## GitHub Environment configuration
 
-Create an Environment named `production` and restrict it to the release-tag
-pattern used by this repository. Do not add required reviewers if the approved
-policy remains automatic deployment after publishing a release.
+`production` requires approval from `xiaobo2010` and disallows administrator
+bypass. Keep production SSH credentials in protected environments and restrict
+deployments to the repository's release-tag pattern. Older refs may still use
+`production-auto`, which has the same approval requirements.
 
-The release gate is only as strong as who can create tags and releases. Before
-enabling this pipeline, add a repository ruleset that restricts creation and
-deletion of `refs/tags/*` to the release managers (or admins only). Anyone with
-push access must not be able to publish a tag, because publishing a
-non-prerelease Release is equivalent to authorizing a production deployment.
-If the policy is not fully automatic, add required reviewers to the
-`production` Environment instead of relying on tag protection alone.
-
-Keep all CI jobs visible but not required in branch protection for now. Merging
-to `main` does not deploy. Before creating a release, make sure the tag points to
-a commit that passed CI. Publishing the release starts the complete quality and
-security pipeline again before deployment.
+Repository collaborators with write access can push to `main` when the active
+branch rules permit direct updates. Keep deletion and force-push protection.
+Before creating a release, make sure the tag points to a commit that passed CI.
+Publishing the release starts the complete quality and security pipeline again.
 
 Environment Variables:
 
@@ -114,8 +107,9 @@ Environment Secrets:
    release. Saving a draft does not deploy; publishing a release marked as a
    prerelease is rejected by the deployment job. Manual workflow dispatch runs
    CI only and cannot bypass the release gate.
-3. Watch the `Deploy production` job. Its summary records the release tag,
-   commit SHA, and deployment ID.
+3. `xiaobo2010` reviews the pending `production` deployment in the Actions run.
+   After approval, the `Deploy production` job records the release tag, commit
+   SHA, and deployment ID in its summary.
 4. If required, roll back explicitly on the servers in frontend-then-backend
    order:
 

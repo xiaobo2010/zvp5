@@ -140,7 +140,9 @@ def test_department_specs_expose_only_volunteer_tools_and_help() -> None:
     """
     names = [spec["function"]["name"] for spec in tools.tool_specs(DEPARTMENT)]
 
-    assert len(names) == 12
+    # 17 = 活动域 11 + 专用管理 3（create/update/review）+ 用户检索 1
+    #      + 班级归属 1 + 平台帮助。
+    assert len(names) == 17
     assert set(names) == tools.VOLUNTEER_TOOL_NAMES | {tools.PLATFORM_HELP_TOOL}
     assert not [name for name in names if name.startswith(("fs_", "db_", "ssh_"))]
 

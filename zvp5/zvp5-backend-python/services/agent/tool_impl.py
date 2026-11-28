@@ -21,13 +21,25 @@ import json
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from db import backends
+from fastapi import HTTPException
+
+from db import backends, cache
+from db.ids import InvalidOid, is_valid_oid, normalize_oid
+from db.oracle.session import session_scope
 from util.activity_statistics import describe_durations, to_mcp_statistics
 from util.calculate import calculate_user_time
 from util.dual_auth import audit_system_op
+from util.group import get_user_permissions
+from util.permission import volunteer
+from util.user import user_profile
+from util.validation import (
+    validate_activity_description,
+    validate_activity_name,
+    validate_activity_place,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -64,6 +76,13 @@ MCP_ACTIVITY_DETAIL_KEYS = (
 
 # 写工具的成员状态封闭集合（与 ``activities_router.PutMemberStatus`` 同值）。
 MEMBER_STATUSES = ("effective", "pending", "refused")
+
+#: 审核动作只允许「通过 / 驳回」——``pending`` 不是一次审核的结果。
+REVIEW_STATUSES = ("effective", "refused")
+
+#: 账号角色白名单（与 ``users_router.AllowedRole`` 同值），只用于只读检索的
+#: 角色过滤；本模块**不提供**角色写入/建号能力（见 tools_domain 的说明）。
+ROLE_WHITELIST = ("student", "secretary", "department", "admin")
 
 _STATUS_LABELS = {"effective": "生效", "pending": "待审核", "refused": "已驳回"}
 
@@ -482,22 +501,389 @@ async def apply_member_status(
     }
 
 
+# ---------------------------------------------------------------------------
+# 义工管理专用写工具的数据层
+#
+# 与通用 ``db_update`` 的根本差别：**身份字段只能由服务端派生**。活动创建人、
+# 负责人、审核人都取当前操作者（``user["id"]``），工具没有接受这些字段的参数，
+# 模型即使想伪造也无处可传。写入复用活动域既有仓储与校验函数（``validate_*``、
+# ``repo.create`` / ``repo.cas_status``），不重写活动生命周期规则。
+# ---------------------------------------------------------------------------
+
+_AUDIT_ACTIVITY_CREATE = "activity_create"
+_AUDIT_ACTIVITY_UPDATE = "activity_update"
+
+
+def _oid_arg(value: object, name: str) -> str:
+    """24 位 hex oid → 小写；非法报 400（工具层不抛 ``HTTPException``）。"""
+    text = str(value or "").strip()
+    try:
+        return normalize_oid(text)
+    except InvalidOid:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT", f"{name} must be a 24-char hex oid", 400
+        ) from None
+
+
+def _parse_moment(value: object, name: str) -> datetime:
+    """ISO-8601 字符串/``datetime`` → 朴素本地时间；非法报 400。"""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise AgentError(
+                "AI_AGENT_BAD_ARGUMENT", f"{name} is required (ISO-8601)", 400
+            )
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            raise AgentError(
+                "AI_AGENT_BAD_ARGUMENT",
+                f"{name} must be an ISO-8601 timestamp (e.g. 2026-01-31T12:00:00)",
+                400,
+            ) from None
+    # 项目约定朴素时间（与 db_content._coerce_value 同口径）：带偏移的输入按
+    # UTC 归一成 naive，避免驱动按会话时区二次换算。
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+async def _invalidate_activity_cache(activity_id: str) -> None:
+    """提交后失效活动详情缓存与活动 epoch。
+
+    为什么这里要手动做：``review_activity`` 在**调用方事务**里使用仓储
+    （``get_for_update`` 要求 caller-owned session），此时 ``CachedActivitiesRepo``
+    的 ``_use_cache`` 为 False，它新增的 ``cas_status`` 失效分支**刻意不执行**
+    ——事务提交前删 key 会让读路径把旧值重新灌回缓存。所以失效必须等到
+    ``session_scope`` 提交之后再补，key 形态与
+    ``db.cached_repos._k("activity", oid)``（``zvms:activity:<oid>``）一致。
+
+    缓存不可用时这些调用是 no-op；失败只记 warning，不改已完成的业务结论。
+    """
+    try:
+        await cache.forget(f"{cache.NS}:activity:{normalize_oid(activity_id)}")
+        await cache.bump_epoch("activities")
+    except Exception:  # noqa: BLE001 - 缓存失效是旁路
+        _logger.warning(
+            "活动 %s 审核后失效缓存失败，保留旧值至 TTL", activity_id, exc_info=True
+        )
+
+
+async def create_activity(
+    user: dict,
+    *,
+    name: str,
+    description: str,
+    activity_type: str,
+    date_value: object,
+    place: str = "",
+) -> dict:
+    """建活动（``status=pending``）。创建人/负责人由服务端派生为当前操作者。"""
+    if activity_type not in ACTIVITY_TYPES:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"type must be one of: {', '.join(ACTIVITY_TYPES)}",
+            400,
+        )
+    clean_place = str(place or "")
+    for validator, value in (
+        (validate_activity_name, name),
+        (validate_activity_description, description),
+        (validate_activity_place, clean_place),
+    ):
+        valid, reason = validator(value)
+        if not valid:
+            raise AgentError("AI_AGENT_BAD_ARGUMENT", reason, 400)
+
+    when = _parse_moment(date_value, "date_value")
+    creator = str(user.get("id") or "")
+    if not creator:
+        raise AgentError("AI_AGENT_FORBIDDEN", "actor is required", 403)
+
+    async with session_scope() as session:
+        async with session.begin():
+            repo = backends.get_activities_repo(session)
+            oid = await repo.create(
+                name,
+                description,
+                activity_type,
+                creator,
+                creator,
+                "activities",
+                when,
+            )
+            if clean_place:
+                await repo.update(oid, {"place": clean_place})
+
+    await _audit_member_write(
+        user,
+        "agent_activity_create",
+        f"activity={oid} name={name} type={activity_type} creator={creator}",
+        _AUDIT_ACTIVITY_CREATE,
+    )
+    return {
+        "id": str(oid),
+        "name": name,
+        "type": activity_type,
+        "date": when.isoformat(),
+        "status": "pending",
+        "creator": creator,
+        "appointee": creator,
+        "place": clean_place,
+    }
+
+
+async def update_activity_info(
+    user: dict, *, activity_id: str, name: str, description: str
+) -> dict:
+    """改活动名称/描述（与 ``PUT /activities/{id}/info`` 同字段集）。
+
+    只接受 name/description：创建人、审核人、状态都不在参数里，避免把“改信息”
+    变成改写归属的入口。
+    """
+    oid = _oid_arg(activity_id, "activity_id")
+    for validator, value in (
+        (validate_activity_name, name),
+        (validate_activity_description, description),
+    ):
+        valid, reason = validator(value)
+        if not valid:
+            raise AgentError("AI_AGENT_BAD_ARGUMENT", reason, 400)
+
+    repo = backends.get_activities_repo()
+    if await repo.get(oid) is None:
+        raise AgentError("AI_AGENT_NOT_FOUND", "activity not found", 404)
+    await repo.update(
+        oid, {"name": name, "description": description, "updatedAt": datetime.now()}
+    )
+    await _audit_member_write(
+        user,
+        "agent_activity_update",
+        f"activity={oid} name={name}",
+        _AUDIT_ACTIVITY_UPDATE,
+    )
+    return {"id": oid, "name": name, "description": description}
+
+
+def _schedule_activity_time_refresh(activity_id: str) -> None:
+    """审核成功后重算受影响成员的时长（与 REST 审核端点同一实现）。
+
+    局部导入 ``routers.activities_router``：它是这条业务逻辑的唯一实现，但 router
+    层会 import 整个应用依赖链，放在模块顶层会把工具注册拖进 Web 层（且形成环）。
+    失败只记 warning——审核已提交，缓存旧值最多等到每日全量。
+    """
+    try:
+        from routers.activities_router import _schedule_user_time_refresh
+
+        _schedule_user_time_refresh(activity_id)
+    except Exception:  # noqa: BLE001 - 重算是旁路
+        _logger.warning(
+            "活动 %s 审核后调度时长重算失败，保留缓存旧值", activity_id, exc_info=True
+        )
+
+
+async def review_activity(
+    user: dict, *, activity_id: str, status: str
+) -> dict:
+    """审核活动：``pending → effective/refused``，审核人由服务端写为当前操作者。
+
+    与 REST 审核端点（``routers/activities_router.modify_activity_status_v2``）
+    共用同一套业务规则，只是把边界收得更紧：
+
+    * 权限用 ``volunteer.validate_check_permission(strict=True)``，且 **per 取自同一
+      事务里锁定的当前用户行**（``get_for_update`` 不经过读穿缓存）——撤权/降级
+      在确认时立刻生效，不吃 token 快照；
+    * Agent **只审核 ``pending``**：提案生成后状态若被他人推进，确认时直接 409，
+      不会用旧提案把已生效的活动改成别的状态（不静默覆盖）；
+    * 读在 ``get_for_update`` 行锁内完成，写用期望状态 CAS，提交后再失效缓存并
+      调度时长重算。
+    """
+    oid = _oid_arg(activity_id, "activity_id")
+    if status not in REVIEW_STATUSES:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"status must be one of: {', '.join(REVIEW_STATUSES)}",
+            400,
+        )
+    actor = str(user.get("id") or "")
+    if not actor:
+        raise AgentError("AI_AGENT_FORBIDDEN", "actor is required", 403)
+
+    async with session_scope() as session:
+        async with session.begin():
+            repo = backends.get_activities_repo(session)
+            current = await repo.get_for_update(oid)
+            if current is None:
+                raise AgentError("AI_AGENT_NOT_FOUND", "activity not found", 404)
+
+            # 现查库（transaction-bound，无缓存）重算操作者权限，再走与 REST 相同的
+            # 审核权限函数；复制一份角色判断会随策略漂移。
+            actor_row = await backends.get_users_repo(session).get_by_oid(actor)
+            if actor_row is None:
+                raise AgentError("AI_AGENT_FORBIDDEN", "权限不足", 403)
+            live_user = {
+                **user,
+                "per": list(await get_user_permissions(actor_row) or []),
+            }
+            try:
+                await volunteer.validate_check_permission(
+                    live_user, current, strict=True
+                )
+            except HTTPException as exc:
+                raise AgentError(
+                    "AI_AGENT_FORBIDDEN", str(exc.detail), 403
+                ) from None
+
+            expected = str(current.get("status") or "")
+            if expected != "pending":
+                # Agent 不做“推翻已生效审核”的动作：那需要人工在工作台确认。
+                raise AgentError(
+                    "AI_AGENT_CONFLICT",
+                    "only pending activities can be reviewed by the agent; "
+                    "refresh and handle it manually",
+                    409,
+                )
+            fields: dict[str, object] = {
+                "status": status,
+                "updatedAt": datetime.now(),
+                # 审核人 = 当前操作者。模型没有 approver 参数，伪造不了。
+                "approver": actor,
+            }
+            changed = await repo.cas_status(oid, expected, fields)
+            if not changed:
+                raise AgentError(
+                    "AI_AGENT_CONFLICT",
+                    "activity status was modified by someone else; refresh and retry",
+                    409,
+                )
+
+    # 事务里用的是 use_cache=False 的仓储实例：失效与重算都必须落在提交之后。
+    await _invalidate_activity_cache(oid)
+    _schedule_activity_time_refresh(oid)
+    await _audit_member_write(
+        user,
+        "agent_activity_review",
+        f"activity={oid} {expected}->{status}",
+        _AUDIT_ACTIVITY_UPDATE,
+    )
+    return {"id": oid, "status": status, "label": _STATUS_LABELS.get(status, status)}
+
+
+async def resolve_user(value: object) -> dict:
+    """用户 oid 或学号 → 用户行；空 400、查不到 404（不编造空用户）。"""
+    text = str(value or "").strip()
+    if not text:
+        raise AgentError("AI_AGENT_BAD_ARGUMENT", "user must not be empty", 400)
+    repo = backends.get_users_repo()
+    row = await repo.get_by_oid(text) if is_valid_oid(text) else None
+    if row is None:
+        row = await repo.find_by_business_id(text)
+    if row is None:
+        raise AgentError("AI_AGENT_NOT_FOUND", "user not found", 404)
+    return row
+
+
+async def set_user_class(
+    user: dict, *, target: object, class_id: str = ""
+) -> dict:
+    """把用户移入班级；``class_id`` 为空 = 移出当前班级。
+
+    这是**唯一新增的账号写能力**：不碰角色、密码、学号，也不改任何权限位；与
+    ``POST/DELETE /groups/{id}/users/{uid}`` 同一仓储调用与同一管理者口径
+    （admin/department）。班级变更影响的是“同班可见”的读范围，不是提权。
+    """
+    row = await resolve_user(target)
+    target_oid = str(row.get("_id") or "")
+    previous = str(row.get("class_id") or "") or None
+
+    new_class: str | None = None
+    class_name: str | None = None
+    if str(class_id or "").strip():
+        new_class = _oid_arg(class_id, "class_id")
+        groups = backends.get_groups_repo()
+        if await groups.get_permission_group(new_class) is not None:
+            raise AgentError("AI_AGENT_NOT_FOUND", "class not found", 404)
+        group = await groups.get(new_class)
+        if group is None:
+            raise AgentError("AI_AGENT_NOT_FOUND", "class not found", 404)
+        class_name = group.get("name")
+
+    await backends.get_users_repo().set_class(target_oid, new_class)
+    await _audit_member_write(
+        user,
+        "agent_user_set_class",
+        f"user={target_oid} {previous or '-'}->{new_class or '-'}",
+        "group_member_add" if new_class else "group_member_remove",
+    )
+    return {
+        "oid": target_oid,
+        "name": row.get("name"),
+        "business_id": row.get("id"),
+        "from_class": previous,
+        "to_class": new_class,
+        "class_name": class_name,
+    }
+
+
+async def search_users(
+    user: dict,
+    *,
+    query: str = "",
+    role: str = "",
+    page: int = 1,
+    size: int = 10,
+) -> dict:
+    """分页查用户（白名单投影）。
+
+    权限镜像 ``GET /api/v1/users``：admin/department 可查；**按角色过滤只有 admin**。
+    ``user_profile`` 只输出展示字段，``password`` / ``session_id`` 永不出现。
+    """
+    wanted_role = str(role or "").strip().lower()
+    if wanted_role and wanted_role not in ROLE_WHITELIST:
+        raise AgentError(
+            "AI_AGENT_BAD_ARGUMENT",
+            f"role must be one of: {', '.join(ROLE_WHITELIST)}",
+            400,
+        )
+    if wanted_role and "admin" not in (user.get("per") or []):
+        raise AgentError("AI_AGENT_FORBIDDEN", "role filter is admin-only", 403)
+    page = max(1, int(page))
+    size = max(1, min(int(size), 100))
+    rows, total = await backends.get_users_repo().list_page(
+        str(query or "").strip(), wanted_role, page, size
+    )
+    return {
+        "users": [user_profile(row) for row in rows],
+        "pagination": {"page": page, "size": size, "total": int(total or 0)},
+    }
+
+
 __all__ = [
     "ACTIVITY_TYPES",
     "AgentError",
     "MEMBER_STATUSES",
+    "REVIEW_STATUSES",
+    "ROLE_WHITELIST",
     "activity_statistics",
     "activity_types_summary",
     "apply_member_duration",
     "apply_member_status",
+    "create_activity",
     "get_activity_detail",
     "list_activities",
     "list_activity_members",
     "list_groups",
     "normalize_activity_types",
     "operator_context",
+    "resolve_user",
+    "review_activity",
     "search_activities",
+    "search_users",
+    "set_user_class",
     "to_json_text",
+    "update_activity_info",
     "user_activities",
     "user_volunteer_time",
 ]

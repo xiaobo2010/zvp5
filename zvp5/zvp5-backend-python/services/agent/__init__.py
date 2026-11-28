@@ -15,6 +15,13 @@ from . import ops_tools  # noqa: F401  (导入即自注册运维工具：7 读 +
 from . import tools_platform  # noqa: F401  (平台运维：5 读 + 3 直执行写)
 from . import tools_governance  # noqa: F401  (导入即自注册平台治理工具：5 读 + 4 写)
 from . import tools_ops_extra  # noqa: F401  (运维补充：4 读 + 3 写)
+from . import tools_domain  # noqa: F401  (用户/义工管理专用：1 读 + 4 写)
 from . import tools_scripts  # noqa: F401  (白名单脚本：1 读 + 1 提案写)
 
-__all__ = ["ops_tools", "tools", "tools_platform", "tools_scripts"]
+__all__ = [
+    "ops_tools",
+    "tools",
+    "tools_domain",
+    "tools_platform",
+    "tools_scripts",
+]

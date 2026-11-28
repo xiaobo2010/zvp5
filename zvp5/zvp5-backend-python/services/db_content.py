@@ -77,8 +77,6 @@ _DDL_VERBS = frozenset(
 )
 _DML_VERBS = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
 
-# 契约 §4.4.2：这三张表是双人授权/回收站/变更日志的底座，改一条就可能让审计
-# 失去可信度（例如删掉 dual_auth_uses 里的重放记录），所以任何写语句一律拒绝。
 _PROTECTED_TABLES: tuple[str, ...] = (
     "DUAL_AUTH_USES",
     "USER_TRASH",
@@ -87,6 +85,34 @@ _PROTECTED_TABLES: tuple[str, ...] = (
     # 密文，也能把整表密文一次性读走，属于同一类「不该从这里碰」的表。
     "AI_CREDENTIALS",
     "AI_OCR_ENGINES",
+    "USERS",
+    "GROUPS",
+    "ACTIVITIES",
+    "ACTIVITY_MEMBERS",
+    "USER_TIME",
+    "TIME_ACADEMIC_YEAR",
+    "TIME_WITH_ORIGIN",
+    "TIME_WITH_ORIGIN_STAT",
+    "GROUP_INDICATORS",
+    "INDICATORS",
+    "DAILY_EXPORTS",
+    "IMPORTS",
+    "ROLE_FEATURES",
+    "ROLE_QUOTAS",
+    "USER_QUOTA_OVERRIDES",
+    "AI_QUOTA",
+    "TEMP_LOGIN_PASSWORDS",
+    "DEVICE_CHALLENGES",
+    "USER_DEVICE_BINDINGS",
+    "APP_LOGS",
+    "FILES",
+    "FILE_EVENTS",
+    "AI_API_KEYS",
+    "AI_CONVERSATIONS",
+    "AI_MESSAGES",
+    "AI_RUNS",
+    "AI_AGENT_EVENTS",
+    "AI_SCHEDULED_TASKS",
 )
 
 # Tables whose *rows* carry credentials/audit substrate. The row reader is
@@ -299,6 +325,10 @@ def _target_table(scannable: str, verb: str) -> str | None:
     if pattern is None:
         return None
     match = re.match(pattern, scannable, re.I)
+    if match and verb in _DML_VERBS:
+        tail = scannable[match.end():].lstrip()
+        if tail.startswith((".", "@")):
+            return None
     return match.group(1).upper() if match else None
 
 
@@ -402,10 +432,9 @@ def validate_ddl_sql(sql: str, confirm: str | None) -> dict[str, Any]:
                 raise DbContentError(
                     403, f"{name.lower()} 属于系统保护表，禁止通过该接口修改"
                 )
-        if target == "USERS" and verb in {"DROP", "TRUNCATE"}:
-            raise DbContentError(403, "users 表禁止 DROP/TRUNCATE")
-
     destructive = _is_destructive(verb, scannable)
+    if verb in _DML_VERBS and not target:
+        raise DbContentError(400, "写语句必须指定当前 schema 的普通表名")
     if destructive:
         if not target:
             raise DbContentError(400, "无法识别破坏性语句的目标表名")
@@ -891,12 +920,15 @@ async def _writable_table(session: Any, raw_name: str) -> str:
     行 CRUD 也是 DML：``DELETE /table/DUAL_AUTH_USES/rows`` 能删掉重放记录，
     效果与 ``DELETE FROM dual_auth_uses`` 完全一样，所以必须走同一道闸。
     """
-    table = (await require_table(session, raw_name))["name"]
+    table = validate_identifier(raw_name, what="表名")
     if table in _PROTECTED_TABLES:
         raise DbContentError(
             403, f"{table.lower()} 属于系统保护表，禁止通过该接口修改"
         )
-    return table
+    info = await require_table(session, table)
+    if info["type"] != "TABLE":
+        raise DbContentError(403, "内容控制台不允许修改视图")
+    return info["name"]
 
 
 async def _column_names_checked(
@@ -1063,6 +1095,8 @@ async def run_ddl(session: Any, sql: str, confirm: str | None = None) -> dict[st
     只是把 DML 也收进同一语义；前端必须明确告诉用户「已提交、不可回滚」。
     """
     plan = validate_ddl_sql(sql, confirm)
+    if plan["verb"] in _DML_VERBS:
+        await _writable_table(session, plan["target"])
 
     result = await _execute_user_sql(session, plan["sql"])
     await session.commit()

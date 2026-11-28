@@ -7,9 +7,12 @@
    工具层只做「形状翻译 + 参数收敛」。
 2. **写操作只出提案**。每个写工具都带 ``prepare``（人读摘要 + 结构化预览）与
    ``dual_auth_action="agent_write"``（确认时必须另一位管理员的 6 位动态码），
-   ``impl`` 只会在用户确认之后被调用。``db_insert`` / ``db_update`` /
-   ``db_delete`` 额外声明 ``dual_auth_exempt=policy.volunteer_table_exempt``：
-   义工业务表（活动/成员/时长/指标）的 DML 免动态码，平台表仍然双人。
+   ``impl`` 只会在用户确认之后被调用。**通用 DML 不得触碰账号/义工数据**：
+   ``db_insert`` / ``db_update`` / ``db_delete`` / ``db_ddl`` 的目标表落在
+   ``policy.GENERIC_WRITE_BLOCKED_TABLES`` 时，``prepare`` 与 ``impl`` 都直接
+   403（见 :func:`_ensure_generic_table_write`）——这些表的管理动作由
+   ``services.agent.tools_domain`` 的专用工具承担，创建人/审核人/角色等字段由
+   服务端从当前登录用户派生。
 3. **权限现查**。``permission=_admin_only`` 只是快速否决；真正的闸是
    ``guard=ops_auth.ensure_system_admin``（每次查库、封禁与权限重算）。
 
@@ -230,6 +233,46 @@ def _draft(summary: str, preview: dict) -> ProposalDraft:
 def _admin_only(user: dict) -> bool:
     """快速否决：``per`` 里没有 admin 的直接拒（真正的闸是 ``guard``）。"""
     return "admin" in (user.get("per") or [])
+
+
+# --------------------------------------------------------------------------- #
+# 通用数据库写的表级边界（账号 / 义工数据不从这里进）
+# --------------------------------------------------------------------------- #
+
+
+def _ensure_generic_table_write(table: object) -> None:
+    """通用行 CRUD 的目标表闸：命中 ``GENERIC_WRITE_BLOCKED_TABLES`` → 403。
+
+    **prepare 与 impl 各调一次**，缺一不可：
+
+    * 只在 ``prepare`` 拦，本次修改前已存在的 pending 提案（或重放）仍会在确认
+      时执行 ``impl`` —— 旧提案正是最危险的那批；
+    * 只在 ``impl`` 拦，用户会为一条注定失败的提案输一次动态码，模型也只能从
+      执行失败里学到边界。
+
+    表名归一化交给 ``policy``（与 ``dual_auth`` 判定同一口径），这里不做第二套。
+    """
+    reason = policy.generic_write_blocked_reason(table)
+    if reason is not None:
+        raise AgentError(policy.GENERIC_WRITE_BLOCKED_CODE, reason, 403)
+
+
+def _ensure_generic_ddl_allowed(sql: str) -> None:
+    """``db_ddl`` 的语句闸：任何被保护表出现在语句里就拒。
+
+    ``db_ddl`` 是一条任意 SQL，目标表可能藏在 ``WHERE ... IN (SELECT ...)`` 里，
+    所以按**整句**扫描而不是只看第一个动词后的表名。先用 ``db_content`` 的
+    去注释/去字符串字面量把 ``WHERE name = 'USERS'`` 这类误报排除，再做词边界
+    匹配（与 ``db_content.validate_ddl_sql`` 的保护表实现同一形态）。
+    """
+    scannable = db_content.strip_string_literals(db_content.strip_comments(sql)).upper()
+    for name in policy.GENERIC_WRITE_BLOCKED_TABLES:
+        if re.search(rf"\b{name}\b", scannable):
+            raise AgentError(
+                policy.GENERIC_WRITE_BLOCKED_CODE,
+                policy.generic_write_blocked_reason(name) or f"表 {name} 禁止写入",
+                403,
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -517,6 +560,7 @@ async def _impl_fs_chmod(user: dict, path: str, mode: int) -> dict:
 
 @_translates_service_errors
 async def _prepare_db_insert(user: dict, table: str, values: dict) -> Any:
+    _ensure_generic_table_write(table)
     payload = _require_object("values", values)
     columns = sorted(str(key) for key in payload)
     return _draft(
@@ -532,6 +576,7 @@ async def _prepare_db_insert(user: dict, table: str, values: dict) -> Any:
 
 @_translates_service_errors
 async def _impl_db_insert(user: dict, table: str, values: dict) -> dict:
+    _ensure_generic_table_write(table)
     payload = _require_object("values", values)
     async with session_scope() as session:
         data = await db_content.insert_row(session, table, payload)
@@ -542,6 +587,7 @@ async def _impl_db_insert(user: dict, table: str, values: dict) -> dict:
 async def _prepare_db_update(
     user: dict, table: str, key: dict, values: dict
 ) -> Any:
+    _ensure_generic_table_write(table)
     key_payload = _require_object("key", key)
     value_payload = _require_object("values", values)
     return _draft(
@@ -559,6 +605,7 @@ async def _prepare_db_update(
 async def _impl_db_update(
     user: dict, table: str, key: dict, values: dict
 ) -> dict:
+    _ensure_generic_table_write(table)
     key_payload = _require_object("key", key)
     value_payload = _require_object("values", values)
     async with session_scope() as session:
@@ -568,6 +615,7 @@ async def _impl_db_update(
 
 @_translates_service_errors
 async def _prepare_db_delete(user: dict, table: str, key: dict) -> Any:
+    _ensure_generic_table_write(table)
     key_payload = _require_object("key", key)
     return _draft(
         f"从 {table} 删除 1 行（{', '.join(sorted(str(item) for item in key_payload))}）",
@@ -577,6 +625,7 @@ async def _prepare_db_delete(user: dict, table: str, key: dict) -> Any:
 
 @_translates_service_errors
 async def _impl_db_delete(user: dict, table: str, key: dict) -> dict:
+    _ensure_generic_table_write(table)
     key_payload = _require_object("key", key)
     async with session_scope() as session:
         data = await db_content.delete_row(session, table, key_payload)
@@ -585,7 +634,9 @@ async def _impl_db_delete(user: dict, table: str, key: dict) -> dict:
 
 @_translates_service_errors
 async def _prepare_db_ddl(user: dict, sql: str, confirm: str | None = None) -> Any:
-    # 静态闸先跑：非法 SQL 连提案都不该建（否则用户要为一条注定失败的语句输码）。
+    # 表级边界先跑：账号/义工表连提案都不该建（旧提案确认时 impl 还会再拦一次）。
+    _ensure_generic_ddl_allowed(sql)
+    # 静态闸随后：非法 SQL 连提案都不该建（否则用户要为一条注定失败的语句输码）。
     plan = db_content.validate_ddl_sql(sql, confirm)
     suffix = "（破坏性语句）" if plan["destructive"] else ""
     return _draft(
@@ -603,6 +654,8 @@ async def _prepare_db_ddl(user: dict, sql: str, confirm: str | None = None) -> A
 
 @_translates_service_errors
 async def _impl_db_ddl(user: dict, sql: str, confirm: str | None = None) -> dict:
+    # 旧 pending 提案/重放不会重跑 prepare：执行前必须再判一次表级边界。
+    _ensure_generic_ddl_allowed(sql)
     async with session_scope() as session:
         data = await db_content.run_ddl(session, sql, confirm)
     return _cap({"kind": "sql", **data})
@@ -928,7 +981,7 @@ _register(
 _register(
     ToolDef(
         name="db_insert",
-        description="向表中插入一行（列名→值）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
+        description="向表中插入一行（列名→值）。写操作：需另一位管理员确认；账号/义工业务表禁止经此修改。",
         kind=WRITE,
         params=_params(
             {
@@ -942,14 +995,13 @@ _register(
         prepare=_prepare_db_insert,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
-        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 
 _register(
     ToolDef(
         name="db_update",
-        description="按主键更新一行（key=主键列，values=要改的列）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
+        description="按主键更新一行（key=主键列，values=要改的列）。写操作：需另一位管理员确认；账号/义工业务表禁止经此修改。",
         kind=WRITE,
         params=_params(
             {
@@ -964,14 +1016,13 @@ _register(
         prepare=_prepare_db_update,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
-        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 
 _register(
     ToolDef(
         name="db_delete",
-        description="按主键删除一行（key=主键列）。写操作：义工业务表免动态码，其它表需另一位管理员确认。",
+        description="按主键删除一行（key=主键列）。写操作：需另一位管理员确认；账号/义工业务表禁止经此修改。",
         kind=WRITE,
         params=_params(
             {
@@ -985,7 +1036,6 @@ _register(
         prepare=_prepare_db_delete,
         guard=ops_auth.ensure_system_admin,
         dual_auth_action=WRITE_AUTH_ACTION,
-        dual_auth_exempt=policy.volunteer_table_exempt,
     )
 )
 

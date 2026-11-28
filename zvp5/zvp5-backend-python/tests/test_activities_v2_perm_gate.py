@@ -23,6 +23,8 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from db import backends
+from db import cache
+from db.cached_repos import CachedActivitiesRepo
 from routers import activities_router
 
 ADMIN_OID = "000000000000000000000001"
@@ -79,7 +81,10 @@ class _ActivitiesRepo:
         self.state["cas_calls"].append((oid, expected, dict(fields)))
         if self.state.get("cas_conflict"):
             return False
+        if self.state["activity"]["status"] != expected:
+            return False
         self.state["updates"].append((oid, dict(fields)))
+        self.state["activity"].update(fields)
         return True
 
 
@@ -216,3 +221,80 @@ async def test_pending_approval_still_records_the_approver(state):
     fields = state["cas_calls"][0][2]
     assert fields["status"] == "effective"
     assert fields["approver"] == ADMIN_OID
+
+
+class _CacheClient:
+    """只够 ``db.cache`` 用的内存 Redis 替身（get/set/delete/incr/expire）。"""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str):
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, px: int | None = None):
+        self.data[key] = value
+        return True
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            removed += 1 if self.data.pop(key, None) is not None else 0
+        return removed
+
+    async def incr(self, key: str) -> int:
+        value = int(self.data.get(key, "0")) + 1
+        self.data[key] = str(value)
+        return value
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_successive_review_within_cache_ttl_is_not_blocked(state, monkeypatch):
+    """第一次审核写库后详情缓存必须失效：紧接着的第二次审核不能拿旧状态当 CAS 期望。
+
+    没有 ``CachedActivitiesRepo.cas_status`` 的失效时：第一次 pending→effective
+    成功后缓存仍是 pending，第二次 effective→refused 会以 ``expected=pending``
+    落空并被错误地回成 409「状态已被其他操作修改」。
+    """
+    state["activity"] = _activity("pending")
+    cache._install_client_for_tests(_CacheClient())
+    repo = CachedActivitiesRepo(_ActivitiesRepo(state))
+    monkeypatch.setattr(backends, "get_activities_repo", lambda session=None: repo)
+
+    await _call(state, status="effective", user=ADMIN)  # 先缓存 pending，再审核通过
+    await _call(state, status="refused", user=ADMIN)  # 短时间内第二次审核
+
+    assert state["activity"]["status"] == "refused"
+    assert [fields["status"] for _oid, fields in state["updates"]] == [
+        "effective",
+        "refused",
+    ]
+    assert state["log"].inserts == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_review_still_conflicts_and_a_retry_sees_fresh_state(state, monkeypatch):
+    """并发保护不放松：缓存旧状态被 CAS 拒绝（409），但失败也要失效缓存，重试能成功。"""
+    state["activity"] = _activity("pending")
+    cache._install_client_for_tests(_CacheClient())
+    repo = CachedActivitiesRepo(_ActivitiesRepo(state))
+    monkeypatch.setattr(backends, "get_activities_repo", lambda session=None: repo)
+
+    await repo.get(ACTIVITY_ID)  # 缓存 pending
+    state["activity"]["status"] = "refused"  # 另一位审核者已先改库，缓存尚未同步
+
+    with pytest.raises(HTTPException) as failure:
+        await _call(state, status="effective", user=ADMIN)
+
+    assert failure.value.status_code == 409
+    assert state["log"].inserts == 0
+
+    await _call(state, status="effective", user=ADMIN)  # 重试读到 refused，CAS 命中
+    assert state["activity"]["status"] == "effective"
+    assert state["log"].inserts == 1

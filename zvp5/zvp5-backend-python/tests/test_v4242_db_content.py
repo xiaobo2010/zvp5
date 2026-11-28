@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -491,6 +492,17 @@ def harness(monkeypatch, fake_db):
     return _build(monkeypatch, fake_db)
 
 
+@pytest.fixture
+def writable_db(fake_db):
+    fake_db.tables["DIRECTORY_ENTRIES"] = deepcopy(fake_db.tables["USERS"])
+    return fake_db
+
+
+@pytest.fixture
+def writable_harness(monkeypatch, writable_db):
+    return _build(monkeypatch, writable_db)
+
+
 # ---------------------------------------------------------------------------
 # 1. 标识符闸
 # ---------------------------------------------------------------------------
@@ -869,27 +881,27 @@ def test_rows_of_view_have_no_primary_key(fake_db):
 # ---------------------------------------------------------------------------
 
 
-def test_insert_row_binds_values(fake_db):
-    session = FakeSession(fake_db)
+def test_insert_row_binds_values(writable_db):
+    session = FakeSession(writable_db)
     data = asyncio.run(
-        db_content.insert_row(session, "USERS", {"OID": "0009", "NAME": "赵六"})
+        db_content.insert_row(session, "DIRECTORY_ENTRIES", {"OID": "0009", "NAME": "赵六"})
     )
     assert data == {"rowcount": 1}
     assert session.commits == 1
-    assert fake_db.tables["USERS"]["rows"][-1]["OID"] == "0009"
+    assert writable_db.tables["DIRECTORY_ENTRIES"]["rows"][-1]["OID"] == "0009"
     # 值只出现在绑定参数里，SQL 文本里没有用户值。
     sql, params = session.calls[-1]
     assert "赵六" not in sql and "0009" not in sql
     assert params == {"v0": "0009", "v1": "赵六"}
 
 
-def test_insert_row_coerces_iso_timestamp_for_temporal_column(fake_db):
+def test_insert_row_coerces_iso_timestamp_for_temporal_column(writable_db):
     """网格回填的是 ISO8601 字符串；绑定前必须转成 datetime（否则 ORA-01861）。"""
-    session = FakeSession(fake_db)
+    session = FakeSession(writable_db)
     data = asyncio.run(
         db_content.insert_row(
             session,
-            "USERS",
+            "DIRECTORY_ENTRIES",
             {"OID": "0009", "NAME": "赵六", "CREATED_AT": "2026-10-01T12:00:00"},
         )
     )
@@ -901,12 +913,12 @@ def test_insert_row_coerces_iso_timestamp_for_temporal_column(fake_db):
     assert params["v1"] == "赵六"
 
 
-def test_update_row_coerces_iso_timestamp_and_rejects_garbage(fake_db):
-    session = FakeSession(fake_db)
+def test_update_row_coerces_iso_timestamp_and_rejects_garbage(writable_db):
+    session = FakeSession(writable_db)
     asyncio.run(
         db_content.update_row(
             session,
-            "USERS",
+            "DIRECTORY_ENTRIES",
             {"OID": "000000000000000000000001"},
             {"CREATED_AT": "2026-10-01T12:00:00"},
         )
@@ -917,7 +929,7 @@ def test_update_row_coerces_iso_timestamp_and_rejects_garbage(fake_db):
         asyncio.run(
             db_content.update_row(
                 session,
-                "USERS",
+                "DIRECTORY_ENTRIES",
                 {"OID": "000000000000000000000001"},
                 {"CREATED_AT": "not-a-timestamp"},
             )
@@ -926,12 +938,12 @@ def test_update_row_coerces_iso_timestamp_and_rejects_garbage(fake_db):
     assert "CREATED_AT" in exc.value.detail
 
 
-def test_temporal_column_accepts_date_only_and_tz_suffix(fake_db):
-    session = FakeSession(fake_db)
+def test_temporal_column_accepts_date_only_and_tz_suffix(writable_db):
+    session = FakeSession(writable_db)
     asyncio.run(
         db_content.update_row(
             session,
-            "USERS",
+            "DIRECTORY_ENTRIES",
             {"OID": "000000000000000000000001"},
             {"CREATED_AT": "2026-10-01T12:00:00Z"},
         )
@@ -939,28 +951,28 @@ def test_temporal_column_accepts_date_only_and_tz_suffix(fake_db):
     assert session.calls[-1][1]["s0"] == datetime(2026, 10, 1, 12, 0, 0)
 
 
-def test_timestamp_with_time_zone_rejects_writes_instead_of_dropping_zone(fake_db):
+def test_timestamp_with_time_zone_rejects_writes_instead_of_dropping_zone(writable_db):
     """TSTZ 的偏移无法通过网格往返；拒绝写入而不是悄悄改时间点。"""
     for value in (
         "2026-10-01T12:00:00+08:00",
         "2026-10-01T12:00:00",  # 无偏移同样无法确定原时区
     ):
-        session = FakeSession(fake_db)
+        session = FakeSession(writable_db)
         with pytest.raises(db_content.DbContentError) as exc:
             asyncio.run(
-                db_content.insert_row(session, "USERS", {"OID": "0009", "TZ_AT": value})
+                db_content.insert_row(session, "DIRECTORY_ENTRIES", {"OID": "0009", "TZ_AT": value})
             )
         assert exc.value.status_code == 400
         assert "TIME ZONE" in exc.value.detail
         assert not any(sql.upper().startswith("INSERT") for sql in session.executed)
 
 
-def test_local_time_zone_column_accepts_naive_session_time_only(fake_db):
+def test_local_time_zone_column_accepts_naive_session_time_only(writable_db):
     """LTZ 读回来是会话本地 naive 值；原样写回可往返，带偏移则拒绝。"""
-    session = FakeSession(fake_db)
+    session = FakeSession(writable_db)
     asyncio.run(
         db_content.insert_row(
-            session, "USERS", {"OID": "0009", "LTZ_AT": "2026-10-01T12:00:00"}
+            session, "DIRECTORY_ENTRIES", {"OID": "0009", "LTZ_AT": "2026-10-01T12:00:00"}
         )
     )
     assert session.calls[-1][1]["v1"] == datetime(2026, 10, 1, 12, 0, 0)
@@ -969,7 +981,7 @@ def test_local_time_zone_column_accepts_naive_session_time_only(fake_db):
         asyncio.run(
             db_content.update_row(
                 session,
-                "USERS",
+                "DIRECTORY_ENTRIES",
                 {"OID": "0009"},
                 {"LTZ_AT": "2026-10-01T12:00:00Z"},
             )
@@ -978,35 +990,35 @@ def test_local_time_zone_column_accepts_naive_session_time_only(fake_db):
     assert "LOCAL TIME ZONE" in exc.value.detail
 
 
-def test_insert_row_rejects_unknown_column(fake_db):
+def test_insert_row_rejects_unknown_column(writable_db):
     with pytest.raises(db_content.DbContentError) as exc:
         asyncio.run(
-            db_content.insert_row(FakeSession(fake_db), "USERS", {"NOPE": "x"})
+            db_content.insert_row(FakeSession(writable_db), "DIRECTORY_ENTRIES", {"NOPE": "x"})
         )
     assert exc.value.status_code == 400
 
 
-def test_insert_row_rejects_empty_values(fake_db):
+def test_insert_row_rejects_empty_values(writable_db):
     with pytest.raises(db_content.DbContentError) as exc:
-        asyncio.run(db_content.insert_row(FakeSession(fake_db), "USERS", {}))
+        asyncio.run(db_content.insert_row(FakeSession(writable_db), "DIRECTORY_ENTRIES", {}))
     assert exc.value.status_code == 400
 
 
-def test_update_row_requires_every_primary_key_column(fake_db):
+def test_update_row_requires_every_primary_key_column(writable_db):
     with pytest.raises(db_content.DbContentError) as exc:
         asyncio.run(
-            db_content.update_row(FakeSession(fake_db), "USERS", {"NAME": "张三"}, {"NAME": "x"})
+            db_content.update_row(FakeSession(writable_db), "DIRECTORY_ENTRIES", {"NAME": "张三"}, {"NAME": "x"})
         )
     assert exc.value.status_code == 400
     assert "主键" in exc.value.detail
 
 
-def test_update_row_rejects_non_primary_key_column(fake_db):
+def test_update_row_rejects_non_primary_key_column(writable_db):
     with pytest.raises(db_content.DbContentError) as exc:
         asyncio.run(
             db_content.update_row(
-                FakeSession(fake_db),
-                "USERS",
+                FakeSession(writable_db),
+                "DIRECTORY_ENTRIES",
                 {"OID": "0001", "NAME": "张三"},
                 {"NAME": "x"},
             )
@@ -1014,32 +1026,32 @@ def test_update_row_rejects_non_primary_key_column(fake_db):
     assert exc.value.status_code == 400
 
 
-def test_update_row_is_scoped_to_the_key(fake_db):
-    session = FakeSession(fake_db)
+def test_update_row_is_scoped_to_the_key(writable_db):
+    session = FakeSession(writable_db)
     data = asyncio.run(
         db_content.update_row(
             session,
-            "USERS",
+            "DIRECTORY_ENTRIES",
             {"OID": "000000000000000000000002"},
             {"NAME": "改过的"},
         )
     )
     assert data == {"rowcount": 1}
     assert session.commits == 1
-    assert fake_db.tables["USERS"]["rows"][1]["NAME"] == "改过的"
-    assert fake_db.tables["USERS"]["rows"][0]["NAME"] == "张三"
+    assert writable_db.tables["DIRECTORY_ENTRIES"]["rows"][1]["NAME"] == "改过的"
+    assert writable_db.tables["DIRECTORY_ENTRIES"]["rows"][0]["NAME"] == "张三"
     sql, params = session.calls[-1]
     assert "改过的" not in sql
     assert '"OID" = :k0' in sql
 
 
-def test_delete_row_is_scoped_to_the_key(fake_db):
-    session = FakeSession(fake_db)
+def test_delete_row_is_scoped_to_the_key(writable_db):
+    session = FakeSession(writable_db)
     data = asyncio.run(
-        db_content.delete_row(session, "USERS", {"OID": "000000000000000000000003"})
+        db_content.delete_row(session, "DIRECTORY_ENTRIES", {"OID": "000000000000000000000003"})
     )
     assert data == {"rowcount": 1}
-    assert len(fake_db.tables["USERS"]["rows"]) == 2
+    assert len(writable_db.tables["DIRECTORY_ENTRIES"]["rows"]) == 2
 
 
 def test_row_operations_on_table_without_primary_key_are_400(fake_db):
@@ -1217,10 +1229,13 @@ def test_run_ddl_executes_user_sql_verbatim(monkeypatch, fake_db):
     """``/ddl`` 同样必须把语句原样交给驱动，而不是让 ``text()`` 解析冒号。"""
     session = FakeSession(fake_db)
 
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("用户 SQL 不应经过 db_content.text()")
+    original_text = db_content.text
 
-    monkeypatch.setattr(db_content, "text", forbidden)
+    def metadata_only(sql):
+        assert sql.startswith("SELECT "), "用户 SQL 不应经过 db_content.text()"
+        return original_text(sql)
+
+    monkeypatch.setattr(db_content, "text", metadata_only)
 
     data = asyncio.run(
         db_content.run_ddl(
@@ -1360,9 +1375,10 @@ def test_dml_via_ddl_endpoint_uses_dml_audit_type(harness):
     assert harness.audits[-1]["action"] == "db_dml"
 
 
-def test_row_write_endpoints_write_dml_audit_without_values(harness):
+def test_row_write_endpoints_write_dml_audit_without_values(writable_harness):
+    harness = writable_harness
     response = harness.client.post(
-        f"{PREFIX}/table/USERS/rows",
+        f"{PREFIX}/table/DIRECTORY_ENTRIES/rows",
         json={
             "values": {"OID": "0009", "NAME": "秘密内容"},
             "totp_code": CODE,
@@ -1378,24 +1394,26 @@ def test_row_write_endpoints_write_dml_audit_without_values(harness):
     assert "OID" in audit["detail"] and "NAME" in audit["detail"]
 
 
-def test_update_endpoint_requires_full_key(harness):
+def test_update_endpoint_requires_full_key(writable_harness):
+    harness = writable_harness
     response = harness.client.put(
-        f"{PREFIX}/table/USERS/rows",
+        f"{PREFIX}/table/DIRECTORY_ENTRIES/rows",
         json={"key": {"NAME": "张三"}, "values": {"NAME": "x"}, "totp_code": CODE},
     )
     assert response.status_code == 400
-    assert harness.db.tables["USERS"]["rows"][0]["NAME"] == "张三"
+    assert harness.db.tables["DIRECTORY_ENTRIES"]["rows"][0]["NAME"] == "张三"
 
 
-def test_delete_endpoint_removes_row(harness):
+def test_delete_endpoint_removes_row(writable_harness):
+    harness = writable_harness
     response = harness.client.request(
         "DELETE",
-        f"{PREFIX}/table/USERS/rows",
+        f"{PREFIX}/table/DIRECTORY_ENTRIES/rows",
         json={"key": {"OID": "000000000000000000000001"}, "totp_code": CODE},
     )
     assert response.status_code == 200
     assert response.json()["data"] == {"rowcount": 1}
-    assert len(harness.db.tables["USERS"]["rows"]) == 2
+    assert len(harness.db.tables["DIRECTORY_ENTRIES"]["rows"]) == 2
 
 
 def test_row_write_on_protected_table_is_403_over_http(harness):
@@ -1410,6 +1428,35 @@ def test_row_write_on_protected_table_is_403_over_http(harness):
     assert harness.audits == []
 
 
+@pytest.mark.parametrize("table", ["users", "activity_members", "ai_runs"])
+def test_domain_tables_are_read_only_in_the_generic_console(harness, table):
+    for method, payload in (
+        ("POST", {"values": {"OID": "abc"}}),
+        ("PUT", {"key": {"OID": "abc"}, "values": {"NAME": "x"}}),
+        ("DELETE", {"key": {"OID": "abc"}}),
+    ):
+        result = harness.client.request(
+            method, f"{PREFIX}/table/{table}/rows", json={**payload, "totp_code": CODE}
+        )
+        assert result.status_code == 403
+    result = harness.client.post(
+        f"{PREFIX}/ddl",
+        json={"sql": f"DELETE FROM {table}", "confirm": table, "totp_code": CODE},
+    )
+    assert result.status_code == 403
+    assert harness.session.calls == []
+    assert harness.audits == []
+
+
+def test_raw_dml_requires_a_base_table(fake_db):
+    session = FakeSession(fake_db)
+    with pytest.raises(db_content.DbContentError) as exc:
+        asyncio.run(db_content.run_ddl(session, "DELETE FROM USER_VIEW", "USER_VIEW"))
+    assert exc.value.status_code == 403
+    assert session.driver_calls == []
+    assert session.commits == 0
+
+
 def test_schema_and_rows_endpoints_work(harness):
     schema = harness.client.get(f"{PREFIX}/schema")
     assert schema.status_code == 200
@@ -1420,17 +1467,17 @@ def test_schema_and_rows_endpoints_work(harness):
     assert rows.json()["data"]["has_more"] is True
 
 
-def test_real_dual_auth_accepts_another_admin_code(monkeypatch, fake_db):
+def test_real_dual_auth_accepts_another_admin_code(monkeypatch, writable_db):
     """接真实 ``require_dual_auth``：审批人动态码有效即放行（不需要 monkeypatch）。"""
     code, _ = get_current_totp(APPROVER)
-    env = _build(monkeypatch, fake_db, real_dual_auth=True)
+    env = _build(monkeypatch, writable_db, real_dual_auth=True)
 
     response = env.client.post(
-        f"{PREFIX}/table/USERS/rows",
+        f"{PREFIX}/table/DIRECTORY_ENTRIES/rows",
         json={"values": {"OID": "0009"}, "totp_code": code},
     )
     assert response.status_code == 200
-    assert env.db.tables["USERS"]["rows"][-1]["OID"] == "0009"
+    assert env.db.tables["DIRECTORY_ENTRIES"]["rows"][-1]["OID"] == "0009"
 
 
 def test_real_dual_auth_rejects_operator_own_code(monkeypatch, fake_db):

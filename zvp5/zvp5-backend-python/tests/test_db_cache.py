@@ -287,16 +287,25 @@ def test_groups_repo_invalidates_on_write() -> None:
 
 
 class FakeActivitiesRepo:
-    def __init__(self) -> None:
+    def __init__(self, status: str = "pending") -> None:
         self.calls = 0
+        self.status = status
+        self.cas_calls: list[tuple[str, str, dict]] = []
 
     async def get(self, oid: str):
         self.calls += 1
-        return {"_id": oid}
+        return {"_id": oid, "status": self.status}
 
     async def list_effective(self, date_start=None, date_end=None):
         self.calls += 1
         return []
+
+    async def cas_status(self, oid: str, expected: str, fields: dict) -> bool:
+        self.cas_calls.append((oid, expected, fields))
+        if self.status != expected:
+            return False
+        self.status = fields["status"]
+        return True
 
 
 def test_activities_effective_only_cached_without_range() -> None:
@@ -311,6 +320,48 @@ def test_activities_effective_only_cached_without_range() -> None:
 
     run(main())
     assert inner.calls == 1 + 2
+
+
+def test_activities_cas_invalidates_detail_cache_for_the_next_review() -> None:
+    """第一次审核成功后，详情缓存必须失效，第二次审核才读得到新状态。
+
+    审核路由是「get → CAS」：若 ``cas_status`` 不失效 ``activity:{oid}``，
+    第二次审核会拿缓存里的旧状态当 ``expected``，CAS 落空 → 409
+    「状态已被其他操作修改」——同一页面短时间内连续审核必然失败。
+    """
+    inner = FakeActivitiesRepo(status="pending")
+    repo = CachedActivitiesRepo(inner)
+
+    async def main():
+        first = await repo.get(OID)  # 模拟打开审核页，缓存 pending
+        changed = await repo.cas_status(OID, first["status"], {"status": "effective"})
+        second = await repo.get(OID)  # 第二次审核读到的必须是 effective
+        return first, changed, second, inner
+
+    first, changed, second, inner = run(main())
+    assert first["status"] == "pending"
+    assert changed is True
+    assert inner.status == "effective"
+    assert second["status"] == "effective"
+    assert inner.calls == 2  # 缓存命中一次 + 失效后回源一次
+
+
+def test_activities_failed_cas_also_drops_the_stale_detail_cache() -> None:
+    """CAS 落空说明缓存里的 expected 已过期：失败也要失效，重试才会读到真实值。"""
+    inner = FakeActivitiesRepo(status="pending")
+    repo = CachedActivitiesRepo(inner)
+
+    async def main():
+        await repo.get(OID)  # 缓存 pending
+        inner.status = "effective"  # 另一个审核者已先写库（缓存未同步）
+        changed = await repo.cas_status(OID, "pending", {"status": "refused"})
+        after = await repo.get(OID)
+        return changed, after, inner
+
+    changed, after, inner = run(main())
+    assert changed is False
+    assert after["status"] == "effective"
+    assert inner.calls == 2
 
 
 class FakeConversationsRepo:

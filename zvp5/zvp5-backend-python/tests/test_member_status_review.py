@@ -314,6 +314,25 @@ async def test_pending_review_also_drops_the_hours(state):
 
 
 @pytest.mark.asyncio
+async def test_successive_reviews_both_land(state):
+    """同一成员短时间内连续两次审核：第二次按第一次落库后的状态重新 CAS。
+
+    成员读路径不走缓存，``expected`` 每次都从库里的最新行取，所以
+    effective→refused→effective 这一串合法审核都必须成功，不能被第一次的旧状态
+    卡成 409。
+    """
+    await _call(state, status="refused")
+    await _call(state, status="effective")
+
+    assert state["rows"][0]["status"] == "effective"
+    assert state["cas_calls"] == [
+        (SESSION_ID, "effective", "refused"),
+        (SESSION_ID, "refused", "effective"),
+    ]
+    assert state["log"].inserts == 2
+
+
+@pytest.mark.asyncio
 async def test_concurrent_status_change_is_409_and_skips_side_effects(state):
     """CAS 落空（别人先改了状态）⇒ 409，不重算、不写审计。"""
     state["cas_conflict"] = True

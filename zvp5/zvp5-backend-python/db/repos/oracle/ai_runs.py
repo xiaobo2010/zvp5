@@ -272,6 +272,23 @@ def _cancel_if_queued_stmt(run_id: str, at: datetime):
     )
 
 
+def _cancel_queued_requested_stmt(at: datetime):
+    """收敛「已请求取消、却仍停在 ``queued``」的行。
+
+    正常路径 :meth:`OracleAIRunsRepo.request_cancel` 之后紧跟着
+    :meth:`mark_cancelled_if_queued`。进程在两步之间退出、或第二步抛错时，这一行
+    同时满足两个坏条件：``claim_next`` 跳过 ``cancel_requested=1`` 永不领取，
+    watchdog 又只看 ``running``——它就以活跃行身份永久占住
+    ``uq_ai_runs_active_*``，该用户/会话之后每次提交都是 409。
+    启动收敛与 watchdog 各调一次，保证这种半取消必然进终态。
+    """
+    return (
+        update(ai_runs_tbl)
+        .where(ai_runs_tbl.c.status == "queued", ai_runs_tbl.c.cancel_requested == 1)
+        .values(status="cancelled", finished_at=at)
+    )
+
+
 def _list_active_stmt(owner_oid: str):
     return (
         select(*_columns())
@@ -561,6 +578,15 @@ class OracleAIRunsRepo:
             if owns:
                 await session.commit()
         return bool(result.rowcount)
+
+    async def cancel_queued_requested(self, *, at: datetime | None = None) -> int:
+        async with _session_for(self._session) as (session, owns):
+            result = await session.execute(
+                _cancel_queued_requested_stmt(at or _now())
+            )
+            if owns:
+                await session.commit()
+        return int(result.rowcount or 0)
 
     async def list_active(self, owner_oid: str) -> list[Row]:
         async with _session_for(self._session) as (session, _owns):

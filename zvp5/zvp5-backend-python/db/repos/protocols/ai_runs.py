@@ -375,6 +375,17 @@ class AIRunsRepo(Protocol):
         """CAS ``queued → cancelled`` (还没开跑就不必等 worker)。"""
         ...
 
+    async def cancel_queued_requested(self, *, at: datetime | None = None) -> int:
+        """Converge every ``queued`` run that already has ``cancel_requested=1``.
+
+        返回被写进 ``cancelled`` 的行数。这不是正常的取消路径（那条由
+        :meth:`mark_cancelled_if_queued` 一次 CAS 完成），而是它的**故障兜底**：
+        置标志与写终态之间进程退出/抛错时，这行既不会被 :meth:`claim_next` 领取
+        （它跳过已取消的行），也不会被 watchdog 看见（只看 ``running``），于是
+        永久占住活跃唯一索引。启动收敛与 watchdog 各调一次。
+        """
+        ...
+
     async def list_active(self, owner_oid: str) -> list[Row]:
         """Every ``queued|running`` run of this owner, oldest first.
 

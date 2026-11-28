@@ -437,7 +437,9 @@ async def submit(
     payload = {
         "run_id": str(row.get("_id") or run_id),
         "message_oid": str(row.get("message_oid") or ""),
-        "status": "queued",
+        # 去重命中的是**已有** run，它的状态不一定还是 queued（客户端在 run
+        # 结束后重试同一个键很常见）。硬写 queued 会让调用方以为任务还在排队。
+        "status": str(row.get("status") or "queued"),
     }
     if not created:
         payload["deduped"] = True
@@ -571,7 +573,11 @@ async def cancel(*, user: Mapping[str, Any], run_id: str) -> dict:
 
     if str(row.get("status")) == "queued":
         # 还没开跑：不必等 worker 在轮边界看到标志（也免得它占一次上游调用）。
-        await _runs().mark_cancelled_if_queued(str(run_id))
+        # 只有真的写成 cancelled 才回收进程内载荷：仍被领走（running）时，执行器
+        # 还要按次覆盖跑这一轮。
+        if await _runs().mark_cancelled_if_queued(str(run_id)):
+            _take_reference(str(run_id))
+            _take_override(str(run_id))
 
     # 状态刚变过：下一次轮询必须回源，否则前端会再看到 1 秒「仍在跑」。
     run_cache.invalidate(str(run_id))
@@ -661,13 +667,32 @@ async def compact_conversation(*, user: Mapping[str, Any], conversation_oid: str
     }
 
 
+async def _converge_queued_cancelled() -> int:
+    """把「已请求取消、却仍停在 queued」的行收敛成 ``cancelled``（故障兜底）。
+
+    正常取消由 :func:`cancel` 一步 CAS 完成：置 ``cancel_requested`` 后紧跟
+    ``mark_cancelled_if_queued``。两写之间进程退出或第二步抛错时，这行同时被两条
+    清扫路径漏掉——``claim_next`` 跳过 ``cancel_requested=1``，watchdog 只看
+    ``running``——于是它以活跃行身份永久占住 ``uq_ai_runs_active_*``，该用户/会话
+    之后的每次提交都是 409。启动收敛与 watchdog 各调用一次。
+    """
+    try:
+        return int(await _runs().cancel_queued_requested() or 0)
+    except Exception:  # noqa: BLE001 - 兜底清扫失败不该挡住启动或看门狗
+        _logger.exception("ai run queued-cancel convergence failed")
+        return 0
+
+
 async def recover_on_startup() -> int:
-    """启动收敛：``running → interrupted``，``queued`` 原样保留（§4.3）。
+    """启动收敛：``running → interrupted``，``queued`` 正常保留（§4.3）。
 
     单 worker 下「进程刚起来」等价于「没有任何合法在跑的任务」，残留的 running
     只可能是上次崩溃留下的；而 queued 是**还没开始**的任务，起泵后自然续跑。
     崩溃的 running 不重跑，是因为它唯一的持久化只有那条用户消息（§4.5）——重跑
     会把已经发生的计费再花一遍。
+
+    唯一不保留的 queued 是**已请求取消**的行：它永远不会被领取，只能收敛成
+    cancelled（见 :func:`_converge_queued_cancelled`）。
     """
     try:
         interrupted = await _runs().interrupt_running(
@@ -678,6 +703,11 @@ async def recover_on_startup() -> int:
         return 0
     if interrupted:
         _logger.info("ai run queue: %s run(s) marked interrupted at startup", interrupted)
+    cancelled = await _converge_queued_cancelled()
+    if cancelled:
+        _logger.info(
+            "ai run queue: %s cancelled queued run(s) converged at startup", cancelled
+        )
     return int(interrupted or 0)
 
 
@@ -687,6 +717,10 @@ async def watchdog_tick() -> int:
     「命中后取消对应 task」是关键的一半：只改库不掐协程，执行方会在终态行上继续
     写消息、继续扣额度（评审 P0-2）。本地心跳时间戳用来判断「哪个协程该掐」——
     库里的 heartbeat_at 就是这个协程刷的，读库等于自问自答。
+
+    命中后还顺手做两件收尾：失效轮询快照、给 SSE 订阅者发 resync。执行方随后
+    ``_finish`` 的 CAS 会失败（行已经是 watchdog 写的终态），不能指望它再通知
+    前端——否则订阅者会一直停在「执行中」等一个永远不来的终态帧。
     """
     cutoff = datetime.now() - timedelta(seconds=stale_seconds())
     try:
@@ -697,6 +731,10 @@ async def watchdog_tick() -> int:
         _logger.exception("ai run watchdog failed")
         return 0
 
+    # 同一拍顺手收敛半取消的 queued 行（每次一条 UPDATE，rows 恒 0 时与既有
+    # watchdog UPDATE 同量级）。失败只记日志：它不影响僵尸判定。
+    await _converge_queued_cancelled()
+
     for run_id, entry in list(_in_flight.items()):
         if entry.get("heartbeat") is None or entry["heartbeat"] >= cutoff:
             continue
@@ -705,6 +743,11 @@ async def watchdog_tick() -> int:
             continue
         _logger.warning("ai run %s lost its heartbeat, cancelling", run_id)
         task.cancel()
+        run_cache.invalidate(str(run_id))
+        live.publish_resync(str(run_id))
+        # 有订阅者时 cleanup 是 no-op（由 SSE 生成器 finally 收尾）；没有订阅者
+        # 时顺手释放 live 状态，避免被掐掉的 run 留下进程内残影。
+        live.cleanup(str(run_id))
     return int(hit or 0)
 
 
@@ -823,6 +866,8 @@ def reset() -> None:
     _in_flight.clear()
     # run 级进程内状态一并清掉：测试里上一个用例的覆盖不能带进下一个用例。
     _OVERRIDES.clear()
+    # 参考内容与覆盖同属 run 级载荷，不能只清一半。
+    _REFERENCES.clear()
     # 轮询快照同理：上一条用例缓存的 run 行不该出现在下一条里。
     run_cache.reset()
     # 封禁态缓存同属进程内状态：上一条用例造出来的「已封」不能跟着 TTL 漏进来。
@@ -1077,6 +1122,13 @@ async def _finish(
         return False
     if not written:
         _logger.info("ai run %s was already terminal, result dropped", run_id)
+        # 行已经是终态（watchdog 抢先写的）。终态这个**事实**仍然要送到前端：
+        # 快照里还是 running，SSE 订阅者还在等一个终态 resync；执行方是唯一还
+        # 知道「这个 run 已经结束」的一方（watchdog 只写库，不认领 task）。
+        # 不能 drop_seq：断线重连的客户端还要靠它去重。
+        run_cache.invalidate(str(run_id))
+        live.publish_resync(str(run_id))
+        live.cleanup(str(run_id))
     else:
         # 终态刚落：快照里还是 running，留着会让前端继续画「执行中」。
         run_cache.invalidate(str(run_id))

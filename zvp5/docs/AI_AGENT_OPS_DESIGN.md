@@ -12,10 +12,12 @@
 2. **写操作只出提案**。模型对写工具的调用不落任何业务数据；执行只发生在用户确认之后。
 3. **确认必须双人**。运维写工具（文件/DB/SSH）在确认时校验**另一位管理员**的 6 位动态码；
    operator 与 approver 不得是同一人（`util.dual_auth.require_dual_auth` 已保证）。
-   **例外（2026-11-20）**：`db_insert` / `db_update` / `db_delete` 作用于义工业务表
-   （`services/agent/policy.py` 的 `VOLUNTEER_TABLES`：活动、成员、时长、指标、组织）
-   时降为本人确认，不再要求动态码；其余表仍按平台数据处理。文件写、`ssh_exec`、
-   `db_ddl` 永不豁免——它们是平台操作。
+   **2026-11-26 收紧**：取消按表的动态码豁免。`db_insert` / `db_update` / `db_delete` /
+   `db_ddl` 对 `services/agent/policy.py::GENERIC_WRITE_BLOCKED_TABLES`（账号、角色、
+   额度、审计、凭据、文件、会话 + 全部义工业务表）一律表级拒绝；这些表的管理动作走
+   `services/agent/tools_domain.py` 的窄接口（活动创建人/审核人由服务端从当前用户派生），
+   或留在人工端点。其余平台表的通用 DML 仍要求双人动态码，**没有**任何表可以只凭
+   本人确认就写入。文件写与 `ssh_exec` 不豁免。
 4. **批准的就是执行的**。`ARGS_PAYLOAD` 全文 + `ARGS_HASH` 覆盖全文；确认时重算失败 → 409，
    一次都不执行。`ARGS_SUMMARY` 只用于展示，永不参与校验。
 5. **权限每次现查**。工具执行前（读）与提案确认时（写）都要走 `ops_auth.ensure_system_admin`：

@@ -142,13 +142,18 @@ def test_write_tools_are_previewed_proposals_with_dual_auth() -> None:
         assert tool.guard is ops_auth.ensure_system_admin, name
 
 
-def test_volunteer_table_dml_exempts_dual_auth_only_for_business_tables() -> None:
-    """DML 的授权强度按目标表分层：义工表免码，平台表与 DDL 仍要双人。"""
+def test_generic_dml_always_requires_dual_auth() -> None:
+    """表级豁免已取消：任何剩余可写的表都要另一位管理员的动态码。
+
+    义工/账号表本身走表级拒绝（见 ``test_agent_domain_tools``），所以“豁免”
+    没有适用对象；留着它只会让平台表也能单人改。
+    """
     for name in ("db_insert", "db_update", "db_delete"):
         tool = _tool(name)
-        assert tool.requires_dual_auth({"table": "ACTIVITIES"}) is False, name
-        assert tool.requires_dual_auth({"table": " activities "}) is False, name
+        assert tool.dual_auth_exempt is None, name
+        assert tool.requires_dual_auth({"table": "ACTIVITIES"}) is True, name
         assert tool.requires_dual_auth({"table": "USERS"}) is True, name
+        assert tool.requires_dual_auth({"table": "NOTIFICATIONS"}) is True, name
         assert tool.requires_dual_auth({}) is True, name
 
     assert _tool("db_ddl").requires_dual_auth({"sql": "DROP TABLE X"}) is True
@@ -431,7 +436,7 @@ async def test_fs_chmod_prepare_reports_octal_transition(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_db_insert_prepare_lists_columns() -> None:
-    draft = await _prepare("db_insert", table="activities", values={"B": 2, "A": 1})
+    draft = await _prepare("db_insert", table="notifications", values={"B": 2, "A": 1})
 
     assert draft.preview["kind"] == "row_insert"
     assert draft.preview["columns"] == ["A", "B"]
@@ -449,7 +454,7 @@ async def test_db_row_write_prepare_requires_key_object() -> None:
 async def test_db_ddl_prepare_rejects_illegal_sql() -> None:
     """静态闸前置：非法 SQL 连提案都不该建。"""
     with pytest.raises(AgentError) as caught:
-        await _prepare("db_ddl", sql="SELECT * FROM USERS")
+        await _prepare("db_ddl", sql="SELECT * FROM EXPORT_TASKS")
 
     assert caught.value.status_code == 400
     assert "DDL" in caught.value.message
@@ -458,7 +463,7 @@ async def test_db_ddl_prepare_rejects_illegal_sql() -> None:
 @pytest.mark.asyncio
 async def test_db_ddl_prepare_requires_confirm_for_destructive() -> None:
     with pytest.raises(AgentError) as caught:
-        await _prepare("db_ddl", sql="DELETE FROM ACTIVITIES")
+        await _prepare("db_ddl", sql="DELETE FROM NOTIFICATIONS")
 
     assert caught.value.status_code == 400
     assert "confirm" in caught.value.message
@@ -467,15 +472,15 @@ async def test_db_ddl_prepare_requires_confirm_for_destructive() -> None:
 @pytest.mark.asyncio
 async def test_db_ddl_prepare_preview_shape() -> None:
     draft = await _prepare(
-        "db_ddl", sql="DELETE FROM ACTIVITIES WHERE ID = 1", confirm="ACTIVITIES"
+        "db_ddl", sql="DELETE FROM NOTIFICATIONS WHERE ID = 1", confirm="NOTIFICATIONS"
     )
 
     preview = draft.preview
     assert preview["kind"] == "sql"
     assert preview["verb"] == "DELETE"
-    assert preview["target"] == "ACTIVITIES"
+    assert preview["target"] == "NOTIFICATIONS"
     assert preview["destructive"] is True
-    assert preview["sql"].startswith("DELETE FROM ACTIVITIES")
+    assert preview["sql"].startswith("DELETE FROM NOTIFICATIONS")
     assert draft.summary
 
 
@@ -700,9 +705,9 @@ async def test_db_insert_impl_reports_rowcount(sessions, monkeypatch) -> None:
 
     monkeypatch.setattr(db_content, "insert_row", _insert)
 
-    data = await _impl("db_insert", table="ACTIVITIES", values={"NAME": "x"})
+    data = await _impl("db_insert", table="NOTIFICATIONS", values={"NAME": "x"})
 
-    assert data == {"kind": "row_insert", "table": "ACTIVITIES", "rowcount": 1}
+    assert data == {"kind": "row_insert", "table": "NOTIFICATIONS", "rowcount": 1}
 
 
 @pytest.mark.asyncio

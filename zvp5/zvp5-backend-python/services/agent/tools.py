@@ -50,12 +50,19 @@ VOLUNTEER_TOOL_NAMES = frozenset(
         "list_groups",
         "update_member_duration",
         "set_member_status",
+        # 活动管理专用写工具（tools_domain）：创建人/审核人由服务端派生。
+        "activity_create",
+        "activity_update",
+        "activity_review",
+        # 账号检索/班级归属：活动/时长排障要先拿到用户 oid（白名单投影）。
+        "user_search",
+        "user_set_class",
     }
 )
 
 PLATFORM_HELP_TOOL = "platform_help"
 
-# 非管理员看到的 = 义工管理 11 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
+# 非管理员看到的 = 义工管理 17 个 + 平台帮助。帮助文档对所有 AI 可用角色开放。
 DEPARTMENT_TOOL_NAMES = VOLUNTEER_TOOL_NAMES | {PLATFORM_HELP_TOOL}
 
 # 允许「直接执行」（不建提案、不过 TOTP）的写工具名单。**模块级常量**而不是

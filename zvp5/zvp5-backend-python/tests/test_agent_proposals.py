@@ -744,12 +744,16 @@ async def test_dual_auth_success_records_the_approver(monkeypatch, env, dual_too
 
 
 # ---------------------------------------------------------------------------
-# 义工业务表 DML 的豁免
+# 通用 DML 的表级豁免已取消
 # ---------------------------------------------------------------------------
 
 
 def _db_update_tool(monkeypatch):
-    """把真实 ``db_update`` 换成只在内存里执行的副本（保留注册表里的豁免谓词）。"""
+    """把真实 ``db_update`` 换成只在内存里执行的副本。
+
+    真实工具现在对账号/义工表直接表级拒绝，本组用例只验证提案层的授权语义，
+    因此替换 impl/prepare（不绕过真实 ``dual_auth_action``）。
+    """
     real = TOOLS["db_update"]
     executed: list[dict] = []
 
@@ -786,31 +790,32 @@ async def _propose_db_update(tool, table: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_volunteer_table_dml_skips_dual_auth(monkeypatch, env) -> None:
+async def test_generic_dml_has_no_volunteer_table_exemption(monkeypatch, env) -> None:
+    """义工表不再享受“本人确认即可”的豁免：提案一律要求双人动态码。"""
     tool, executed = _db_update_tool(monkeypatch)
     fake = FakeDualAuth()
     monkeypatch.setattr(dual_auth, "require_dual_auth", fake)
 
     created = await _propose_db_update(tool, "ACTIVITIES")
 
-    assert created["requires_dual_auth"] is False
-    result = await proposal.confirm(oid=created["oid"], user=ADMIN)
+    assert created["requires_dual_auth"] is True
+    with pytest.raises(AgentError) as excinfo:
+        await proposal.confirm(oid=created["oid"], user=ADMIN)
 
-    assert result["status"] == "confirmed"
-    assert result["approver_oid"] is None
-    assert executed == [
-        {"table": "ACTIVITIES", "key": {"OID": "64b7f0c2e1a3b4c5d6e7fc01"}, "values": {"NAME": "x"}}
-    ]
-    # 豁免路径根本不碰动态码校验。
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.code == "AI_AGENT_TOTP_REQUIRED"
+    assert executed == []
     assert fake.calls == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("table", ["activities", ' "Activities" ', "GROUPS"])
-async def test_volunteer_table_name_is_normalized(monkeypatch, env, table) -> None:
+async def test_dml_table_name_no_longer_changes_authorization(
+    monkeypatch, env, table
+) -> None:
     tool, _executed = _db_update_tool(monkeypatch)
     created = await _propose_db_update(tool, table)
-    assert created["requires_dual_auth"] is False
+    assert created["requires_dual_auth"] is True
 
 
 @pytest.mark.asyncio

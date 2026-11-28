@@ -410,6 +410,25 @@ class CachedActivitiesRepo(_CachedRepo):
         await cache.bump_epoch("activities")
         return result
 
+    async def cas_status(self, oid: str, expected: str, fields: Any) -> bool:
+        """审核状态 CAS 写也必须失效详情缓存。
+
+        审核路由先 ``get`` 再 ``cas_status``：详情 ``activity:{oid}`` 缓存
+        （TTL 600s）若不在这里失效，第一次审核成功后它仍是旧状态。紧接着的
+        第二次审核会拿旧状态当 ``expected``，CAS 落空并回 409——用户看到的就是
+        「状态已被其他操作修改」，短时间内连续审核必然失败。
+
+        失败（``rowcount=0``）同样失效：它说明缓存里的 ``expected`` 已经落后于
+        库里的真实状态，留着只会让重试继续读旧值。失效是幂等且廉价的，最多多
+        回源一次。
+        """
+        changed = await self._inner.cas_status(oid, expected, fields)
+        if self._use_cache:
+            oid = normalize_oid(oid)
+            await cache.forget(_k("activity", oid))
+            await cache.bump_epoch("activities")
+        return changed
+
     async def delete(self, *args: Any, **kwargs: Any) -> None:
         result = await self._inner.delete(*args, **kwargs)
         oid = _norm(args[0] if args else kwargs.get("oid"))

@@ -203,9 +203,6 @@ async def create_activity_v2(
     """
     await volunteer.validate_create_permission(user, activity.type == "hybrid")
 
-    activity.status = "pending"
-
-    # 名称 + 地点 + 审核人三列一次校验：宽度以 DDL 为准，超了在写库前就是 400。
     _validate_create_fields(activity)
 
     validated, reason = validate_activity_description(activity.description)
@@ -213,13 +210,13 @@ async def create_activity_v2(
     if not validated:
         raise HTTPException(status_code=400, detail=reason)
 
-    activity.creator = str(user["id"])
+    actor_oid = str(user["id"])
 
     extra = {
         key: value
         for key, value in {
             "place": activity.place,
-            "approver": activity.approver,
+            "approver": "authority",
         }.items()
         if value
     }
@@ -234,8 +231,8 @@ async def create_activity_v2(
                 activity.name,
                 activity.description,
                 activity.type,
-                activity.creator,
-                activity.appointee,
+                actor_oid,
+                actor_oid,
                 activity.origin,
                 activity.date,
             )
@@ -977,4 +974,3 @@ async def add_activity_member_v3(
     # 否则要等到每日 01:00 的全量重建才更新。人数闸门、信号量、批量 upsert
     # 都在本模块的 _schedule_user_time_refresh 里。
     _schedule_user_time_refresh(activity_id)
-

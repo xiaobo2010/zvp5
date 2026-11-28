@@ -537,6 +537,16 @@ def test_cancel_if_queued_is_a_cas() -> None:
     assert "ai_runs.status = 'queued'" in sql
 
 
+def test_cancel_queued_requested_converges_only_half_cancelled_rows() -> None:
+    """兜底清扫只碰「已请求取消 ∩ 未开跑」：正常排队行与 running 都不许动。"""
+    sql = _sql(runs_repo._cancel_queued_requested_stmt(TS))
+
+    assert "SET status='cancelled'" in sql
+    assert "finished_at=TO_DATE(" in sql
+    assert "ai_runs.status = 'queued'" in sql
+    assert "ai_runs.cancel_requested = 1" in sql
+
+
 def test_list_active_returns_queued_and_running_only() -> None:
     sql = _sql(runs_repo._list_active_stmt(OWNER))
 

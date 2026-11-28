@@ -29,7 +29,7 @@ import pytest_asyncio
 from db import backends
 from db.repos.oracle.users import UserGoneError
 from db.repos.protocols import ActiveRunConflict
-from services.agent import run_queue
+from services.agent import live, run_cache, run_queue
 from services.agent.tool_impl import AgentError
 from util import agent_unlock
 
@@ -385,6 +385,15 @@ class FakeRunsRepo:
         row["finished_at"] = _now()
         return True
 
+    async def cancel_queued_requested(self, *, at=None) -> int:
+        hits = 0
+        for row in self.rows.values():
+            if row["status"] == "queued" and row["cancel_requested"]:
+                row["status"] = "cancelled"
+                row["finished_at"] = at or _now()
+                hits += 1
+        return hits
+
     async def interrupt_running(self, **_kwargs) -> int:
         self.interrupt_running_calls += 1
         hits = 0
@@ -609,6 +618,26 @@ async def test_submit_is_idempotent_on_client_msg_id(env) -> None:
     assert second["message_oid"] == first["message_oid"]
     # 只写了一条用户消息：重试不重复计费。
     assert len(env.msg.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_deduped_submit_reports_the_existing_run_status(env) -> None:
+    """重试同一个 ``client_msg_id`` 时，回执状态取自已有行而不是硬写 queued。
+
+    客户端在 run 结束后重发（网络重试、切回页面）是常态；把 succeeded 说成
+    queued 会让它一直等一个不会发生的「开始执行」。
+    """
+    first = await run_queue.submit(
+        user=ADMIN, conversation_oid=CONV, content="查一下", client_msg_id="c-2"
+    )
+    env.runs.rows[first["run_id"]]["status"] = "succeeded"
+
+    second = await run_queue.submit(
+        user=ADMIN, conversation_oid=CONV, content="查一下", client_msg_id="c-2"
+    )
+
+    assert second["deduped"] is True
+    assert second["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -1329,12 +1358,23 @@ async def test_on_round_is_dropped_when_the_row_is_already_terminal(env, monkeyp
 
 @pytest.mark.asyncio
 async def test_cancel_a_queued_run_goes_terminal_immediately(env) -> None:
-    submitted = await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="跑")
+    submitted = await run_queue.submit(
+        user=ADMIN,
+        conversation_oid=CONV,
+        content="跑",
+        reference="终端里的输出",
+        overrides={"model": "m-1", "thinking": "high"},
+    )
+    assert submitted["run_id"] in run_queue._REFERENCES
+    assert submitted["run_id"] in run_queue._OVERRIDES
 
     result = await run_queue.cancel(user=ADMIN, run_id=submitted["run_id"])
 
     assert result["status"] == "cancelled"
     assert env.runs.rows[submitted["run_id"]]["cancel_requested"] is True
+    # 永远不会被执行的任务不该在进程里留下参考内容/按次覆盖。
+    assert run_queue._REFERENCES == {}
+    assert run_queue._OVERRIDES == {}
 
 
 @pytest.mark.asyncio
@@ -1372,6 +1412,37 @@ async def test_startup_recovery_interrupts_running_but_keeps_queued(env) -> None
 
 
 @pytest.mark.asyncio
+async def test_startup_recovery_converges_a_half_cancelled_queued_run(env) -> None:
+    """置 cancel 标志与写终态之间崩溃：这行不能永久占住活跃唯一索引。
+
+    生产形态：用户点了取消，进程在 ``request_cancel`` 与
+    ``mark_cancelled_if_queued`` 之间退出。它既不会被 ``claim_next`` 领取
+    （跳过已取消），也不会被 watchdog 判僵尸（只看 running），于是该会话之后
+    每次提交都 409。
+    """
+    stuck = env.runs.seed(conversation_oid=CONV, status="queued", cancel_requested=True)
+
+    recovered = await run_queue.recover_on_startup()
+
+    assert recovered == 0  # 没有 running 残留
+    assert env.runs.rows[stuck["_id"]]["status"] == "cancelled"
+    assert env.runs.rows[stuck["_id"]]["finished_at"] is not None
+    # 活跃唯一索引已释放：同一个会话可以重新提交。
+    again = await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="重来")
+    assert again["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_converges_a_half_cancelled_queued_run(env) -> None:
+    """运行期同类半取消也由 watchdog 每拍收敛，不必等下一次重启。"""
+    stuck = env.runs.seed(conversation_oid=CONV, status="queued", cancel_requested=True)
+
+    assert await run_queue.watchdog_tick() == 0
+
+    assert env.runs.rows[stuck["_id"]]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_watchdog_cancels_the_coroutine_of_a_stale_run(env, monkeypatch) -> None:
     started = asyncio.Event()
 
@@ -1397,6 +1468,65 @@ async def test_watchdog_cancels_the_coroutine_of_a_stale_run(env, monkeypatch) -
     assert hit == 1
     assert env.runs.interrupt_stale_calls  # cutoff 落在「阈值之前」
     assert env.runs.rows[submitted["run_id"]]["status"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_terminal_reaches_cache_and_sse(env, monkeypatch) -> None:
+    """watchdog 写的终态也必须送到前端，不能等执行方那次注定失败的 CAS。
+
+    watchdog 先 ``interrupt_stale`` 再掐协程，执行方随后的 ``_finish`` 会因
+    CAS 失败被丢弃。如果收尾通知只挂在「写成功」分支上，SSE 订阅者会一直停在
+    「执行中」等一个永远不来的终态帧，轮询快照也会继续返回 running。
+    """
+    started = asyncio.Event()
+
+    async def handler(*, on_round, should_stop, on_summary=None, record):
+        started.set()
+        await asyncio.sleep(30)  # 只能由 watchdog 结束
+        return {"stop_reason": None, "rounds": 0}
+
+    install_executor(monkeypatch, handler)
+    submitted = await run_queue.submit(user=ADMIN, conversation_oid=CONV, content="卡住")
+    run_id = submitted["run_id"]
+    await run_queue.kick()
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    # 前端已经在轮询 + SSE 已订阅：先放一份「running」快照进缓存。
+    run_cache.put(
+        run_id, row=dict(env.runs.rows[run_id]), events=[], proposals=[], ttl=30.0
+    )
+    subscription = live.subscribe(run_id)
+
+    run_queue._in_flight[run_id]["heartbeat"] = datetime.now() - timedelta(
+        seconds=run_queue.stale_seconds() + 10
+    )
+    env.runs.stale_hits = 1
+
+    try:
+        assert await run_queue.watchdog_tick() == 1
+        await wait_idle()
+
+        frame = await subscription.get(0.5)
+        assert frame is not None
+        assert frame["type"] == "resync"
+    finally:
+        live.unsubscribe(subscription)
+        live.cleanup(run_id, drop_seq=True)
+
+    assert env.runs.rows[run_id]["status"] == "interrupted"
+    # 快照已失效：下一拍轮询看见的是 interrupted，而不是缓存里的 running。
+    assert run_cache.get(run_id) is None
+
+
+def test_reset_clears_run_payloads() -> None:
+    """``reset`` 必须把参考内容与按次覆盖一起清掉（测试隔离 / 进程内载荷）。"""
+    run_queue._remember_reference("r1", "终端片段")
+    run_queue._remember_override("r1", model="m-1", thinking="high")
+
+    run_queue.reset()
+
+    assert run_queue._REFERENCES == {}
+    assert run_queue._OVERRIDES == {}
 
 
 @pytest.mark.asyncio

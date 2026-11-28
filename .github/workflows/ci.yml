@@ -236,11 +236,8 @@ jobs:
       github.event.release.prerelease == false
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # production 要 xiaobo2010 人工审批；production-auto 无审批人，但分支策略
-    # 与 production 相同（main + v* tag）。仅主题作者 neiworldfirst1314-cell
-    # 走 auto 通道，其他人一律回到 production 等 xiaobo2010 放行。
-    environment:
-      name: ${{ github.actor == 'neiworldfirst1314-cell' && 'production-auto' || 'production' }}
+    # 全部走 production 环境，由 xiaobo2010 人工放行；production-auto 也已加上同一审批人。
+    environment: production
     concurrency:
       group: production-deploy
       cancel-in-progress: false

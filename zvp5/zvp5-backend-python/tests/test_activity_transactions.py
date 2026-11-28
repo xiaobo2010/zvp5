@@ -386,15 +386,27 @@ def activity_payload(name="支教活动", place="学校", approver="member"):
 
 
 @pytest.mark.asyncio
-async def test_v2_create_writes_activity_extra_and_audit_in_one_transaction(store):
+async def test_v2_create_writes_activity_extra_and_audit_in_one_transaction(store, monkeypatch):
+    payload = activity_payload(approver=OTHER).model_copy(
+        update={"creator": OTHER, "appointee": OTHER, "status": "effective"}
+    )
+    captured = []
+    create = Repos.create
+
+    async def capture_create(self, *args):
+        captured.append(args)
+        return await create(self, *args)
+
+    monkeypatch.setattr(Repos, "create", capture_create)
     response = await activities.create_activity_v2(
-        activity_payload(), {"id": USER, "per": ["admin"]}, Log()
+        payload, {"id": USER, "per": ["admin"]}, Log()
     )
 
     assert response.status_code == 201
     assert store.data["activities"] == 1
+    assert captured[0][3:5] == (USER, USER)
     # place/approver 的补写与建行同一事务：失败会一起回滚。
-    assert store.updates == [{"place": "学校", "approver": "member"}]
+    assert store.updates == [{"place": "学校", "approver": "authority"}]
     assert store.data["logs"] == 1
 
 
