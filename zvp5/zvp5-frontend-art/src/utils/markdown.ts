@@ -23,8 +23,8 @@ const md = new MarkdownIt({
  * 白名单（放开它等于放开任意样式注入）。这里改写成 align 属性：视觉等价，
  * 白名单不放松。class / style / script / iframe 一律仍然挡在门外。
  */
-function cellAlignment(attrs: Array<[string, string]> | null): string {
-  const style = attrs?.find(([name]) => name === 'style')?.[1] ?? ''
+function cellAlignment(attrs: Array<[string, string | number]> | null): string {
+  const style = String(attrs?.find(([name]) => name === 'style')?.[1] ?? '')
   const matched = /text-align\s*:\s*(left|center|right)/.exec(style)
   return matched?.[1] ?? ''
 }

@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
 import type { Plugin } from 'vite'
 
 /**
@@ -33,62 +31,59 @@ export function externalizeInlineScripts(): Plugin {
     configResolved(config) {
       assetBase = `${config.base.replace(/\/+$/, '')}/assets/`
     },
-    async closeBundle() {
-      const outDir = path.resolve(process.cwd(), 'dist')
-      const htmlPath = path.join(outDir, 'index.html')
-      const html = await fs.readFile(htmlPath, 'utf8')
+    /**
+     * Vite 8（内置 rolldown）不再把 index.html 放进 rolldown bundle，落盘时机
+     * 也晚于 closeBundle，旧实现读 dist/index.html 会 ENOENT。改为在
+     * transformIndexHtml 的 post 阶段改写最终 HTML 并 emit 外置脚本：
+     * plugin-legacy 的注入同样是 post 且注册在前，因此这里能拿到含内联引导
+     * 脚本的最终 HTML，emit 的资源会随正常产物一起落盘。
+     */
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        const scriptTag = /<script\b([^>]*?)>([\s\S]*?)<\/script>/gi
+        const pending: Array<{ filename: string; body: string }> = []
+        const seen = new Set<string>()
 
-      const scriptTag = /<script\b([^>]*?)>([\s\S]*?)<\/script>/gi
-      const assetsDir = path.join(outDir, 'assets')
-      await fs.mkdir(assetsDir, { recursive: true })
+        let next = html.replace(scriptTag, (_match, attrsRaw: string, body: string) => {
+          // 只跳过真正的外置脚本：`(?:^|\s)src=` 不含 `data-src`（legacy-entry
+          // 标签带 data-src 且仍有内联体，误跳会让平板 legacy 路径被 CSP 拦死）。
+          if (/(?:^|\s)src\s*=/i.test(attrsRaw)) return _match
+          if (!body.trim()) return _match
+          const hash = createHash('sha256').update(body).digest('hex').slice(0, 8)
+          const filename = `boot-${hash}.js`
+          if (!seen.has(filename)) {
+            seen.add(filename)
+            pending.push({ filename, body })
+          }
+          return `<script${attrsRaw} src="${assetBase}${filename}"></script>`
+        })
 
-      const pending: Array<{ filename: string; body: string }> = []
-      const seen = new Set<string>()
-
-      const next = html.replace(scriptTag, (_match, attrsRaw: string, body: string) => {
-        // 只跳过真正的外置脚本：`(?:^|\s)src=` 不含 `data-src`（legacy-entry
-        // 标签带 data-src 且仍有内联体，误跳会让平板 legacy 路径被 CSP 拦死）。
-        if (/(?:^|\s)src\s*=/i.test(attrsRaw)) return _match
-        if (!body.trim()) return _match
-        const hash = createHash('sha256').update(body).digest('hex').slice(0, 8)
-        const filename = `boot-${hash}.js`
-        if (!seen.has(filename)) {
-          seen.add(filename)
-          pending.push({ filename, body })
+        for (const { filename, body } of pending) {
+          this.emitFile({ type: 'asset', fileName: `assets/${filename}`, source: body })
         }
-        return `<script${attrsRaw} src="${assetBase}${filename}"></script>`
-      })
 
-      // 先落盘外置脚本，再改写 index.html：中途失败时产物里不会出现
-      // 指向不存在文件的引用。
-      for (const { filename, body } of pending) {
-        await fs.writeFile(path.join(assetsDir, filename), body)
-      }
-      if (pending.length > 0) {
-        await fs.writeFile(htmlPath, next)
-      }
-
-      // 复扫落盘产物：仍存在内联脚本体即构建失败，杜绝 CSP 静默回归
-      // 'unsafe-inline'。
-      const written = await fs.readFile(htmlPath, 'utf8')
-      const leftovers: string[] = []
-      for (const m of written.matchAll(scriptTag)) {
-        if (!/(?:^|\s)src\s*=/i.test(m[1]) && m[2].trim()) {
-          leftovers.push(m[0].slice(0, 80))
+        // 复扫：仍存在内联脚本体即构建失败，杜绝 CSP 静默回归 'unsafe-inline'。
+        const leftovers: string[] = []
+        for (const m of next.matchAll(scriptTag)) {
+          if (!/(?:^|\s)src\s*=/i.test(m[1]) && m[2].trim()) {
+            leftovers.push(m[0].slice(0, 80))
+          }
         }
-      }
-      if (leftovers.length > 0) {
-        throw new Error(
-          `[externalize-inline-scripts] index.html 仍存在未外置的内联脚本：\n${leftovers.join('\n')}`
-        )
-      }
+        if (leftovers.length > 0) {
+          this.error(
+            `[externalize-inline-scripts] index.html 仍存在未外置的内联脚本：\n${leftovers.join('\n')}`
+          )
+        }
 
-      if (pending.length > 0) {
-        console.log(
-          `[externalize-inline-scripts] 已外置 ${pending.length} 段内联脚本 → ${pending
-            .map((p) => p.filename)
-            .join(', ')}`
-        )
+        if (pending.length > 0) {
+          console.log(
+            `[externalize-inline-scripts] 已外置 ${pending.length} 段内联脚本 → ${pending
+              .map((p) => p.filename)
+              .join(', ')}`
+          )
+        }
+        return next
       }
     }
   }

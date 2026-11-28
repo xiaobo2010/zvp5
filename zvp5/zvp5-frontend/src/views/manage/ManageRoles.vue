@@ -451,12 +451,12 @@ function roleLabel(role: string): string {
   return t(`manage.roleManagement.roles.${role}`)
 }
 
-function displayRoles(row: User): string[] {
+function displayRoles(row: Partial<User>): string[] {
   const roles = (row.roles ?? []) as string[]
   return roles.filter((role) => role !== 'student')
 }
 
-function canEdit(row: User): boolean {
+function canEdit(row: Partial<User>): boolean {
   const roles = (row.roles ?? []) as string[]
   return row._id !== userStore._id && !roles.includes('admin')
 }
@@ -495,8 +495,8 @@ function changeRoleFilter() {
   void loadUsers()
 }
 
-function openEdit(row: User) {
-  target.value = row
+function openEdit(row: Partial<User>) {
+  target.value = row as User
   const roles = (row.roles ?? []) as UserPosition[]
   checkedRoles.value = roles.filter((role) => editableRoles.includes(role))
   extraRoles.value = roles.filter((role) => !editableRoles.includes(role))
