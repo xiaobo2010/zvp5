@@ -57,18 +57,21 @@ import { applyPerfAttributes } from './utils/devicePerf'
 // 渲染模式偏好：mount 之前写 data-render-mode，避免先按精细档画一帧
 import { installRenderMode } from './utils/renderMode'
 
-// 旧生产包曾注册过 Service Worker；如果当前部署已没有 /sw.js，继续让它
-// 控制页面只会一直返回旧入口。先探测脚本，确认缺失后注销并清掉旧缓存。
+// 旧生产包曾注册过 Service Worker；如果它没有当前兼容标记，继续让它
+// 控制主题入口就会把已经不存在的旧页面/资源从 CacheStorage 发回来。
+// 这次不能只看 /sw.js 是否存在：旧版本同样有一个合法的 sw.js。
+const SW_COMPAT_MARKER = 'ZVP5_SW_COMPAT_V2'
+
 async function retireLegacyServiceWorker() {
   if (!('serviceWorker' in navigator)) return
   try {
     const registrations = await navigator.serviceWorker.getRegistrations()
     if (!registrations.length) return
-    const probe = await fetch('/sw.js', { method: 'HEAD', cache: 'no-store' })
-    // 预览 Worker 会把不存在的 /sw.js 回落成 text/html 入口页；只看 ok
-    // 会把 SPA HTML 当成 Service Worker 继续保留旧缓存。
+    const probe = await fetch(`/sw.js?compat=${SW_COMPAT_MARKER}`, { cache: 'no-store' })
     const type = probe.headers.get('content-type') || ''
-    if (probe.ok && type.toLowerCase().includes('javascript')) return
+    const source =
+      probe.ok && type.toLowerCase().includes('javascript') ? await probe.text() : ''
+    if (source.includes(SW_COMPAT_MARKER)) return
     await Promise.all(registrations.map((registration) => registration.unregister()))
     if ('caches' in window) {
       await Promise.all((await caches.keys()).map((key) => caches.delete(key)))

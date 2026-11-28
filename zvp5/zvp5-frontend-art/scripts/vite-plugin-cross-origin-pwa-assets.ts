@@ -17,6 +17,8 @@ function staticAssetPath(base: string, relativePath: string): string {
  * transformIndexHtml 都已跑完），sw.js 仍由 pwa 在 closeBundle 落盘，继续用
  * fs 改写。
  */
+const SW_COMPAT_MARKER = 'ZVP5_SW_COMPAT_V2'
+
 export function crossOriginPwaAssets(staticBase: string): Plugin {
   let outDir = 'dist'
   return {
@@ -41,15 +43,18 @@ export function crossOriginPwaAssets(staticBase: string): Plugin {
     closeBundle: {
       order: 'post',
       async handler() {
-        if (staticBase === '/') return
-
         const swPath = path.join(outDir, 'sw.js')
-        const sw = await fs.readFile(swPath, 'utf8')
-        const rewritten = sw.replace(
-          /url:"((?!https?:|\/\/|\/)[^"]+)"/g,
-          (_match, relativePath: string) => `url:"${staticAssetPath(staticBase, relativePath)}"`
-        )
-        await fs.writeFile(swPath, rewritten)
+        let sw = await fs.readFile(swPath, 'utf8')
+        if (staticBase !== '/') {
+          sw = sw.replace(
+            /url:"((?!https?:|\/\/|\/)[^"]+)"/g,
+            (_match, relativePath: string) => `url:"${staticAssetPath(staticBase, relativePath)}"`
+          )
+        }
+        if (!sw.includes(SW_COMPAT_MARKER)) {
+          sw += `\n/* ${SW_COMPAT_MARKER} */\n`
+        }
+        await fs.writeFile(swPath, sw)
       }
     }
   }
