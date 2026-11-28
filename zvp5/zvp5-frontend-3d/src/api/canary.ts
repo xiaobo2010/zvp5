@@ -376,7 +376,7 @@ export async function fetchMyDevice(): Promise<CanaryDeviceInfo> {
   return canaryRequest<CanaryDeviceInfo>('/v1/users/me/device')
 }
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
   const binary = atob(padded)

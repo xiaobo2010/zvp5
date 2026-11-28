@@ -50,7 +50,7 @@ const env = vi.hoisted(() => {
   }
 })
 
-vi.mock('monaco-editor/esm/vs/editor/editor.api', () => ({
+vi.mock('monaco-editor/editor', () => ({
   editor: {
     create: vi.fn((_host: unknown, options: { value: string }) => {
       env.editorState.value = options.value
@@ -66,22 +66,22 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api', () => ({
   KeyCode: { KeyS: 49 }
 }))
 
-vi.mock('monaco-editor/esm/vs/editor/editor.all.js', () => ({}))
+vi.mock('monaco-editor/features/register.all', () => ({}))
 
-vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker&url', () => ({ default: '/assets/editor.worker.js' }))
+vi.mock('monaco-editor/editor/editor.worker?worker&url', () => ({ default: '/assets/editor.worker.js' }))
 
-vi.mock('monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/python/python.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/shell/shell.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/html/html.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/css/css.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/sql/sql.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/xml/xml.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/ini/ini.contribution', () => ({}))
-vi.mock('monaco-editor/esm/vs/basic-languages/dockerfile/dockerfile.contribution', () => ({}))
+vi.mock('monaco-editor/languages/definitions/yaml/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/python/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/shell/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/javascript/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/typescript/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/html/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/css/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/sql/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/markdown/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/xml/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/ini/register.js', () => ({}))
+vi.mock('monaco-editor/languages/definitions/dockerfile/register.js', () => ({}))
 
 vi.mock('element-plus', () => {
   const ElButton = {

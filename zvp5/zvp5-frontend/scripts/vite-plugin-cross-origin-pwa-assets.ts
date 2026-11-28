@@ -19,20 +19,20 @@ export function crossOriginPwaAssets(staticBase: string): Plugin {
     configResolved(config) {
       outDir = path.resolve(config.root, config.build.outDir)
     },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        if (staticBase === '/') return html
+        return html.replace(
+          'href="/manifest.webmanifest"',
+          `href="${staticAssetPath(staticBase, 'manifest.webmanifest')}"`
+        )
+      }
+    },
     closeBundle: {
       order: 'post',
       async handler() {
         if (staticBase === '/') return
-
-        const htmlPath = path.join(outDir, 'index.html')
-        const html = await fs.readFile(htmlPath, 'utf8')
-        await fs.writeFile(
-          htmlPath,
-          html.replace(
-            'href="/manifest.webmanifest"',
-            `href="${staticAssetPath(staticBase, 'manifest.webmanifest')}"`
-          )
-        )
 
         const swPath = path.join(outDir, 'sw.js')
         const sw = await fs.readFile(swPath, 'utf8')

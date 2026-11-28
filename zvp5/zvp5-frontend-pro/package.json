@@ -9,14 +9,14 @@
     "preview": "vite preview --port 5274"
   },
   "dependencies": {
-    "vue": "^3.5.45",
-    "vue-router": "^4.6.5"
+    "vue": "^3.5.46",
+    "vue-router": "^5.5.3"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.11",
     "@vitejs/plugin-vue": "^6.0.11",
-    "typescript": "~5.8.3",
-    "vite": "npm:rolldown-vite@7.3.1",
+    "typescript": "~6.0.3",
+    "vite": "^8.4.0",
     "vue-tsc": "^3.3.14"
   }
 }
