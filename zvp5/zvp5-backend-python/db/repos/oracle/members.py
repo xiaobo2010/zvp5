@@ -253,12 +253,20 @@ def _list_for_user_activities_count_stmt(user_oid: str, pattern: str):
 
 
 def _list_for_activity_stmt(
-    activity_oid: str, query: str, page: int, size: int
+    activity_oid: str,
+    query: str,
+    page: int,
+    size: int,
+    sort: str | None = None,
+    asc: bool = False,
 ):
     """``list_for_activity`` select: members of an activity, name-filtered.
 
     The member name comes from the LEFT JOIN and the total from
     ``COUNT(*) OVER()`` (evaluated over the filtered set, before the row limit).
+    ``sort`` picks the ORDER BY key: ``"business_id"`` (学号) or ``"duration"``
+    (时长, 学号 升序兜底，避免同分时页内顺序随机)。``NULLS LAST`` 让缺少
+    ``USERS`` 行的成员在降序时也不被顶到最前。
     """
     stmt = (
         select(
@@ -281,8 +289,25 @@ def _list_for_activity_stmt(
                 func.lower(users_tbl.c.business_id).like(pattern, escape="\\"),
             )
         )
+    if sort == "duration":
+        order = (
+            members_tbl.c.duration_hours.asc()
+            if asc
+            else members_tbl.c.duration_hours.desc()
+        )
+        # 时长相同按账号升序，保证跨页顺序稳定且与用户直觉一致。
+        order_by = (order.nulls_last(), users_tbl.c.business_id.asc().nulls_last())
+    elif sort == "business_id":
+        order = (
+            users_tbl.c.business_id.asc()
+            if asc
+            else users_tbl.c.business_id.desc()
+        )
+        order_by = (order.nulls_last(), members_tbl.c.oid.asc())
+    else:
+        order_by = (members_tbl.c.oid.asc(),)
     return (
-        stmt.order_by(members_tbl.c.oid.asc())
+        stmt.order_by(*order_by)
         .offset((page - 1) * size)
         .limit(size)
     )
@@ -570,10 +595,16 @@ class OracleMembersRepo:
         self._session = session
 
     async def list_for_activity(
-        self, activity_oid: str, query: str, page: int, size: int
+        self,
+        activity_oid: str,
+        query: str,
+        page: int,
+        size: int,
+        sort: str | None = None,
+        asc: bool = False,
     ) -> tuple[list[Row], int]:
         activity = normalize_oid(activity_oid)
-        stmt = _list_for_activity_stmt(activity, query, page, size)
+        stmt = _list_for_activity_stmt(activity, query, page, size, sort, asc)
         count_stmt = _list_for_activity_count_stmt(activity, query)
         async with _session_for(self._session) as (session, _owns):
             rows = (await session.execute(stmt)).all()

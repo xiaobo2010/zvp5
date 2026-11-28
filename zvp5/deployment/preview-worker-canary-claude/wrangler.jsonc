@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zvp-yuren-canary-claude",
+  "main": "src/index.js",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "../../zvp5-frontend-canary/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "canary-claude.xiaobopisces.top/*",
+      "zone_id": "c4a321fb260ffc09d000112ac9b32b75",
+      "custom_domain": false
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

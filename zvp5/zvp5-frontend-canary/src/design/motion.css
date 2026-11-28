@@ -1,0 +1,120 @@
+/* ============================================================================
+   Motion System · 页面与内容入场
+   ----------------------------------------------------------------------------
+   时间尺度（见 tokens.css）：
+   - 微交互 180ms
+   - 组件过渡 280ms
+   - 弹窗 420ms
+   - 页面 340ms（进入）/ 180ms（退出）
+   曲线统一走阻尼弹簧 `--spring-*`，不做线性过渡。
+   ========================================================================== */
+
+/* --- 路由页面切换 --------------------------------------------------------- */
+.page-enter-active {
+  transition:
+    opacity 220ms var(--ease-out),
+    transform var(--dur-page) var(--spring-soft),
+    filter 220ms var(--ease-out);
+}
+
+.page-leave-active {
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale(0.994);
+  filter: blur(3px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -4px, 0);
+}
+
+/* --- 滚动显现（v-reveal） --------------------------------------------------
+   只用在首屏之外、需要独立节奏的区块；同屏元素继续走上面的 stagger。 */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  will-change: opacity, transform;
+  transition:
+    opacity 620ms var(--ease-out),
+    transform 760ms var(--spring-soft);
+}
+
+.reveal.is-revealed {
+  opacity: 1;
+  transform: none;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* --- 页面内容渐进进入 ----------------------------------------------------- */
+.page-view {
+  min-width: 0;
+}
+
+.page-view > * > * {
+  animation: content-in 520ms var(--spring-soft) both;
+}
+
+.page-view > * > *:nth-child(2) {
+  animation-delay: calc(var(--stagger-step) * 1);
+}
+
+.page-view > * > *:nth-child(3) {
+  animation-delay: calc(var(--stagger-step) * 2);
+}
+
+.page-view > * > *:nth-child(4) {
+  animation-delay: calc(var(--stagger-step) * 3);
+}
+
+.page-view > * > *:nth-child(5) {
+  animation-delay: calc(var(--stagger-step) * 4);
+}
+
+.page-view > * > *:nth-child(n + 6) {
+  animation-delay: calc(var(--stagger-step) * 5);
+}
+
+@keyframes content-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--reveal-distance), 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 页面容器本身在路由切换时已有位移，内部元素只做很小的上浮，
+   避免“所有东西一起飞进来”的廉价感。 */
+@media (max-width: 760px) {
+  .page-view > * > * {
+    animation-duration: 420ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-view > * > * {
+    animation: none;
+  }
+
+  .page-enter-from,
+  .page-leave-to {
+    filter: none;
+  }
+}

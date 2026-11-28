@@ -1,0 +1,46 @@
+{
+  "name": "@zvp5/frontend-canary",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "preview": "vite preview --port 4174",
+    "type-check": "vue-tsc --noEmit -p tsconfig.app.json",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "axios": "^1.21.1",
+    "dayjs": "^1.11.23",
+    "dompurify": "^3.4.18",
+    "markdown-it": "^15.0.3",
+    "motion-v": "^2.13.0",
+    "pinia": "^3.0.4",
+    "pinia-plugin-persistedstate": "^4.7.1",
+    "vue": "^3.5.45",
+    "vue-i18n": "^11.4.20",
+    "vue-router": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.9.0",
+    "@vue/test-utils": "^2.6.0",
+    "@vue/tsconfig": "^0.7.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-vue": "^10.12.1",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.10.1",
+    "typescript": "~5.8.3",
+    "vite": "npm:rolldown-vite@7.3.1",
+    "vitest": "^4.1.12",
+    "vue-tsc": "^3.3.14"
+  }
+}

@@ -1,0 +1,255 @@
+/* ============================================================================
+   ZVP5 Canary · Design Tokens
+   ----------------------------------------------------------------------------
+   设计语言：Anthropic 的温暖克制 × Apple Liquid Glass 的材质层次 × 一线 SaaS 的
+   信息密度。所有颜色、间距、圆角、阴影、动效都从这里取值，页面不写魔法数字。
+   ========================================================================== */
+
+:root {
+  /* --- Typography --------------------------------------------------------- */
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Songti SC",
+    "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+  --font-sans: "Avenir Next", "Helvetica Neue", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem);
+  --text-2xl: clamp(1.5rem, 1.25rem + 1.1vw, 2rem);
+  --text-3xl: clamp(1.9rem, 1.4rem + 2vw, 2.9rem);
+  --text-hero: clamp(2.4rem, 1.6rem + 3.4vw, 4.2rem);
+
+  --leading-tight: 1.12;
+  --leading-snug: 1.32;
+  --leading-normal: 1.62;
+
+  --tracking-tight: -0.02em;
+  --tracking-wide: 0.08em;
+  --tracking-eyebrow: 0.16em;
+
+  /* --- Spacing (4px grid) ------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* --- Radius ------------------------------------------------------------- */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --radius-2xl: 34px;
+  --radius-pill: 999px;
+
+  /* --- Motion ------------------------------------------------------------- */
+  --dur-instant: 90ms;
+  --dur-micro: 180ms;
+  --dur-fast: 220ms;
+  --dur-base: 280ms;
+  --dur-slow: 380ms;
+  --dur-modal: 420ms;
+  --dur-page: 340ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.42, 0.64, 1);
+  /* 弹簧曲线：默认用 cubic-bezier 兜底，支持 linear() 时在文件末尾换成积分曲线 */
+  --spring-snappy: cubic-bezier(0.3, 1.2, 0.5, 1);
+  --spring-soft: cubic-bezier(0.25, 1.05, 0.45, 1);
+  --spring-bouncy: cubic-bezier(0.34, 1.42, 0.64, 1);
+  --stagger-step: 42ms;
+  --reveal-distance: 14px;
+
+  /* --- Layout ------------------------------------------------------------- */
+  --rail-width: 248px;
+  --rail-width-compact: 76px;
+  --topbar-height: 68px;
+  --content-max: 1180px;
+  --gutter: clamp(1rem, 0.6rem + 1.6vw, 2rem);
+
+  /* --- Light palette ------------------------------------------------------ */
+  --c-canvas: #f5f1e8;
+  --c-canvas-deep: #ece5d7;
+  --c-surface: #fbf8f1;
+  --c-surface-raised: #fffdf8;
+  --c-surface-sunken: #efe9dc;
+  --c-ink: #1e1b16;
+  --c-ink-soft: #423c33;
+  --c-ink-muted: #726a5c;
+  --c-ink-faint: #a29785;
+  --c-line: #e2d8c7;
+  --c-line-strong: #cfc2ac;
+
+  --c-accent: #b4771f;
+  --c-accent-strong: #8c5a12;
+  --c-accent-soft: #f4e6c8;
+  --c-accent-ink: #6b430b;
+  --c-sage: #5d7461;
+  --c-sage-soft: #e4ebdf;
+  --c-success: #4d7358;
+  --c-success-soft: #e3ecdf;
+  --c-warning: #b4771f;
+  --c-warning-soft: #f5e7c9;
+  --c-danger: #a93b2b;
+  --c-danger-strong: #8e2f21;
+  --c-danger-soft: #f6e1da;
+  --c-info: #45657c;
+  --c-info-soft: #e0e9ef;
+  --c-focus: #8c5a12;
+
+  /* Liquid Glass（浅色）：导航、浮层、工具栏、玻璃按钮共用同一套材质 */
+  --glass-bg: rgba(251, 248, 241, 0.58);
+  --glass-bg-strong: rgba(251, 248, 241, 0.82);
+  --glass-flat: rgba(255, 253, 248, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.92);
+  --glass-edge-soft: rgba(255, 255, 255, 0.34);
+  --glass-sheen: rgba(255, 255, 255, 0.5);
+  --glass-hi: rgba(255, 255, 255, 0.75);
+  --glass-lo: rgba(64, 50, 30, 0.12);
+  --glass-shadow: 0 18px 48px -24px rgba(64, 50, 30, 0.38);
+  --glass-blur: 22px;
+  --glass-saturate: 175%;
+  --glass-contrast: 108%;
+
+  --shadow-xs: 0 1px 2px rgba(64, 50, 30, 0.06);
+  --shadow-sm: 0 1px 2px rgba(64, 50, 30, 0.05), 0 6px 16px -8px rgba(64, 50, 30, 0.18);
+  --shadow-md: 0 2px 4px rgba(64, 50, 30, 0.04), 0 16px 36px -18px rgba(64, 50, 30, 0.24);
+  --shadow-lg: 0 4px 10px rgba(64, 50, 30, 0.06), 0 28px 64px -28px rgba(64, 50, 30, 0.3);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  --mask: rgba(28, 24, 18, 0.42);
+  --focus-ring: 0 0 0 2px var(--c-surface-raised), 0 0 0 4px var(--c-focus);
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --c-canvas: #12110f;
+  --c-canvas-deep: #0c0b0a;
+  --c-surface: #1a1815;
+  --c-surface-raised: #221f1b;
+  --c-surface-sunken: #100f0d;
+  --c-ink: #f4eee3;
+  --c-ink-soft: #d9d1c4;
+  --c-ink-muted: #a79c8c;
+  --c-ink-faint: #857c6e;
+  --c-line: #312c25;
+  --c-line-strong: #453e34;
+
+  --c-accent: #e6b45f;
+  --c-accent-strong: #e6b45f;
+  --c-accent-soft: rgba(230, 180, 95, 0.14);
+  --c-accent-ink: #f0c77c;
+  --c-sage: #8fa893;
+  --c-sage-soft: rgba(143, 168, 147, 0.14);
+  --c-success: #7fa889;
+  --c-success-soft: rgba(127, 168, 137, 0.14);
+  --c-warning: #e6b45f;
+  --c-warning-soft: rgba(230, 180, 95, 0.14);
+  --c-danger: #e0735f;
+  --c-danger-strong: #e0735f;
+  --c-danger-soft: rgba(224, 115, 95, 0.14);
+  --c-info: #8fafc5;
+  --c-info-soft: rgba(143, 175, 197, 0.14);
+  --c-focus: #f0c77c;
+
+  --glass-bg: rgba(28, 25, 21, 0.52);
+  --glass-bg-strong: rgba(28, 25, 21, 0.78);
+  --glass-flat: rgba(38, 34, 29, 0.66);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-edge: rgba(255, 255, 255, 0.16);
+  --glass-edge-soft: rgba(255, 255, 255, 0.05);
+  --glass-sheen: rgba(255, 255, 255, 0.1);
+  --glass-hi: rgba(255, 255, 255, 0.12);
+  --glass-lo: rgba(0, 0, 0, 0.42);
+  --glass-shadow: 0 20px 54px -26px rgba(0, 0, 0, 0.72);
+  --glass-blur: 24px;
+  --glass-saturate: 155%;
+  --glass-contrast: 104%;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px -10px rgba(0, 0, 0, 0.55);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.4), 0 20px 44px -20px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 6px 14px rgba(0, 0, 0, 0.45), 0 36px 80px -32px rgba(0, 0, 0, 0.85);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  --mask: rgba(0, 0, 0, 0.58);
+  --focus-ring: 0 0 0 2px var(--c-surface-raised), 0 0 0 4px var(--c-focus);
+
+  color-scheme: dark;
+}
+
+/* --- Semantic aliases ------------------------------------------------------ */
+:root {
+  --bg: var(--c-canvas);
+  --surface: var(--c-surface);
+  --surface-raised: var(--c-surface-raised);
+  --surface-sunken: var(--c-surface-sunken);
+  --ink: var(--c-ink);
+  --ink-soft: var(--c-ink-soft);
+  --ink-muted: var(--c-ink-muted);
+  --ink-faint: var(--c-ink-faint);
+  --line: var(--c-line);
+  --line-strong: var(--c-line-strong);
+  --accent: var(--c-accent);
+  --accent-strong: var(--c-accent-strong);
+  --accent-soft: var(--c-accent-soft);
+  --accent-ink: var(--c-accent-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-micro: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-modal: 0ms;
+    --dur-page: 0ms;
+    --stagger-step: 0ms;
+    --reveal-distance: 0px;
+  }
+}
+
+/* 真实弹簧曲线（阻尼谐振子积分采样）。
+   Chrome 113+/Safari 17.2+/Firefox 112+ 支持 linear()；
+   旧浏览器继续用上面的 cubic-bezier 兜底。 */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --spring-snappy: linear(
+      0, 0.0254, 0.09, 0.1788, 0.2804, 0.386, 0.4893, 0.5862, 0.6738, 0.7508,
+      0.8166, 0.8714, 0.916, 0.9512, 0.9782, 0.9981, 1.0121, 1.0214, 1.0268,
+      1.0293, 1.0297, 1.0285, 1.0263, 1.0235, 1.0204, 1.0173, 1.0143, 1.0115,
+      1.009, 1.0068, 1.0049, 1.0034, 1.0021, 1.0012, 1.0004, 0.9999, 0.9995,
+      0.9993, 0.9992, 0.9991, 1
+    );
+    --spring-soft: linear(
+      0, 0.0191, 0.0677, 0.135, 0.213, 0.2955, 0.3782, 0.4581, 0.5331, 0.602,
+      0.6643, 0.7196, 0.7682, 0.8103, 0.8463, 0.8769, 0.9026, 0.924, 0.9416,
+      0.9559, 0.9675, 0.9766, 0.9839, 0.9895, 0.9937, 0.9969, 0.9993, 1.0009,
+      1.002, 1.0027, 1.0031, 1.0033, 1.0033, 1.0031, 1.0029, 1.0027, 1.0024,
+      1.0022, 1.0019, 1.0016, 1
+    );
+    --spring-bouncy: linear(
+      0, 0.0289, 0.1033, 0.207, 0.3264, 0.4507, 0.5719, 0.6841, 0.7836, 0.8682,
+      0.9374, 0.9915, 1.0316, 1.0592, 1.0761, 1.0844, 1.0858, 1.0821, 1.0749,
+      1.0655, 1.055, 1.0444, 1.0341, 1.0247, 1.0165, 1.0096, 1.004, 0.9997,
+      0.9965, 0.9944, 0.9932, 0.9927, 0.9927, 0.9931, 0.9938, 0.9946, 0.9955,
+      0.9964, 0.9973, 0.9981, 1
+    );
+  }
+}

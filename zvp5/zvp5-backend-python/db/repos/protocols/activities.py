@@ -137,9 +137,20 @@ class MembersRepo(Protocol):
     """
 
     async def list_for_activity(
-        self, activity_oid: str, query: str, page: int, size: int
+        self,
+        activity_oid: str,
+        query: str,
+        page: int,
+        size: int,
+        sort: str | None = None,
+        asc: bool = False,
     ) -> tuple[list[Row], int]:
-        """Return ``(rows, total)`` for one page of an activity's members."""
+        """Return ``(rows, total)`` for one page of an activity's members.
+
+        ``sort`` is ``None`` (default ``OID`` order), ``"business_id"`` or
+        ``"duration"``; ``"business_id"`` is the tie-breaker when sorting by
+        duration so equal hours still come out in a stable, user-visible order.
+        """
         ...
 
     async def list_for_user(

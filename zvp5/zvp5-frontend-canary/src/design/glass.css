@@ -1,0 +1,63 @@
+/* ============================================================================
+   Liquid Glass · 全局材质层
+   ----------------------------------------------------------------------------
+   ZGlassSurface 负责真正的材质（折射 / 模糊 / 高光 / 描边），
+   这里只提供两类全局协作样式：
+   1. `.glass-host`：为材质层建立独立层叠上下文，保证内容在材质之上；
+   2. `.glass` / `.glass-strong`：给不需要组件化的零星表面使用的兼容类。
+   ========================================================================== */
+
+.glass-host {
+  position: relative;
+  isolation: isolate;
+}
+
+/* 指针高光位置：注册成可插值的自定义属性后，ZGlassSurface 只负责写目标值，
+   插值交给合成线程，mousemove 不会触发组件重渲染。
+   旧浏览器不支持 @property 时退化为「直接跳变」，视觉仍可用。 */
+@property --glass-x {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --glass-y {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.glass,
+.glass-strong {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-hi);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.glass {
+  background: var(--glass-bg);
+}
+
+.glass-strong {
+  background: var(--glass-bg-strong);
+}
+
+/* 无 backdrop-filter 的浏览器：退化为不透的纸面，保证可读性 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-strong {
+    background: var(--surface);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
